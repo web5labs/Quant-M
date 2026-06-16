@@ -196,6 +196,18 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
             "Did you mean shell? Try: quant-m shell".to_string(),
         )),
         ["exit"] | ["quit"] | ["bye"] => Ok(AgentShellCommand::Exit),
+        _ if looks_like_local_command(trimmed) => Ok(AgentShellCommand::Hint(format!(
+            "That looks like a Quant-M command, but this shell does not run it directly yet. Type exit first, then run `{trimmed}` from your terminal."
+        ))),
+        _ if parts.len() <= 2 => {
+            if let Some(suggestion) = suggest_command(trimmed) {
+                Ok(AgentShellCommand::Hint(format!(
+                    "Did you mean {suggestion}? Try: {suggestion}"
+                )))
+            } else {
+                Ok(AgentShellCommand::Ask(trimmed.to_string()))
+            }
+        }
         _ => Ok(AgentShellCommand::Ask(trimmed.to_string())),
     }
 }
@@ -211,6 +223,84 @@ fn strip_launcher_prefix(parts: &[&str]) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn looks_like_local_command(input: &str) -> bool {
+    let first = input.split_whitespace().next().unwrap_or_default();
+    matches!(
+        first,
+        "context"
+            | "context-status"
+            | "cost"
+            | "replay"
+            | "compact"
+            | "consensus"
+            | "daemon"
+            | "worker"
+            | "state"
+            | "session"
+            | "tool"
+            | "provider"
+            | "setup"
+            | "init"
+            | "init-truth"
+            | "onboard"
+            | "tui"
+    )
+}
+
+fn suggest_command(input: &str) -> Option<&'static str> {
+    let normalized = input
+        .trim()
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
+        .replace(['_', ' '], "-");
+    let first = normalized.split('-').next().unwrap_or_default();
+    let candidates = [
+        "help",
+        "doctor",
+        "demo",
+        "settings",
+        "state summary",
+        "state list",
+        "session recent",
+        "session list",
+        "context-status",
+        "config show",
+        "exit",
+    ];
+
+    let mut best = None;
+    let mut best_distance = usize::MAX;
+    for candidate in candidates {
+        let candidate_key = candidate.replace(' ', "-");
+        let distance =
+            edit_distance(&normalized, &candidate_key).min(edit_distance(first, candidate));
+        if distance < best_distance {
+            best_distance = distance;
+            best = Some(candidate);
+        }
+    }
+
+    if best_distance <= 2 { best } else { None }
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let mut previous = (0..=right.chars().count()).collect::<Vec<_>>();
+    let mut current = vec![0; previous.len()];
+
+    for (i, left_char) in left.chars().enumerate() {
+        current[0] = i + 1;
+        for (j, right_char) in right.chars().enumerate() {
+            let cost = usize::from(left_char != right_char);
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + cost);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+
+    previous[right.chars().count()]
 }
 
 #[cfg(feature = "fuzzing_hooks")]
@@ -840,12 +930,24 @@ mod tests {
             AgentShellCommand::Doctor
         );
         assert_eq!(
+            parse_command("quantm doctor").expect("launcher doctor"),
+            AgentShellCommand::Doctor
+        );
+        assert_eq!(
+            parse_command("quant-m doctor").expect("launcher doctor"),
+            AgentShellCommand::Doctor
+        );
+        assert_eq!(
             parse_command("./quantm demo").expect("launcher demo"),
             AgentShellCommand::RunDemo
         );
         assert_eq!(
             parse_command("cargo run --release -- demo").expect("cargo demo"),
             AgentShellCommand::RunDemo
+        );
+        assert_eq!(
+            parse_command("cargo run -- doctor").expect("cargo doctor"),
+            AgentShellCommand::Doctor
         );
         assert_eq!(
             parse_command("./quantm").expect("launcher shell"),
@@ -857,10 +959,29 @@ mod tests {
         assert_eq!(
             parse_command("./quantm context guard --json").expect("outside command hint"),
             AgentShellCommand::Hint(
-                "You are already inside the Quant-M shell. Type exit first to run `./quantm context guard --json` from your terminal, or type help for shell commands."
+                "That looks like a Quant-M command, but this shell does not run it directly yet. Type exit first, then run `context guard --json` from your terminal."
                     .to_string()
             )
         );
+        assert_eq!(
+            parse_command("dotor").expect("doctor typo"),
+            AgentShellCommand::Hint("Did you mean doctor? Try: doctor".to_string())
+        );
+        assert_eq!(
+            parse_command("contex-status").expect("context typo"),
+            AgentShellCommand::Hint("Did you mean context-status? Try: context-status".to_string())
+        );
+    }
+
+    #[test]
+    fn shell_command_suggestions_are_bounded() {
+        assert_eq!(suggest_command("dotor"), Some("doctor"));
+        assert_eq!(suggest_command("demoo"), Some("demo"));
+        assert_eq!(suggest_command("hlep"), Some("help"));
+        assert_eq!(suggest_command("contex-status"), Some("context-status"));
+        assert_eq!(suggest_command("completely different prompt"), None);
+        assert_eq!(edit_distance("doctor", "doctor"), 0);
+        assert_eq!(edit_distance("dotor", "doctor"), 1);
     }
 
     #[test]
