@@ -14,7 +14,7 @@ echo "pi_lean_cleanup: before"
 du -sh ./* 2>/dev/null | sort -h
 
 # Large build artifacts (always safe to remove)
-rm -rf target fuzz/target fuzz/artifacts
+rm -rf target
 
 # Local runtime churn
 rm -rf workspace/logs/* workspace/queue/*
@@ -22,7 +22,6 @@ find . -name ".DS_Store" -delete
 
 if [[ "$AGGRESSIVE" -eq 1 ]]; then
   # Optional: not needed on Pi runtime.
-  rm -rf fuzz/corpus
   rm -f Quant-M.zip
 fi
 

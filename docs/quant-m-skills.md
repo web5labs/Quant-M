@@ -23,7 +23,7 @@ The repeatable skill pattern is to turn every important code capability into a s
 | `src/sessions.rs`, `src/replay` behavior | `docs/governance/runtime-doctrine.md` | What counts as proof, how replay should be read, and what not to claim |
 | `src/cluster_boundary.rs`, `src/worker_proposals.rs` | `docs/feature-map.md` | Worker proposal rules: workers propose, core decides |
 | `src/strategist.rs`, `src/question.rs`, `src/consensus.rs` | `docs/feature-map.md` | Question utility, strategist dry runs, consensus boundaries, and next-action rules |
-| `src/forex.rs`, `desks/forex/` | `docs/feature-map.md` | Desk-specific strategy, evidence quality, carry filters, and forbidden actions |
+| `src/forex.rs` | `docs/feature-map.md` | Internal paper-only domain validation, evidence quality, carry filters, and forbidden actions |
 
 ## Repeatable Project Skills
 
@@ -102,28 +102,25 @@ Markdown home:
 - `docs/wiki/raw/project/policy.md`
 - `docs/wiki/raw/project/governed-decisions.md`
 
-### 8. Desk Pack Design
+### 8. Domain Pack Design
 
-Use when creating a domain desk such as Forex.
+Use when creating a governed domain pack.
 
-The skill defines identity, scope, strategy constraints, schema, routing, handoff, evidence quality, risk flags, and forbidden actions. The Forex desk already has a clean markdown base under `docs/wiki/raw/desks/forex/`.
+The skill defines identity, scope, strategy constraints, schema, routing, handoff, evidence quality, risk flags, and forbidden actions. Public beta domain docs should stay curated and should not make Quant-M look like a trading bot.
 
 Markdown home:
-- `docs/wiki/raw/desks/<desk>/desk_policy.md`
-- `docs/wiki/raw/desks/<desk>/skills.md`
-- `docs/wiki/raw/desks/<desk>/schema.md`
-- `docs/wiki/raw/desks/<desk>/routing.md`
-- `docs/wiki/raw/desks/<desk>/handoff.md`
+- `docs/feature-map.md`
+- `docs/governance/runtime-doctrine.md`
+- curated domain docs only when approved for public export
 
 ### 9. Validation And Hardening
 
 Use when changing parsers, descriptors, runtime requests, queue payloads, shared-state records, or config formats.
 
-The skill links the intended change to cargo tests, fuzz targets, dry-run commands, replay checks, and known failure modes.
+The skill links the intended change to cargo tests, dry-run commands, replay checks, and known failure modes. Private fuzz harnesses can be maintained outside the public beta export.
 
 Markdown home:
 - `docs/validation-plan.md`
-- `fuzz/fuzz_targets/`
 - `docs/pi-inspired-feature-hardening-plan.md`
 
 ### 10. Deployment Readiness
@@ -134,8 +131,6 @@ The skill records environment assumptions, disabled-by-default surfaces, path ov
 
 Markdown home:
 - `docs/deploy-systemd.md`
-- `docs/wiki/raw/project/deploy-systemd.md`
-- `docs/wiki/raw/project/deploy-android.md`
 - `configs/`
 
 ## Suggested Skill File Shape

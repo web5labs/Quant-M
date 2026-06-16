@@ -19,9 +19,8 @@ Read project documents in this order:
 9. Relevant files in `docs/wiki/`
 10. `docs/governance/runtime-doctrine.md`
 11. Runtime files under `workspace/` only when inspecting generated local state
-12. `desks/forex/*.md` when the slice touches the desk pipeline
-13. `docs/codex/execution-plan.md`
-14. `docs/codex/goal-prompt.md`
+12. `docs/codex/execution-plan.md`
+13. `docs/codex/goal-prompt.md`
 
 If documents conflict, record the conflict in `docs/codex/blockers.md` and continue only if safe.
 

@@ -11,10 +11,11 @@ Thumbs.db
 
 # Rust build output
 /target/
-/fuzz/target/
-/fuzz/artifacts/
-/fuzz/corpus/
-/fuzz/coverage/
+
+# Internal/local hardening harnesses kept out of the public beta surface
+/fuzz/
+/desks/
+/strategist/
 
 # Local runtime workspace/state
 /workspace/*
