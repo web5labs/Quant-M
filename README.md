@@ -39,15 +39,14 @@ The goal is not flashy autonomy. The goal is durable intelligence: local evidenc
 
 Long AI sessions tend to fail the same way: the work grows, the context window fills, and the next agent has to guess what mattered. Quant-M turns that into a local proof loop.
 
-```mermaid
-flowchart LR
-    A["Long AI session"] --> B["Context gets crowded"]
-    B --> C["Quant-M records evidence"]
-    C --> D["Replay checks what happened"]
-    D --> E["Compact packet preserves the useful state"]
-    E --> F["Context Guardian writes a handoff"]
-    F --> G["Next agent continues with proof"]
-```
+| Step | What Happens | What Quant-M Leaves Behind |
+| --- | --- | --- |
+| 1 | An agent works through a long task. | Local session evidence |
+| 2 | Context gets crowded or stale. | Degradation signals |
+| 3 | Quant-M replays what happened. | Reviewable proof |
+| 4 | The useful state gets compacted. | Compact packet |
+| 5 | The Context Guardian prepares continuation. | Handoff file |
+| 6 | A new agent resumes. | Accepted facts, not guesswork |
 
 Quant-M does not try to make agents more magical. It makes their work easier to inspect, replay, resume, and stop.
 
