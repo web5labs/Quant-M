@@ -324,7 +324,7 @@ fn execute_command(
             should_exit: false,
         }),
         AgentShellCommand::Exit => Ok(AgentShellResponse {
-            output: "bye\n\nOutside the shell, use:\n  ./target/release/quant-m demo\n  ./target/release/quant-m agent\n  ./target/release/quant-m run workflow workflow:mock-research-brief".to_string(),
+            output: "bye\n\nOutside the shell, use:\n  ./quantm demo\n  ./quantm agent\n  ./quantm run workflow workflow:mock-research-brief".to_string(),
             should_exit: true,
         }),
     }
@@ -350,8 +350,8 @@ Run:
   run workflow workflow:mock-research-brief
 
 Outside this shell:
-  ./target/release/quant-m demo
-  ./target/release/quant-m agent
+  ./quantm demo
+  ./quantm agent
 
 State:
   state summary
@@ -938,7 +938,7 @@ mod tests {
         let response =
             execute_command(&cfg, &config_path, AgentShellCommand::Exit).expect("exit response");
         assert!(response.output.contains("bye"));
-        assert!(response.output.contains("./target/release/quant-m demo"));
+        assert!(response.output.contains("./quantm demo"));
         assert!(response.should_exit);
     }
 

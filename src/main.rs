@@ -85,12 +85,14 @@ struct Cli {
     config: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
+    /// Prepare local state if needed, then open the Quant-M shell.
+    Start,
     /// Guided first-run setup for humans.
     Onboard {
         #[arg(long)]
@@ -820,19 +822,21 @@ enum StorageMode {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = resolve_config_path(cli.config.clone())?;
+    let command = cli.command.unwrap_or(Commands::Start);
 
-    if is_onboarding_command(&cli.command) {
-        return handle_onboarding_command(cli.command, &config_path).await;
+    if is_onboarding_command(&command) {
+        return handle_onboarding_command(command, &config_path).await;
     }
 
     let cfg = Config::load_or_create(&config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
     cfg.validate()?;
     bootstrap::ensure_workspace(&cfg)?;
-    prepare_storage_for_command(&cfg, &cli.command)?;
+    prepare_storage_for_command(&cfg, &command)?;
 
-    match cli.command {
-        Commands::Init { .. }
+    match command {
+        Commands::Start
+        | Commands::Init { .. }
         | Commands::Onboard { .. }
         | Commands::Setup { .. }
         | Commands::Config { .. }
@@ -849,8 +853,9 @@ async fn main() -> Result<()> {
         Commands::Demo => {
             let workflow_id = MOCK_RESEARCH_WORKFLOW_ID.parse::<workflow_registry::WorkflowId>()?;
             let result = execution_runtime::run_workflow(&cfg, &workflow_id)?;
+            let command = quant_m_command_hint();
             println!(
-                "Demo workflow complete\nstatus: {}\nworkflow_id: {}\nsteps_completed: {}\nshared_state_writes: {}\nsession_id: {}\n\nnext:\n  ./target/release/quant-m session replay {}\n  ./target/release/quant-m state list\n  ./target/release/quant-m agent",
+                "Demo workflow complete\nstatus: {}\nworkflow_id: {}\nsteps_completed: {}\nshared_state_writes: {}\nsession_id: {}\n\nnext:\n  {command} session replay {}\n  {command} state list\n  {command} agent",
                 result.status,
                 result.workflow_id,
                 result.steps_completed,
@@ -1557,7 +1562,8 @@ async fn main() -> Result<()> {
 fn is_onboarding_command(command: &Commands) -> bool {
     matches!(
         command,
-        Commands::Init { .. }
+        Commands::Start
+            | Commands::Init { .. }
             | Commands::Onboard { .. }
             | Commands::Setup { .. }
             | Commands::Config { .. }
@@ -1570,6 +1576,7 @@ fn is_onboarding_command(command: &Commands) -> bool {
 
 async fn handle_onboarding_command(command: Commands, config_path: &std::path::Path) -> Result<()> {
     match command {
+        Commands::Start => run_start_flow(config_path),
         Commands::Onboard { advanced, json } => {
             let report = run_setup_flow(
                 config_path,
@@ -1708,6 +1715,21 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
         Commands::Settings { json } => handle_settings_command(config_path, json),
         _ => unreachable!("not an onboarding command"),
     }
+}
+
+fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
+    let init = run_init_flow(config_path, true)?;
+    let cfg = Config::load_or_create(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.validate()?;
+    bootstrap::ensure_workspace(&cfg)?;
+    let _truth_report = truth_files::init_truth_files(&cfg, false)?;
+
+    println!(
+        "Quant-M ready.\nworkspace: {}\n\nOpening the local shell. Type help, demo, doctor, or exit.\n",
+        init.workspace.display()
+    );
+    agent_shell::run(&cfg, config_path)
 }
 
 #[derive(Debug, Clone)]
@@ -2570,6 +2592,12 @@ fn quant_m_command_hint() -> String {
     if command_present("quant-m") {
         return "quant-m".to_string();
     }
+    if let Ok(cwd) = env::current_dir() {
+        let launcher = cwd.join("quantm");
+        if launcher.is_file() {
+            return "./quantm".to_string();
+        }
+    }
     let Ok(exe) = env::current_exe() else {
         return "./target/release/quant-m".to_string();
     };
@@ -3399,7 +3427,8 @@ fn operator_identity(cfg: &Config) -> String {
 
 fn storage_mode_for_command(command: &Commands) -> StorageMode {
     match command {
-        Commands::Config { .. }
+        Commands::Start
+        | Commands::Config { .. }
         | Commands::Onboard { .. }
         | Commands::Setup { .. }
         | Commands::Provider { .. }
@@ -3817,39 +3846,45 @@ mod tests {
         let cli = Cli::try_parse_from(["quant-m", "onboard"]).expect("parse onboard");
         assert!(matches!(
             cli.command,
-            Commands::Onboard {
+            Some(Commands::Onboard {
                 advanced: false,
                 json: false
-            }
+            })
         ));
 
         let cli =
             Cli::try_parse_from(["quant-m", "onboard", "--advanced"]).expect("parse advanced");
         assert!(matches!(
             cli.command,
-            Commands::Onboard {
+            Some(Commands::Onboard {
                 advanced: true,
                 json: false
-            }
+            })
         ));
 
         let cli = Cli::try_parse_from(["quant-m", "onboard", "--json"]).expect("parse json");
         assert!(matches!(
             cli.command,
-            Commands::Onboard {
+            Some(Commands::Onboard {
                 advanced: false,
                 json: true
-            }
+            })
         ));
     }
 
     #[test]
     fn demo_command_parses() {
+        let cli = Cli::try_parse_from(["quant-m"]).expect("parse default start");
+        assert!(cli.command.is_none());
+
+        let cli = Cli::try_parse_from(["quant-m", "start"]).expect("parse start");
+        assert!(matches!(cli.command, Some(Commands::Start)));
+
         let cli = Cli::try_parse_from(["quant-m", "demo"]).expect("parse demo");
-        assert!(matches!(cli.command, Commands::Demo));
+        assert!(matches!(cli.command, Some(Commands::Demo)));
 
         let cli = Cli::try_parse_from(["quant-m", "shell"]).expect("parse shell alias");
-        assert!(matches!(cli.command, Commands::Agent));
+        assert!(matches!(cli.command, Some(Commands::Agent)));
     }
 
     #[test]
@@ -4176,7 +4211,7 @@ mod tests {
         ])
         .expect("parse worker proposal submit");
         match submit.command {
-            Commands::Worker {
+            Some(Commands::Worker {
                 command:
                     WorkerCommand::Proposal {
                         command:
@@ -4188,7 +4223,7 @@ mod tests {
                                 ..
                             },
                     },
-            } => {
+            }) => {
                 assert_eq!(surface, "cmux_lane");
                 assert_eq!(kind, "evidence");
                 assert!(summary.contains("provider contracts"));
@@ -4227,7 +4262,7 @@ mod tests {
         ])
         .expect("parse worker proposal list");
         match list.command {
-            Commands::Worker {
+            Some(Commands::Worker {
                 command:
                     WorkerCommand::Proposal {
                         command:
@@ -4237,7 +4272,7 @@ mod tests {
                                 json,
                             },
                     },
-            } => {
+            }) => {
                 assert_eq!(surface.as_deref(), Some("cmux_lane"));
                 assert_eq!(status.as_deref(), Some("pending_review"));
                 assert!(json);
@@ -4275,7 +4310,7 @@ mod tests {
         .expect("parse context packet");
 
         match cli.command {
-            Commands::Context {
+            Some(Commands::Context {
                 command:
                     ContextCommand::Packet {
                         state,
@@ -4283,7 +4318,7 @@ mod tests {
                         task,
                         json,
                     },
-            } => {
+            }) => {
                 assert_eq!(state, "QUESTION_TO_WORKER_PROPOSAL_01_VALIDATED");
                 assert_eq!(size, "small");
                 assert_eq!(
@@ -4317,7 +4352,7 @@ mod tests {
         ])
         .expect("parse consensus");
         match cli.command {
-            Commands::Consensus { dry_run, question } => {
+            Some(Commands::Consensus { dry_run, question }) => {
                 assert!(dry_run);
                 assert_eq!(question, "Should we adopt this API design?");
                 assert_eq!(
@@ -4341,7 +4376,7 @@ mod tests {
         let cli =
             Cli::try_parse_from(["quant-m", "strategist", "--dry-run"]).expect("parse strategist");
         match cli.command {
-            Commands::Strategist { dry_run, json } => {
+            Some(Commands::Strategist { dry_run, json }) => {
                 assert!(dry_run);
                 assert!(!json);
                 assert_eq!(
@@ -4355,7 +4390,7 @@ mod tests {
         let cli = Cli::try_parse_from(["quant-m", "strategist", "--dry-run", "--json"])
             .expect("parse strategist json");
         match cli.command {
-            Commands::Strategist { dry_run, json } => {
+            Some(Commands::Strategist { dry_run, json }) => {
                 assert!(dry_run);
                 assert!(json);
                 assert_eq!(
@@ -4380,7 +4415,7 @@ mod tests {
             }
             let cli = Cli::try_parse_from(args).expect("parse question ask");
             match cli.command {
-                Commands::Question { command } => match command {
+                Some(Commands::Question { command }) => match command {
                     QuestionCommand::Ask {
                         mode,
                         question,
@@ -4423,7 +4458,7 @@ mod tests {
         ])
         .expect("parse question write proposals");
         match cli.command {
-            Commands::Question { command } => match command {
+            Some(Commands::Question { command }) => match command {
                 QuestionCommand::Ask {
                     mode,
                     question,
@@ -4456,7 +4491,7 @@ mod tests {
         let cli = Cli::try_parse_from(["quant-m", "replay", "session-1", "--json"])
             .expect("parse replay");
         match cli.command {
-            Commands::Replay { session_id, json } => {
+            Some(Commands::Replay { session_id, json }) => {
                 assert_eq!(session_id, "session-1");
                 assert!(json);
                 assert_eq!(
@@ -4482,7 +4517,7 @@ mod tests {
         ])
         .expect("parse cost summary");
         match cli.command {
-            Commands::Cost { command } => match command {
+            Some(Commands::Cost { command }) => match command {
                 CostCommand::Summary {
                     json,
                     workflow,

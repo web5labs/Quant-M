@@ -69,15 +69,23 @@ Most AI tools optimize for speed, autonomy, and more agents. Quant-M optimizes f
 
 ## Quick Start
 
-Clone it and run it like a normal Rust CLI project:
+Clone it and start locally:
 
 ```bash
 git clone https://github.com/web5labs/Quant-M.git
 cd Quant-M
-cargo run --release -- init
-cargo run --release -- init-truth
-cargo run --release -- setup --non-interactive --runtime-profile laptop --context-guardian true
-cargo run --release -- doctor
+./quantm
+```
+
+The launcher builds the local release binary if needed, prepares safe local state, and opens the Quant-M shell.
+
+Inside the shell, try:
+
+```text
+demo
+doctor
+help
+exit
 ```
 
 The first run is intentionally local. No broker. No live model call. No browser harness. No hosted service. No API key.
@@ -162,23 +170,24 @@ Quant-M is conservative on purpose:
 ## Useful Commands
 
 ```bash
-# Setup and health
-quant-m init
-quant-m init-truth
-quant-m setup --non-interactive --runtime-profile laptop
-quant-m doctor
+# Start local shell
+./quantm
+
+# Run any CLI command through the launcher
+./quantm doctor
+./quantm demo
 
 # Proof path
-quant-m consensus --dry-run "What should we inspect first?"
-quant-m replay <session_id>
-quant-m compact <session_id>
-quant-m context guard --json
-quant-m cost summary
+./quantm consensus --dry-run "What should we inspect first?"
+./quantm replay <session_id>
+./quantm compact <session_id>
+./quantm context guard --json
+./quantm cost summary
 
 # Operator surfaces
-quant-m agent
-quant-m shell
-quant-m tui
+./quantm agent
+./quantm shell
+./quantm tui
 ```
 
 ## Current Status

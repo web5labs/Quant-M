@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="$APP_DIR/target/release/quant-m"
+
+needs_build=false
+if [[ ! -x "$BIN" ]]; then
+  needs_build=true
+elif [[ -n "$(find "$APP_DIR/src" "$APP_DIR/Cargo.toml" "$APP_DIR/Cargo.lock" -newer "$BIN" -print -quit)" ]]; then
+  needs_build=true
+fi
+
+if [[ "$needs_build" == true ]]; then
+  echo "Building Quant-M locally..."
+  cargo build --release --manifest-path "$APP_DIR/Cargo.toml"
+fi
+
+if [[ "$#" -eq 0 ]]; then
+  exec "$BIN" start
+fi
+
+exec "$BIN" "$@"
