@@ -1,0 +1,6 @@
+{
+  "name": "codex-project-onboarding-framework",
+  "version": "0.2.0",
+  "description": "A reusable Codex project onboarding framework with LLM wiki, context-budget rails, repo ingestion, FSM execution, validation linting, and UI/UX handoff.",
+  "skills": "./.agents/skills/"
+}

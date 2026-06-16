@@ -1,0 +1,4586 @@
+mod adapters;
+mod agent_shell;
+mod bootstrap;
+mod channels;
+mod cluster_boundary;
+mod compaction;
+mod config;
+mod consensus;
+mod context_decay;
+mod context_firewall;
+mod context_status;
+mod cost_ledger;
+mod daemon;
+mod desk_registry;
+mod domain;
+mod execution_runtime;
+mod forex;
+mod fsm_registry;
+mod heartbeat;
+mod llm;
+mod logutil;
+mod loop_dry_run;
+mod memory;
+mod policy_registry;
+mod question;
+mod scheduler_registry;
+mod sessions;
+mod shared_state;
+mod shutdown;
+mod skill_registry;
+mod skills;
+mod state_review;
+mod state_sql;
+mod strategist;
+mod telegram;
+mod terminal_cockpit;
+mod truth_files;
+mod tui_shell;
+mod worker;
+mod worker_proposals;
+mod workflow_registry;
+
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use serde::{Serialize, de::DeserializeOwned};
+use std::env;
+use std::io::{self, IsTerminal, Write};
+use std::path::PathBuf;
+use std::process::Command;
+
+use adapters::AdapterHub;
+use config::Config;
+use memory::MemoryStore;
+use worker::job_from_json;
+
+const CLI_BANNER: &str = "\
+\x1b[38;2;25;95;255mQ\
+\x1b[38;2;35;110;255mU\
+\x1b[38;2;45;125;255mA\
+\x1b[38;2;55;140;255mN\
+\x1b[38;2;65;155;255m-\
+\x1b[38;2;75;170;255mM\x1b[0m\n";
+
+#[derive(Parser, Debug)]
+#[command(name = "quant-m")]
+#[command(about = "QUAN-M: minimal local-first worker runtime", long_about = None)]
+#[command(before_help = CLI_BANNER)]
+struct Cli {
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
+enum Commands {
+    Init {
+        #[arg(long)]
+        non_interactive: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Setup {
+        #[arg(long)]
+        non_interactive: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        local_model_provider: Option<String>,
+        #[arg(long)]
+        local_model: Option<String>,
+        #[arg(long)]
+        remote_model_provider: Option<String>,
+        #[arg(long)]
+        remote_model: Option<String>,
+        #[arg(long)]
+        openrouter_model: Option<String>,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        channel_value: Option<String>,
+        #[arg(long)]
+        runtime_profile: Option<String>,
+        #[arg(long)]
+        workspace_path: Option<PathBuf>,
+        #[arg(long)]
+        state_path: Option<PathBuf>,
+        #[arg(long)]
+        session_path: Option<PathBuf>,
+        #[arg(long)]
+        external_network: Option<String>,
+    },
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    Doctor {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        providers: bool,
+        #[arg(long)]
+        live: bool,
+    },
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommand,
+    },
+    Tool {
+        #[command(subcommand)]
+        command: ToolCommand,
+    },
+    Agent,
+    Tui,
+    Status,
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommand,
+    },
+    Worker {
+        #[command(subcommand)]
+        command: WorkerCommand,
+    },
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
+    Heartbeat {
+        #[command(subcommand)]
+        command: HeartbeatCommand,
+    },
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommand,
+    },
+    Adapter {
+        #[command(subcommand)]
+        command: AdapterCommand,
+    },
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
+    Fsm {
+        #[command(subcommand)]
+        command: FsmCommand,
+    },
+    Scheduler {
+        #[command(subcommand)]
+        command: SchedulerCommand,
+    },
+    Run {
+        #[command(subcommand)]
+        command: RunCommand,
+    },
+    Desk {
+        #[command(subcommand)]
+        command: DeskCommand,
+    },
+    Domain {
+        #[command(subcommand)]
+        command: DomainCommand,
+    },
+    Llm {
+        #[command(subcommand)]
+        command: LlmCommand,
+    },
+    Loop {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value = "all")]
+        scope: String,
+        #[arg(long, default_value_t = 10)]
+        max_candidates: usize,
+    },
+    Telegram {
+        #[command(subcommand)]
+        command: TelegramCommand,
+    },
+    Channel {
+        #[command(subcommand)]
+        command: ChannelCommand,
+    },
+    Cockpit {
+        #[command(subcommand)]
+        command: CockpitCommand,
+    },
+    Compact {
+        session_id: String,
+    },
+    ContextStatus {
+        #[arg(long)]
+        json: bool,
+    },
+    Context {
+        #[command(subcommand)]
+        command: ContextCommand,
+    },
+    Replay {
+        session_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Consensus {
+        #[arg(long)]
+        dry_run: bool,
+        question: String,
+    },
+    Strategist {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Question {
+        #[command(subcommand)]
+        command: QuestionCommand,
+    },
+    Cost {
+        #[command(subcommand)]
+        command: CostCommand,
+    },
+    InitTruth {
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    State {
+        #[command(subcommand)]
+        command: StateCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DaemonCommand {
+    Start,
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkerCommand {
+    Submit {
+        job_json: String,
+    },
+    Once {
+        job_json: String,
+    },
+    Run,
+    Proposal {
+        #[command(subcommand)]
+        command: WorkerProposalCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkerProposalCommand {
+    Submit {
+        #[arg(long)]
+        surface: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        summary: String,
+        #[arg(long)]
+        worker_id: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        workflow_id: Option<String>,
+        #[arg(long)]
+        decision_scope: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    List {
+        #[arg(long)]
+        surface: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MemoryCommand {
+    Add {
+        key: String,
+        content: String,
+        #[arg(long, default_value = "daily")]
+        category: String,
+    },
+    Search {
+        query: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        category: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum HeartbeatCommand {
+    Tick,
+    Run,
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillsCommand {
+    List,
+    Show { name: String },
+    Run { name: String, input: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum AdapterCommand {
+    Send {
+        message: String,
+        #[arg(long, default_value = "manual")]
+        kind: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommand {
+    Show {
+        #[arg(long)]
+        json: bool,
+    },
+    SetModel {
+        provider: String,
+        model: String,
+    },
+    SetChannel {
+        channel: String,
+        value: String,
+    },
+    Validate,
+}
+
+#[derive(Subcommand, Debug)]
+enum ProviderCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Validate {
+        provider: String,
+        #[arg(long)]
+        live: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ToolCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Validate {
+        tool: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SessionCommand {
+    List,
+    Show {
+        id: String,
+    },
+    Replay {
+        id: String,
+    },
+    ResumePlan {
+        id: String,
+    },
+    Approve {
+        id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    Deny {
+        id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    NeedsInfo {
+        id: String,
+        #[arg(long)]
+        reason: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DomainCommand {
+    List,
+    Show { domain_id: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillCommand {
+    List {
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long = "side-effect")]
+        side_effect: Option<String>,
+    },
+    Show {
+        skill_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyCommand {
+    List {
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long = "side-effect")]
+        side_effect: Option<String>,
+    },
+    Show {
+        policy_id: String,
+    },
+    EvaluateSkill {
+        skill_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkflowCommand {
+    List {
+        #[arg(long)]
+        domain: Option<String>,
+    },
+    Show {
+        workflow_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum FsmCommand {
+    List {
+        #[arg(long)]
+        domain: Option<String>,
+    },
+    Show {
+        fsm_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SchedulerCommand {
+    List {
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long)]
+        trigger: Option<String>,
+    },
+    Show {
+        scheduler_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DeskCommand {
+    List {
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        domain: Option<String>,
+    },
+    Show {
+        desk_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RunCommand {
+    Workflow { workflow_id: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum CostCommand {
+    Summary {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        workflow: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum LlmCommand {
+    Ask { prompt: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum QuestionCommand {
+    Ask {
+        #[arg(long)]
+        mode: String,
+        question: String,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        write_proposals: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ContextCommand {
+    Packet {
+        #[arg(long)]
+        state: String,
+        #[arg(long, default_value = "small")]
+        size: String,
+        #[arg(long)]
+        task: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TelegramCommand {
+    Run,
+}
+
+#[derive(Subcommand, Debug)]
+enum ChannelCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CockpitCommand {
+    Plan {
+        #[arg(long, default_value = "auto")]
+        host: String,
+        #[arg(long = "repo")]
+        repo_paths: Vec<PathBuf>,
+        #[arg(long = "model")]
+        models: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum StateCommand {
+    Init,
+    Summary,
+    List {
+        #[arg(long)]
+        domain: Option<String>,
+    },
+    Show {
+        key: String,
+    },
+    Snapshot {
+        #[arg(long)]
+        domain: Option<String>,
+    },
+    Review {
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    ExpireStale,
+    SignalUpsert {
+        json: String,
+    },
+    HandoffAdd {
+        json: String,
+    },
+    HandoffList {
+        #[arg(long)]
+        desk: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    RiskAdd {
+        json: String,
+    },
+    OrderAdd {
+        json: String,
+    },
+    ForexIngest {
+        json: String,
+    },
+    ForexGetSignal {
+        symbol: String,
+    },
+    ForexGetHandoff {
+        symbol: String,
+    },
+    SwapHealth {
+        json: String,
+    },
+    SwapHealthGet {
+        symbol: String,
+    },
+    MacroRefreshMql5 {
+        #[arg(long, default_value_t = 48)]
+        hours_ahead: i64,
+    },
+    MacroGetPair {
+        pair: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InitReport {
+    status: String,
+    config: PathBuf,
+    workspace: PathBuf,
+    state_sqlite: PathBuf,
+    session_dir: PathBuf,
+    runtime_profile: config::RuntimeProfile,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SetupReport {
+    status: String,
+    config: PathBuf,
+    workspace: PathBuf,
+    state_sqlite: PathBuf,
+    session_dir: PathBuf,
+    runtime_profile: config::RuntimeProfile,
+    external_network_enabled: bool,
+    preferred_channel: config::ChannelPreference,
+    preferred_local_model: Option<config::ModelPreference>,
+    preferred_remote_model: Option<config::ModelPreference>,
+    preferred_openrouter_model: Option<String>,
+    openrouter_key_present: bool,
+    provider_count: usize,
+    tool_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DoctorReport {
+    config_exists: bool,
+    workspace_exists: bool,
+    state_path_exists: bool,
+    session_path_exists: bool,
+    workflow_run_ok: bool,
+    shared_state_list_ok: bool,
+    session_list_ok: bool,
+    checked_binary: PathBuf,
+    generated_session_id: Option<String>,
+    provider_diagnostics: Vec<ProviderValidationReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProviderListItem {
+    id: String,
+    enabled: bool,
+    kind: config::ProviderKind,
+    api_base: String,
+    api_key_env: String,
+    key_present: bool,
+    preferred_models: Vec<String>,
+    live_validation_allowed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolListItem {
+    id: String,
+    enabled: bool,
+    kind: config::ToolKind,
+    command: String,
+    validation_args: Vec<String>,
+    command_present: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProviderValidationReport {
+    id: String,
+    enabled: bool,
+    kind: config::ProviderKind,
+    api_base: String,
+    api_key_env: String,
+    key_present: bool,
+    live_requested: bool,
+    live_ok: Option<bool>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolValidationReport {
+    id: String,
+    enabled: bool,
+    kind: config::ToolKind,
+    command: String,
+    command_present: bool,
+    validation_ok: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StorageMode {
+    Inspect,
+    SessionWrite,
+    RuntimePreflight,
+    WorkerRun,
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let config_path = resolve_config_path(cli.config.clone())?;
+
+    if is_onboarding_command(&cli.command) {
+        return handle_onboarding_command(cli.command, &config_path).await;
+    }
+
+    let cfg = Config::load_or_create(&config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.validate()?;
+    bootstrap::ensure_workspace(&cfg)?;
+    prepare_storage_for_command(&cfg, &cli.command)?;
+
+    match cli.command {
+        Commands::Init { .. }
+        | Commands::Setup { .. }
+        | Commands::Config { .. }
+        | Commands::Doctor { .. }
+        | Commands::Provider { .. }
+        | Commands::Tool { .. } => unreachable!("onboarding commands are handled earlier"),
+        Commands::Agent => {
+            agent_shell::run(&cfg, &config_path)?;
+        }
+        Commands::Tui => {
+            tui_shell::run(&cfg, &config_path)?;
+        }
+        Commands::Status => {
+            print_status(&cfg)?;
+        }
+        Commands::Daemon { command } => match command {
+            DaemonCommand::Start => {
+                daemon::run(cfg.clone()).await?;
+            }
+        },
+        Commands::Worker { command } => match command {
+            WorkerCommand::Submit { job_json } => {
+                let job = job_from_json(&job_json)?;
+                worker::submit_job(&cfg, &job)?;
+                println!("{}", serde_json::to_string_pretty(&job)?);
+            }
+            WorkerCommand::Once { job_json } => {
+                let job = job_from_json(&job_json)?;
+                let adapters = AdapterHub::new(&cfg)?;
+                let result = worker::run_once(&cfg, job, &adapters).await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            WorkerCommand::Run => {
+                let adapters = AdapterHub::new(&cfg)?;
+                worker::run_loop(cfg.clone(), adapters).await?;
+            }
+            WorkerCommand::Proposal { command } => match command {
+                WorkerProposalCommand::Submit {
+                    surface,
+                    kind,
+                    summary,
+                    worker_id,
+                    session_id,
+                    workflow_id,
+                    decision_scope,
+                    json,
+                } => {
+                    let input = worker_proposals::SubmitWorkerProposalInput {
+                        source_surface: surface.parse()?,
+                        source_worker_id: worker_id.unwrap_or_else(|| cfg.node_id.clone()),
+                        proposal_kind: kind.parse()?,
+                        summary,
+                        session_id,
+                        workflow_id,
+                        decision_scope,
+                    };
+                    let (_record, submitted) =
+                        worker_proposals::submit_worker_proposal(&cfg, input)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&submitted)?);
+                    } else {
+                        print!("{}", worker_proposals::render_submit_summary(&submitted));
+                    }
+                }
+                WorkerProposalCommand::List {
+                    surface,
+                    status,
+                    json,
+                } => {
+                    let surface = surface
+                        .as_deref()
+                        .map(str::parse)
+                        .transpose()
+                        .context("invalid worker proposal surface filter")?;
+                    let status = status
+                        .as_deref()
+                        .map(str::parse)
+                        .transpose()
+                        .context("invalid worker proposal status filter")?;
+                    let listed = worker_proposals::list_worker_proposals(&cfg, surface, status)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&listed)?);
+                    } else {
+                        print!("{}", worker_proposals::render_list_summary(&listed));
+                    }
+                }
+            },
+        },
+        Commands::Memory { command } => {
+            let store = MemoryStore::open(&cfg)?;
+            match command {
+                MemoryCommand::Add {
+                    key,
+                    content,
+                    category,
+                } => {
+                    let inserted = store.add_entry(&key, &content, &category)?;
+                    println!("{}", serde_json::to_string_pretty(&inserted)?);
+                }
+                MemoryCommand::Search { query, limit } => {
+                    let found = store.search(&query, limit)?;
+                    println!("{}", serde_json::to_string_pretty(&found)?);
+                }
+                MemoryCommand::List { limit, category } => {
+                    let listed = store.list(limit, category.as_deref())?;
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+            }
+        }
+        Commands::Heartbeat { command } => {
+            let adapters = AdapterHub::new(&cfg)?;
+            match command {
+                HeartbeatCommand::Tick => {
+                    let results = heartbeat::tick(&cfg, &adapters).await?;
+                    println!("{}", serde_json::to_string_pretty(&results)?);
+                }
+                HeartbeatCommand::Run => {
+                    heartbeat::run_loop(cfg.clone(), adapters).await?;
+                }
+            }
+        }
+        Commands::Skills { command } => match command {
+            SkillsCommand::List => {
+                let listed = skills::list_skills(&cfg)?;
+                println!("{}", serde_json::to_string_pretty(&listed)?);
+            }
+            SkillsCommand::Show { name } => {
+                let detail = skills::show_skill(&cfg, &name)?;
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            }
+            SkillsCommand::Run { name, input } => {
+                let output = skills::run_skill(&cfg, &name, &input).await?;
+                println!("{output}");
+            }
+        },
+        Commands::Adapter { command } => match command {
+            AdapterCommand::Send { message, kind } => {
+                let adapters = AdapterHub::new(&cfg)?;
+                adapters.send_simple(&kind, &message).await?;
+            }
+        },
+        Commands::Session { command } => match command {
+            SessionCommand::List => {
+                let listed = sessions::list_sessions(&cfg)?;
+                println!("{}", serde_json::to_string_pretty(&listed)?);
+            }
+            SessionCommand::Show { id } => {
+                let session_id = id.parse::<sessions::SessionId>()?;
+                let detail = sessions::show_session(&cfg, &session_id)?;
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            }
+            SessionCommand::Replay { id } => {
+                let session_id = id.parse::<sessions::SessionId>()?;
+                let replay = sessions::replay_session(&cfg, &session_id)?;
+                println!("{}", serde_json::to_string_pretty(&replay)?);
+            }
+            SessionCommand::ResumePlan { id } => {
+                let session_id = id.parse::<sessions::SessionId>()?;
+                let plan = sessions::resume_plan_session(&cfg, &session_id)?;
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            }
+            SessionCommand::Approve { id, reason } => {
+                let session_id = id.parse::<sessions::SessionId>()?;
+                let record = sessions::record_operator_decision(
+                    &cfg,
+                    &session_id,
+                    sessions::OperatorDecision::Approved,
+                    &reason,
+                    &operator_identity(&cfg),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            }
+            SessionCommand::Deny { id, reason } => {
+                let session_id = id.parse::<sessions::SessionId>()?;
+                let record = sessions::record_operator_decision(
+                    &cfg,
+                    &session_id,
+                    sessions::OperatorDecision::Denied,
+                    &reason,
+                    &operator_identity(&cfg),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            }
+            SessionCommand::NeedsInfo { id, reason } => {
+                let session_id = id.parse::<sessions::SessionId>()?;
+                let record = sessions::record_operator_decision(
+                    &cfg,
+                    &session_id,
+                    sessions::OperatorDecision::NeedsMoreInfo,
+                    &reason,
+                    &operator_identity(&cfg),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            }
+        },
+        Commands::Skill { command } => {
+            let registry = skill_registry::builtin_registry()?;
+            match command {
+                SkillCommand::List {
+                    domain,
+                    side_effect,
+                } => {
+                    let domain = domain
+                        .as_deref()
+                        .map(str::parse::<sessions::DomainId>)
+                        .transpose()?;
+                    let side_effect = side_effect
+                        .as_deref()
+                        .map(str::parse::<skill_registry::SideEffectLevel>)
+                        .transpose()?;
+                    let listed = registry.list(domain.as_ref(), side_effect.as_ref());
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                SkillCommand::Show { skill_id } => {
+                    let detail = registry.show(&skill_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
+        }
+        Commands::Policy { command } => {
+            let policies = policy_registry::builtin_registry()?;
+            match command {
+                PolicyCommand::List {
+                    domain,
+                    side_effect,
+                } => {
+                    let domain = domain
+                        .as_deref()
+                        .map(str::parse::<sessions::DomainId>)
+                        .transpose()?;
+                    let side_effect = side_effect
+                        .as_deref()
+                        .map(str::parse::<skill_registry::SideEffectLevel>)
+                        .transpose()?;
+                    let listed = policies.list(domain.as_ref(), side_effect.as_ref());
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                PolicyCommand::Show { policy_id } => {
+                    let detail = policies.show(&policy_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+                PolicyCommand::EvaluateSkill { skill_id } => {
+                    let skills = skill_registry::builtin_registry()?;
+                    let skill = skills.show(&skill_id)?;
+                    let evaluation = policies.evaluate_skill(&skill);
+                    println!("{}", serde_json::to_string_pretty(&evaluation)?);
+                }
+            }
+        }
+        Commands::Workflow { command } => {
+            let registry = workflow_registry::builtin_registry()?;
+            match command {
+                WorkflowCommand::List { domain } => {
+                    let domain = domain
+                        .as_deref()
+                        .map(str::parse::<sessions::DomainId>)
+                        .transpose()?;
+                    let listed = registry.list(domain.as_ref());
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                WorkflowCommand::Show { workflow_id } => {
+                    let workflow_id = workflow_id.parse::<workflow_registry::WorkflowId>()?;
+                    let detail = registry.show(&workflow_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
+        }
+        Commands::Fsm { command } => {
+            let registry = fsm_registry::builtin_registry()?;
+            match command {
+                FsmCommand::List { domain } => {
+                    let domain = domain
+                        .as_deref()
+                        .map(str::parse::<sessions::DomainId>)
+                        .transpose()?;
+                    let listed = registry.list(domain.as_ref());
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                FsmCommand::Show { fsm_id } => {
+                    let fsm_id = fsm_id.parse::<fsm_registry::FsmId>()?;
+                    let detail = registry.show(&fsm_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
+        }
+        Commands::Scheduler { command } => {
+            let registry = scheduler_registry::builtin_registry()?;
+            match command {
+                SchedulerCommand::List { domain, trigger } => {
+                    let domain = domain
+                        .as_deref()
+                        .map(str::parse::<sessions::DomainId>)
+                        .transpose()?;
+                    let trigger = trigger
+                        .as_deref()
+                        .map(str::parse::<scheduler_registry::ScheduleTriggerKind>)
+                        .transpose()?;
+                    let listed = registry.list(domain.as_ref(), trigger.as_ref());
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                SchedulerCommand::Show { scheduler_id } => {
+                    let scheduler_id = scheduler_id.parse::<scheduler_registry::SchedulerId>()?;
+                    let detail = registry.show(&scheduler_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
+        }
+        Commands::Run { command } => match command {
+            RunCommand::Workflow { workflow_id } => {
+                let workflow_id = workflow_id.parse::<workflow_registry::WorkflowId>()?;
+                let result = execution_runtime::run_workflow(&cfg, &workflow_id)?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        },
+        Commands::Desk { command } => {
+            let registry = desk_registry::builtin_registry()?;
+            match command {
+                DeskCommand::List { category, domain } => {
+                    let category = category
+                        .as_deref()
+                        .map(str::parse::<desk_registry::DeskCategory>)
+                        .transpose()?;
+                    let domain = domain
+                        .as_deref()
+                        .map(str::parse::<sessions::DomainId>)
+                        .transpose()?;
+                    let listed = registry.list(category.as_ref(), domain.as_ref());
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                DeskCommand::Show { desk_id } => {
+                    let desk_id = desk_id.parse::<desk_registry::DeskId>()?;
+                    let detail = registry.show(&desk_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
+        }
+        Commands::Domain { command } => {
+            let registry = domain::builtin_registry()?;
+            match command {
+                DomainCommand::List => {
+                    let listed = registry.list();
+                    println!("{}", serde_json::to_string_pretty(&listed)?);
+                }
+                DomainCommand::Show { domain_id } => {
+                    let domain_id = domain_id.parse::<sessions::DomainId>()?;
+                    let detail = registry.show(&domain_id)?;
+                    println!("{}", serde_json::to_string_pretty(&detail)?);
+                }
+            }
+        }
+        Commands::Llm { command } => match command {
+            LlmCommand::Ask { prompt } => {
+                let response = llm::ask(&cfg, &prompt).await?;
+                println!("{response}");
+            }
+        },
+        Commands::Loop {
+            dry_run,
+            json,
+            scope,
+            max_candidates,
+        } => {
+            if !dry_run {
+                anyhow::bail!("loop currently supports only --dry-run");
+            }
+            let scope = scope.parse::<loop_dry_run::LoopScope>()?;
+            let report = loop_dry_run::run_loop_dry_run(
+                &cfg,
+                loop_dry_run::LoopDryRunRequest {
+                    scope,
+                    max_candidates,
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", loop_dry_run::render_loop_report(&report));
+            }
+        }
+        Commands::Telegram { command } => match command {
+            TelegramCommand::Run => {
+                let adapters = AdapterHub::new(&cfg)?;
+                telegram::run_loop(cfg.clone(), adapters).await?;
+            }
+        },
+        Commands::Channel { command } => match command {
+            ChannelCommand::List { json } => {
+                let items = channels::configured_channels(&cfg);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&items)?);
+                } else {
+                    for item in items {
+                        println!(
+                            "{} configured={} live_adapter={} notes={}",
+                            item.label, item.configured, item.live_adapter, item.notes
+                        );
+                    }
+                }
+            }
+        },
+        Commands::Cockpit { command } => match command {
+            CockpitCommand::Plan {
+                host,
+                repo_paths,
+                models,
+            } => {
+                let host_platform = parse_cockpit_host(&host)?;
+                let lane_inputs = build_cockpit_lane_inputs(repo_paths, models);
+                let plan =
+                    terminal_cockpit::plan_terminal_cockpit(&cfg, host_platform, lane_inputs);
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            }
+        },
+        Commands::Compact { session_id } => {
+            let session_id = session_id.parse::<sessions::SessionId>()?;
+            let result = compaction::compact_session(&cfg, &session_id)?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Commands::ContextStatus { json } => {
+            let report = context_status::context_status(&cfg)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", context_status::render_context_status(&report));
+            }
+        }
+        Commands::Context { command } => match command {
+            ContextCommand::Packet {
+                state,
+                size,
+                task,
+                json,
+            } => {
+                let size = size.parse::<context_firewall::PacketSize>()?;
+                let result = context_firewall::generate_context_packet(
+                    &cfg,
+                    context_firewall::ContextPacketRequest {
+                        fsm_state: state,
+                        size,
+                        task,
+                    },
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("packet_id: {}", result.packet_id);
+                    println!("packet: {}", result.packet_path.display());
+                    println!("receipt: {}", result.receipt_path.display());
+                    println!(
+                        "estimated_token_size: {}",
+                        result.receipt.estimated_token_size
+                    );
+                }
+            }
+        },
+        Commands::Replay { session_id, json } => {
+            let session_id = session_id.parse::<sessions::SessionId>()?;
+            let summary = consensus::replay_consensus_session(&cfg, &session_id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                print!("{}", consensus::render_replay_summary(&summary));
+            }
+        }
+        Commands::Consensus { dry_run, question } => {
+            if !dry_run {
+                anyhow::bail!("consensus currently supports --dry-run only");
+            }
+            let report = consensus::run_consensus_dry_run(&cfg, &question)?;
+            print!("{}", consensus::render_terminal_summary(&report));
+        }
+        Commands::Strategist { dry_run, json } => {
+            if !dry_run {
+                anyhow::bail!("strategist currently supports --dry-run only");
+            }
+            let report = strategist::run_strategist_dry_run(&cfg)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report.json_output())?);
+            } else {
+                print!("{}", strategist::render_terminal_summary(&report));
+            }
+        }
+        Commands::Question { command } => match command {
+            QuestionCommand::Ask {
+                mode,
+                question: text,
+                json,
+                write_proposals,
+            } => {
+                let mode = mode.parse::<question::QuantMQuestionMode>()?;
+                match (mode, write_proposals) {
+                    (question::QuantMQuestionMode::AgentCluster, true) => {
+                        let plan = question::build_agent_cluster_proposal_plan(&text)?;
+                        let result = question::write_agent_cluster_proposal_plan(&cfg, plan)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&result)?);
+                        } else {
+                            print!("{}", question::render_agent_cluster_write_result(&result));
+                        }
+                    }
+                    (question::QuantMQuestionMode::AgentCluster, false) => {
+                        let plan = question::build_agent_cluster_proposal_plan(&text)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&plan)?);
+                        } else {
+                            print!("{}", question::render_agent_cluster_proposal_plan(&plan));
+                        }
+                    }
+                    (_, true) => {
+                        anyhow::bail!(
+                            "--write-proposals is currently supported only for --mode agent-cluster"
+                        );
+                    }
+                    (_, false) => {
+                        let question = question::build_question(mode, &text)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&question)?);
+                        } else {
+                            print!("{}", question::render_question(&question));
+                        }
+                    }
+                }
+            }
+        },
+        Commands::Cost { command } => match command {
+            CostCommand::Summary {
+                json,
+                workflow,
+                session,
+            } => {
+                let summary =
+                    cost_ledger::summarize_costs(&cfg, workflow.as_deref(), session.as_deref())?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    print!("{}", cost_ledger::render_cost_summary(&summary));
+                }
+            }
+        },
+        Commands::InitTruth { force, json } => {
+            let report = truth_files::init_truth_files(&cfg, force)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", truth_files::render_truth_init_report(&report));
+            }
+        }
+        Commands::State { command } => match command {
+            StateCommand::Init => {
+                state_sql::init_schema(&cfg)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "ok",
+                        "db_path": cfg.state_sql.sqlite_path
+                    }))?
+                );
+            }
+            StateCommand::Summary => {
+                let summary = state_sql::summary(&cfg)?;
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            }
+            StateCommand::List { domain } => {
+                let domain = domain
+                    .as_deref()
+                    .map(str::parse::<sessions::DomainId>)
+                    .transpose()?;
+                let listed = shared_state::list_state(&cfg, domain.as_ref())?;
+                println!("{}", serde_json::to_string_pretty(&listed)?);
+            }
+            StateCommand::Show { key } => {
+                let key = key.parse::<shared_state::SharedStateKey>()?;
+                let record = shared_state::show_state(&cfg, &key)?;
+                println!("{}", serde_json::to_string_pretty(&record)?);
+            }
+            StateCommand::Snapshot { domain } => {
+                let domain = domain
+                    .as_deref()
+                    .map(str::parse::<sessions::DomainId>)
+                    .transpose()?;
+                let snapshot = shared_state::snapshot_state(&cfg, domain.as_ref())?;
+                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            }
+            StateCommand::Review { domain, json } => {
+                let review = state_review::review_state(&cfg, domain.as_deref())?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&review)?);
+                } else {
+                    print!("{}", state_review::render_state_review(&review));
+                }
+            }
+            StateCommand::ExpireStale => {
+                let summary = shared_state::expire_stale_now(&cfg)?;
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            }
+            StateCommand::SignalUpsert { json } => {
+                let input: state_sql::SharedSignalInput =
+                    parse_json_input(&json, "state signal payload")?;
+                state_sql::upsert_shared_signal(&cfg, &input)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "ok",
+                        "signal_id": input.signal_id
+                    }))?
+                );
+            }
+            StateCommand::HandoffAdd { json } => {
+                let input: state_sql::DeskHandoffInput =
+                    parse_json_input(&json, "state handoff payload")?;
+                let inserted = state_sql::insert_handoff(&cfg, &input)?;
+                println!("{}", serde_json::to_string_pretty(&inserted)?);
+            }
+            StateCommand::HandoffList { desk, limit } => {
+                let rows = state_sql::list_handoffs(&cfg, desk.as_deref(), limit)?;
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            }
+            StateCommand::RiskAdd { json } => {
+                let input: state_sql::RiskReviewInput =
+                    parse_json_input(&json, "risk review payload")?;
+                let id = state_sql::insert_risk_review(&cfg, &input)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "ok",
+                        "id": id
+                    }))?
+                );
+            }
+            StateCommand::OrderAdd { json } => {
+                let input: state_sql::PaperOrderInput =
+                    parse_json_input(&json, "paper order payload")?;
+                let id = state_sql::insert_paper_order(&cfg, &input)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "ok",
+                        "id": id
+                    }))?
+                );
+            }
+            StateCommand::ForexIngest { json } => {
+                let result = forex::ingest_stonex_payload(&cfg, &json)?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            StateCommand::ForexGetSignal { symbol } => {
+                let value = forex::get_latest_signal(&cfg, &symbol)?;
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
+            StateCommand::ForexGetHandoff { symbol } => {
+                let value = forex::get_handoff(&cfg, &symbol)?;
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
+            StateCommand::SwapHealth { json } => {
+                let input: forex::SwapHealthInput = parse_json_input(&json, "swap health payload")?;
+                let summary = forex::apply_swap_health(&cfg, &input)?;
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            }
+            StateCommand::SwapHealthGet { symbol } => {
+                let value = forex::get_swap_health(&cfg, &symbol)?;
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
+            StateCommand::MacroRefreshMql5 { hours_ahead } => {
+                let summary = forex::refresh_mql5_macro(&cfg, hours_ahead).await?;
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            }
+            StateCommand::MacroGetPair { pair } => {
+                let value = forex::get_pair_macro_state(&cfg, &pair)?;
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
+        },
+    }
+
+    Ok(())
+}
+
+fn is_onboarding_command(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Init { .. }
+            | Commands::Setup { .. }
+            | Commands::Config { .. }
+            | Commands::Doctor { .. }
+            | Commands::Provider { .. }
+            | Commands::Tool { .. }
+    )
+}
+
+async fn handle_onboarding_command(command: Commands, config_path: &std::path::Path) -> Result<()> {
+    match command {
+        Commands::Init {
+            non_interactive,
+            json,
+        } => {
+            let report = run_init_flow(config_path, non_interactive)?;
+            print_serialized_or_text(
+                &report,
+                json,
+                &format!(
+                    "status: {}\nconfig: {}\nworkspace: {}\nstate_sqlite: {}\nsession_dir: {}\nruntime_profile: {}",
+                    report.status,
+                    report.config.display(),
+                    report.workspace.display(),
+                    report.state_sqlite.display(),
+                    report.session_dir.display(),
+                    runtime_profile_label(report.runtime_profile),
+                ),
+            )
+        }
+        Commands::Setup {
+            non_interactive,
+            json,
+            local_model_provider,
+            local_model,
+            remote_model_provider,
+            remote_model,
+            openrouter_model,
+            channel,
+            channel_value,
+            runtime_profile,
+            workspace_path,
+            state_path,
+            session_path,
+            external_network,
+        } => {
+            let report = run_setup_flow(
+                config_path,
+                SetupArgs {
+                    non_interactive,
+                    local_model_provider,
+                    local_model,
+                    remote_model_provider,
+                    remote_model,
+                    openrouter_model,
+                    channel,
+                    channel_value,
+                    runtime_profile,
+                    workspace_path,
+                    state_path,
+                    session_path,
+                    external_network,
+                    selected_tools: Vec::new(),
+                },
+            )?;
+            let local_model = format_model_pref(report.preferred_local_model.as_ref());
+            let remote_model = format_model_pref(report.preferred_remote_model.as_ref());
+            let channel = format_channel_pref(&report.preferred_channel);
+            print_serialized_or_text(
+                &report,
+                json,
+                &format!(
+                    "status: {}\nconfig: {}\nworkspace: {}\nstate_sqlite: {}\nsession_dir: {}\nruntime_profile: {}\nexternal_network_enabled: {}\npreferred_channel: {}\npreferred_local_model: {}\npreferred_remote_model: {}\npreferred_openrouter_model: {}",
+                    report.status,
+                    report.config.display(),
+                    report.workspace.display(),
+                    report.state_sqlite.display(),
+                    report.session_dir.display(),
+                    runtime_profile_label(report.runtime_profile),
+                    report.external_network_enabled,
+                    channel,
+                    local_model,
+                    remote_model,
+                    report
+                        .preferred_openrouter_model
+                        .as_deref()
+                        .unwrap_or("unset"),
+                ),
+            )
+        }
+        Commands::Config { command } => handle_config_command(config_path, command),
+        Commands::Doctor {
+            json,
+            providers,
+            live,
+        } => {
+            let report = run_doctor(config_path, providers, live).await?;
+            let provider_summary = if providers {
+                format!(
+                    "\nprovider_diagnostics: {}",
+                    report.provider_diagnostics.len()
+                )
+            } else {
+                String::new()
+            };
+            let summary = format!(
+                "config_exists: {}\nworkspace_exists: {}\nstate_path_exists: {}\nsession_path_exists: {}\nworkflow_run_ok: {}\nshared_state_list_ok: {}\nsession_list_ok: {}\nchecked_binary: {}\ngenerated_session_id: {}{}",
+                report.config_exists,
+                report.workspace_exists,
+                report.state_path_exists,
+                report.session_path_exists,
+                report.workflow_run_ok,
+                report.shared_state_list_ok,
+                report.session_list_ok,
+                report.checked_binary.display(),
+                report.generated_session_id.as_deref().unwrap_or("none"),
+                provider_summary,
+            );
+            if !(report.config_exists
+                && report.workspace_exists
+                && report.state_path_exists
+                && report.session_path_exists
+                && report.workflow_run_ok
+                && report.shared_state_list_ok
+                && report.session_list_ok)
+            {
+                print_serialized_or_text(&report, json, &summary)?;
+                anyhow::bail!("doctor checks failed");
+            }
+            print_serialized_or_text(&report, json, &summary)
+        }
+        Commands::Provider { command } => handle_provider_command(config_path, command).await,
+        Commands::Tool { command } => handle_tool_command(config_path, command),
+        _ => unreachable!("not an onboarding command"),
+    }
+}
+
+#[derive(Debug)]
+struct SetupArgs {
+    non_interactive: bool,
+    local_model_provider: Option<String>,
+    local_model: Option<String>,
+    remote_model_provider: Option<String>,
+    remote_model: Option<String>,
+    openrouter_model: Option<String>,
+    channel: Option<String>,
+    channel_value: Option<String>,
+    runtime_profile: Option<String>,
+    workspace_path: Option<PathBuf>,
+    state_path: Option<PathBuf>,
+    session_path: Option<PathBuf>,
+    external_network: Option<String>,
+    selected_tools: Vec<String>,
+}
+
+fn run_init_flow(config_path: &std::path::Path, _non_interactive: bool) -> Result<InitReport> {
+    let mut cfg = Config::load_or_create(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    let cfg = cfg.sanitize();
+    cfg.validate()?;
+    cfg.save(config_path)?;
+    bootstrap::ensure_workspace(&cfg)?;
+    Ok(InitReport {
+        status: "ok".to_string(),
+        config: config_path.to_path_buf(),
+        workspace: cfg.workspace_dir.clone(),
+        state_sqlite: cfg.state_sql.sqlite_path.clone(),
+        session_dir: cfg.runtime.session_dir.clone(),
+        runtime_profile: cfg.runtime.profile,
+    })
+}
+
+fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<SetupReport> {
+    let mut cfg = Config::load_or_create(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    let args = if args.non_interactive || !io::stdin().is_terminal() {
+        if !args.non_interactive && !io::stdin().is_terminal() {
+            eprintln!("setup: stdin is not interactive; using safe defaults");
+        }
+        args
+    } else {
+        run_interactive_setup(config_path, args, &cfg)?
+    };
+
+    if let Some(workspace_path) = args.workspace_path {
+        rebase_workspace_paths(&mut cfg, workspace_path);
+    }
+    if let Some(state_path) = args.state_path {
+        cfg.state_sql.sqlite_path = state_path;
+    }
+    if let Some(session_path) = args.session_path {
+        cfg.runtime.session_dir = session_path;
+    }
+    if let Some(runtime_profile) = args.runtime_profile {
+        cfg.runtime.profile = runtime_profile.parse()?;
+    }
+    if let Some(external_network) = args.external_network {
+        cfg.runtime.external_network_enabled = parse_enabled_disabled(&external_network)?;
+    }
+    if let Some(openrouter_model) = args.openrouter_model {
+        let trimmed = openrouter_model.trim();
+        if !trimmed.is_empty() {
+            enable_provider(&mut cfg, "openrouter");
+            cfg.preferences.preferred_openrouter_model = Some(trimmed.to_string());
+            cfg.llm.model = trimmed.to_string();
+        }
+    }
+
+    match (args.local_model_provider, args.local_model) {
+        (Some(provider), Some(model)) => {
+            enable_provider(&mut cfg, provider.trim());
+            cfg.preferences.preferred_local_model = Some(config::ModelPreference {
+                provider: provider.trim().to_string(),
+                model: model.trim().to_string(),
+            });
+        }
+        (None, None) => {}
+        _ => anyhow::bail!("--local-model-provider and --local-model must be provided together"),
+    }
+
+    match (args.remote_model_provider, args.remote_model) {
+        (Some(provider), Some(model)) => {
+            enable_provider(&mut cfg, provider.trim());
+            cfg.preferences.preferred_remote_model = Some(config::ModelPreference {
+                provider: provider.trim().to_string(),
+                model: model.trim().to_string(),
+            });
+        }
+        (None, None) => {}
+        _ => anyhow::bail!("--remote-model-provider and --remote-model must be provided together"),
+    }
+
+    match (args.channel, args.channel_value) {
+        (Some(channel), value) => {
+            let channel = channel.parse::<config::ExternalChannel>()?;
+            cfg.set_channel_preference(channel, value.as_deref())?;
+        }
+        (None, Some(_)) => anyhow::bail!("--channel-value requires --channel"),
+        (None, None) => {}
+    }
+    for tool in &args.selected_tools {
+        enable_tool(&mut cfg, tool);
+    }
+
+    let cfg = cfg.sanitize();
+    cfg.validate()?;
+    cfg.save(config_path)?;
+    bootstrap::ensure_workspace(&cfg)?;
+    Ok(SetupReport {
+        status: if args.non_interactive {
+            "ok_non_interactive".to_string()
+        } else {
+            "ok".to_string()
+        },
+        config: config_path.to_path_buf(),
+        workspace: cfg.workspace_dir.clone(),
+        state_sqlite: cfg.state_sql.sqlite_path.clone(),
+        session_dir: cfg.runtime.session_dir.clone(),
+        runtime_profile: cfg.runtime.profile,
+        external_network_enabled: cfg.runtime.external_network_enabled,
+        preferred_channel: cfg.preferences.preferred_channel.clone(),
+        preferred_local_model: cfg.preferences.preferred_local_model.clone(),
+        preferred_remote_model: cfg.preferences.preferred_remote_model.clone(),
+        preferred_openrouter_model: cfg.preferences.preferred_openrouter_model.clone(),
+        openrouter_key_present: provider_key_present(&cfg, "openrouter"),
+        provider_count: cfg.providers.len(),
+        tool_count: cfg.tools.len(),
+    })
+}
+
+fn run_interactive_setup(
+    config_path: &std::path::Path,
+    mut args: SetupArgs,
+    cfg: &Config,
+) -> Result<SetupArgs> {
+    println!("Quant-M setup");
+    println!("This writes config only. It will not store API keys or make live calls by default.");
+
+    if args.workspace_path.is_none() {
+        let default = cfg.workspace_dir.display().to_string();
+        let answer = prompt_default("Workspace path", &default)?;
+        args.workspace_path = Some(PathBuf::from(answer));
+    }
+
+    if args.runtime_profile.is_none() {
+        let default = runtime_profile_label(cfg.runtime.profile);
+        args.runtime_profile = Some(prompt_choice(
+            "Runtime profile [laptop/edge/staff-os-worker/vps]",
+            default,
+            &["laptop", "edge", "staff-os-worker", "vps"],
+        )?);
+    }
+
+    let openrouter_choice = prompt_choice(
+        "OpenRouter [env/paste/export/skip]",
+        "skip",
+        &["env", "paste", "export", "skip"],
+    )?;
+    match openrouter_choice.as_str() {
+        "env" => {
+            println!(
+                "OpenRouter will use {} if present.",
+                cfg.providers
+                    .get("openrouter")
+                    .map(|provider| provider.api_key_env.as_str())
+                    .unwrap_or("OPENROUTER_API_KEY")
+            );
+        }
+        "paste" => {
+            let key = prompt_secret_like("Paste OpenRouter key for this validation session only")?;
+            if !key.trim().is_empty() {
+                println!(
+                    "Key received for this process only. Export it with: export OPENROUTER_API_KEY='<redacted>'"
+                );
+            }
+        }
+        "export" => {
+            println!("Run: export OPENROUTER_API_KEY='<your-openrouter-key>'");
+        }
+        "skip" => {}
+        _ => unreachable!("choice is constrained"),
+    }
+
+    if args.openrouter_model.is_none() {
+        let model_choice = prompt_choice(
+            "Preferred OpenRouter model [coding/cheap/custom/unset]",
+            "coding",
+            &["coding", "cheap", "custom", "unset"],
+        )?;
+        args.openrouter_model = match model_choice.as_str() {
+            "coding" => Some("qwen/qwen3-coder".to_string()),
+            "cheap" => Some("openai/gpt-4o-mini".to_string()),
+            "custom" => {
+                let value = prompt_default("Custom OpenRouter model", "qwen/qwen3-coder")?;
+                if value.trim().is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+            "unset" => None,
+            _ => unreachable!("choice is constrained"),
+        };
+    }
+
+    let openai_or_codex = prompt_choice(
+        "Direct OpenAI or Codex [codex/openai/neither]",
+        "neither",
+        &["codex", "openai", "neither"],
+    )?;
+    match openai_or_codex.as_str() {
+        "codex" => enable_tool_arg(&mut args, "codex"),
+        "openai" => {
+            args.remote_model_provider = Some("openai".to_string());
+            args.remote_model = Some("gpt-5-codex".to_string());
+        }
+        "neither" => {}
+        _ => unreachable!("choice is constrained"),
+    }
+
+    let harness = prompt_choice(
+        "Optional harness detection [hermes/pi-agent/openclaw/skip]",
+        "skip",
+        &["hermes", "pi-agent", "openclaw", "skip"],
+    )?;
+    if harness != "skip" {
+        enable_tool_arg(&mut args, &harness);
+    }
+
+    let validation = prompt_choice(
+        "Validation posture [local/live/none]",
+        "local",
+        &["local", "live", "none"],
+    )?;
+    if validation == "live" {
+        println!(
+            "Live validation is explicit. Run provider validate <provider> --live after setup."
+        );
+    }
+
+    if args.external_network.is_none() {
+        args.external_network = Some(prompt_choice(
+            "Default network posture [disabled/explicit/enabled]",
+            "disabled",
+            &["disabled", "explicit", "enabled"],
+        )?);
+        if args.external_network.as_deref() == Some("explicit") {
+            args.external_network = Some("disabled".to_string());
+            println!(
+                "Network remains disabled. Explicit provider validation can still use --live."
+            );
+        }
+    }
+
+    let fallback = prompt_choice(
+        "Local fallback [ollama/lmstudio/none]",
+        "none",
+        &["ollama", "lmstudio", "none"],
+    )?;
+    match fallback.as_str() {
+        "ollama" => {
+            args.local_model_provider = Some("ollama".to_string());
+            args.local_model = Some("qwen3-coder:7b".to_string());
+        }
+        "lmstudio" => {
+            args.local_model_provider = Some("lmstudio".to_string());
+            args.local_model = Some("local-model".to_string());
+        }
+        "none" => {}
+        _ => unreachable!("choice is constrained"),
+    }
+
+    if args.channel.is_none() {
+        let channel = prompt_choice(
+            "Channel [terminal/telegram-later/webhook-later]",
+            "terminal",
+            &["terminal", "telegram-later", "webhook-later"],
+        )?;
+        match channel.as_str() {
+            "terminal" => {
+                args.channel = Some("none".to_string());
+                args.channel_value = None;
+            }
+            "telegram-later" => {
+                args.channel = Some("telegram".to_string());
+                args.channel_value = Some("disabled".to_string());
+            }
+            "webhook-later" => {
+                println!("Webhook stays disabled until adapters.webhook_url is explicitly set.");
+            }
+            _ => unreachable!("choice is constrained"),
+        }
+    }
+
+    println!(
+        "Next: quant-m doctor{}",
+        if config_path.exists() {
+            ""
+        } else {
+            " after config is written"
+        }
+    );
+    Ok(args)
+}
+
+fn prompt_default(label: &str, default: &str) -> Result<String> {
+    print!("{label} [{default}]: ");
+    io::stdout().flush().context("failed to flush prompt")?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .context("failed to read setup answer")?;
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        Ok(default.to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn prompt_choice(label: &str, default: &str, allowed: &[&str]) -> Result<String> {
+    loop {
+        let value = prompt_default(label, default)?;
+        if allowed
+            .iter()
+            .any(|allowed| value.eq_ignore_ascii_case(allowed))
+        {
+            return Ok(value.to_ascii_lowercase());
+        }
+        println!("Choose one of: {}", allowed.join(", "));
+    }
+}
+
+fn prompt_secret_like(label: &str) -> Result<String> {
+    print!("{label}: ");
+    io::stdout().flush().context("failed to flush prompt")?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .context("failed to read setup secret")?;
+    Ok(input.trim().to_string())
+}
+
+fn enable_provider(cfg: &mut Config, id: &str) {
+    cfg.ensure_onboarding_registries();
+    let id = normalize_registry_id(id);
+    if let Some(provider) = cfg.providers.get_mut(&id) {
+        provider.enabled = true;
+    }
+}
+
+fn enable_tool_arg(args: &mut SetupArgs, id: &str) {
+    args.selected_tools.push(id.to_string());
+    println!(
+        "Tool '{id}' will be visible in `quant-m tool list`; validate it with `quant-m tool validate {id}`."
+    );
+}
+
+fn enable_tool(cfg: &mut Config, id: &str) {
+    cfg.ensure_onboarding_registries();
+    let id = normalize_registry_id(id);
+    if let Some(tool) = cfg.tools.get_mut(&id) {
+        tool.enabled = true;
+    }
+}
+
+fn handle_config_command(config_path: &std::path::Path, command: ConfigCommand) -> Result<()> {
+    match command {
+        ConfigCommand::Show { json } => {
+            let cfg = Config::load_or_create(config_path)
+                .with_context(|| format!("failed loading config {}", config_path.display()))?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&cfg.portable_view(config_path))?
+                );
+            } else {
+                println!("{}", cfg.render_toml(config_path)?);
+            }
+            Ok(())
+        }
+        ConfigCommand::SetModel { provider, model } => {
+            let mut cfg = Config::load_or_create(config_path)
+                .with_context(|| format!("failed loading config {}", config_path.display()))?;
+            cfg.set_preferred_model(&provider, &model)?;
+            let cfg = cfg.sanitize();
+            cfg.validate()?;
+            cfg.save(config_path)?;
+            println!(
+                "updated model preference: provider={} model={}",
+                provider.trim(),
+                model.trim()
+            );
+            Ok(())
+        }
+        ConfigCommand::SetChannel { channel, value } => {
+            let mut cfg = Config::load_or_create(config_path)
+                .with_context(|| format!("failed loading config {}", config_path.display()))?;
+            let parsed_channel = channel.parse::<config::ExternalChannel>()?;
+            cfg.set_channel_preference(parsed_channel, Some(&value))?;
+            let cfg = cfg.sanitize();
+            cfg.validate()?;
+            cfg.save(config_path)?;
+            println!(
+                "updated channel preference: channel={} value={}",
+                channel.trim(),
+                if value.trim().is_empty() {
+                    "unset"
+                } else {
+                    value.trim()
+                }
+            );
+            Ok(())
+        }
+        ConfigCommand::Validate => {
+            let cfg = Config::load_or_create(config_path)
+                .with_context(|| format!("failed loading config {}", config_path.display()))?;
+            cfg.validate()?;
+            println!("config valid: {}", config_path.display());
+            Ok(())
+        }
+    }
+}
+
+async fn handle_provider_command(
+    config_path: &std::path::Path,
+    command: ProviderCommand,
+) -> Result<()> {
+    let mut cfg = Config::load_or_create(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    let cfg = cfg.sanitize();
+    cfg.validate()?;
+    cfg.save(config_path)?;
+
+    match command {
+        ProviderCommand::List { json } => {
+            let items = list_providers(&cfg);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&items)?);
+            } else {
+                for item in items {
+                    println!(
+                        "{} enabled={} kind={:?} key_env={} key_present={} api_base={} models={}",
+                        item.id,
+                        item.enabled,
+                        item.kind,
+                        if item.api_key_env.is_empty() {
+                            "none"
+                        } else {
+                            item.api_key_env.as_str()
+                        },
+                        item.key_present,
+                        item.api_base,
+                        if item.preferred_models.is_empty() {
+                            "unset".to_string()
+                        } else {
+                            item.preferred_models.join(",")
+                        }
+                    );
+                }
+            }
+            Ok(())
+        }
+        ProviderCommand::Validate {
+            provider,
+            live,
+            json,
+        } => {
+            let report = validate_provider(&cfg, &provider, live).await?;
+            print_serialized_or_text(&report, json, &format_provider_report(&report))
+        }
+    }
+}
+
+fn handle_tool_command(config_path: &std::path::Path, command: ToolCommand) -> Result<()> {
+    let mut cfg = Config::load_or_create(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    let cfg = cfg.sanitize();
+    cfg.validate()?;
+    cfg.save(config_path)?;
+
+    match command {
+        ToolCommand::List { json } => {
+            let items = list_tools(&cfg);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&items)?);
+            } else {
+                for item in items {
+                    println!(
+                        "{} enabled={} kind={:?} command={} present={} validation_args={}",
+                        item.id,
+                        item.enabled,
+                        item.kind,
+                        item.command,
+                        item.command_present,
+                        if item.validation_args.is_empty() {
+                            "none".to_string()
+                        } else {
+                            item.validation_args.join(" ")
+                        }
+                    );
+                }
+            }
+            Ok(())
+        }
+        ToolCommand::Validate { tool, json } => {
+            let report = validate_tool(&cfg, &tool)?;
+            print_serialized_or_text(&report, json, &format_tool_report(&report))
+        }
+    }
+}
+
+async fn run_doctor(
+    config_path: &std::path::Path,
+    include_providers: bool,
+    live: bool,
+) -> Result<DoctorReport> {
+    let config_exists = config_path.exists();
+    if !config_exists {
+        return Ok(DoctorReport {
+            config_exists,
+            workspace_exists: false,
+            state_path_exists: false,
+            session_path_exists: false,
+            workflow_run_ok: false,
+            shared_state_list_ok: false,
+            session_list_ok: false,
+            checked_binary: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quant-m")),
+            generated_session_id: None,
+            provider_diagnostics: Vec::new(),
+        });
+    }
+
+    let mut cfg = Config::load_existing(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    let workspace_exists = cfg.workspace_dir.exists();
+    let state_path_exists = cfg
+        .state_sql
+        .sqlite_path
+        .parent()
+        .map(std::path::Path::exists)
+        .unwrap_or(false);
+    let session_path_exists = cfg.runtime.session_dir.exists();
+
+    if !(workspace_exists && state_path_exists && session_path_exists) {
+        return Ok(DoctorReport {
+            config_exists,
+            workspace_exists,
+            state_path_exists,
+            session_path_exists,
+            workflow_run_ok: false,
+            shared_state_list_ok: false,
+            session_list_ok: false,
+            checked_binary: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quant-m")),
+            generated_session_id: None,
+            provider_diagnostics: if include_providers {
+                validate_all_providers(&cfg, live).await?
+            } else {
+                Vec::new()
+            },
+        });
+    }
+
+    let workflow = "workflow:mock-research-brief"
+        .parse::<workflow_registry::WorkflowId>()
+        .expect("static workflow id");
+    let run = execution_runtime::run_workflow(&cfg, &workflow)?;
+    let sessions_ok = sessions::list_sessions(&cfg).is_ok();
+    let state_ok = shared_state::list_state(&cfg, None).is_ok();
+
+    Ok(DoctorReport {
+        config_exists,
+        workspace_exists,
+        state_path_exists,
+        session_path_exists,
+        workflow_run_ok: run.status == "ok",
+        shared_state_list_ok: state_ok,
+        session_list_ok: sessions_ok,
+        checked_binary: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quant-m")),
+        generated_session_id: Some(run.session_id.to_string()),
+        provider_diagnostics: if include_providers {
+            validate_all_providers(&cfg, live).await?
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+fn list_providers(cfg: &Config) -> Vec<ProviderListItem> {
+    cfg.providers
+        .iter()
+        .map(|(id, provider)| ProviderListItem {
+            id: id.clone(),
+            enabled: provider.enabled,
+            kind: provider.kind,
+            api_base: provider.api_base.clone(),
+            api_key_env: provider.api_key_env.clone(),
+            key_present: provider_key_present(cfg, id),
+            preferred_models: provider.preferred_models.clone(),
+            live_validation_allowed: provider.live_validation_allowed,
+        })
+        .collect()
+}
+
+fn list_tools(cfg: &Config) -> Vec<ToolListItem> {
+    cfg.tools
+        .iter()
+        .map(|(id, tool)| ToolListItem {
+            id: id.clone(),
+            enabled: tool.enabled,
+            kind: tool.kind,
+            command: tool.command.clone(),
+            validation_args: tool.validation_args.clone(),
+            command_present: command_present(&tool.command),
+        })
+        .collect()
+}
+
+async fn validate_all_providers(cfg: &Config, live: bool) -> Result<Vec<ProviderValidationReport>> {
+    let mut reports = Vec::new();
+    for id in cfg.providers.keys() {
+        reports.push(validate_provider(cfg, id, live).await?);
+    }
+    Ok(reports)
+}
+
+async fn validate_provider(
+    cfg: &Config,
+    provider_id: &str,
+    live: bool,
+) -> Result<ProviderValidationReport> {
+    let id = normalize_registry_id(provider_id);
+    let provider = cfg
+        .providers
+        .get(&id)
+        .with_context(|| format!("unknown provider '{}'", provider_id))?;
+    let key_present = provider_key_present(cfg, &id);
+    let mut report = ProviderValidationReport {
+        id,
+        enabled: provider.enabled,
+        kind: provider.kind,
+        api_base: provider.api_base.clone(),
+        api_key_env: provider.api_key_env.clone(),
+        key_present,
+        live_requested: live,
+        live_ok: None,
+        message: String::new(),
+    };
+
+    if !live {
+        report.message = if provider.api_key_env.is_empty() {
+            "local config ok; no API key required for this provider kind".to_string()
+        } else if key_present {
+            format!("local config ok; {} is present", provider.api_key_env)
+        } else {
+            format!(
+                "local config ok; set {} to enable live validation",
+                provider.api_key_env
+            )
+        };
+        return Ok(report);
+    }
+
+    if matches!(
+        provider.kind,
+        config::ProviderKind::Ollama | config::ProviderKind::LmStudio
+    ) {
+        report.live_ok = Some(false);
+        report.message =
+            "live validation for local HTTP providers is intentionally not run here".to_string();
+        return Ok(report);
+    }
+    let Some(key) = provider_api_key(provider) else {
+        report.live_ok = Some(false);
+        report.message = format!("missing env var {}", provider.api_key_env);
+        return Ok(report);
+    };
+
+    let url = format!("{}/models", provider.api_base.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .context("failed to build provider validation HTTP client")?;
+    let result = client.get(&url).bearer_auth(key).send().await;
+    match result {
+        Ok(resp) if resp.status().is_success() => {
+            report.live_ok = Some(true);
+            report.message = format!("live validation ok at {url}");
+        }
+        Ok(resp) => {
+            report.live_ok = Some(false);
+            report.message = format!("live validation returned HTTP {}", resp.status());
+        }
+        Err(err) => {
+            report.live_ok = Some(false);
+            report.message = format!("live validation failed: {err}");
+        }
+    }
+    Ok(report)
+}
+
+fn validate_tool(cfg: &Config, tool_id: &str) -> Result<ToolValidationReport> {
+    let id = normalize_registry_id(tool_id);
+    let tool = cfg
+        .tools
+        .get(&id)
+        .with_context(|| format!("unknown tool '{}'", tool_id))?;
+    let command_present = command_present(&tool.command);
+    if !command_present {
+        return Ok(ToolValidationReport {
+            id,
+            enabled: tool.enabled,
+            kind: tool.kind,
+            command: tool.command.clone(),
+            command_present,
+            validation_ok: false,
+            message: "command not found on PATH".to_string(),
+        });
+    }
+
+    let output = Command::new(&tool.command)
+        .args(&tool.validation_args)
+        .output()
+        .with_context(|| format!("failed to run {}", tool.command))?;
+    let validation_ok = output.status.success();
+    let message = if validation_ok {
+        "tool responded to safe validation command".to_string()
+    } else {
+        format!("tool exited with status {}", output.status)
+    };
+    Ok(ToolValidationReport {
+        id,
+        enabled: tool.enabled,
+        kind: tool.kind,
+        command: tool.command.clone(),
+        command_present,
+        validation_ok,
+        message,
+    })
+}
+
+fn provider_key_present(cfg: &Config, id: &str) -> bool {
+    let id = normalize_registry_id(id);
+    cfg.providers.get(&id).and_then(provider_api_key).is_some()
+}
+
+fn provider_api_key(provider: &config::ProviderConfig) -> Option<String> {
+    if provider.api_key_env.trim().is_empty() {
+        return None;
+    }
+    env::var(&provider.api_key_env)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn command_present(command: &str) -> bool {
+    let command = command.trim();
+    if command.is_empty() {
+        return false;
+    }
+    if command.contains(std::path::MAIN_SEPARATOR) {
+        return std::path::Path::new(command).is_file();
+    }
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path).any(|dir| dir.join(command).is_file())
+}
+
+fn normalize_registry_id(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('_', "-")
+}
+
+fn format_provider_report(report: &ProviderValidationReport) -> String {
+    format!(
+        "provider: {}\nenabled: {}\nkey_env: {}\nkey_present: {}\nlive_requested: {}\nlive_ok: {}\nmessage: {}",
+        report.id,
+        report.enabled,
+        if report.api_key_env.is_empty() {
+            "none"
+        } else {
+            report.api_key_env.as_str()
+        },
+        report.key_present,
+        report.live_requested,
+        report
+            .live_ok
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "not_run".to_string()),
+        report.message
+    )
+}
+
+fn format_tool_report(report: &ToolValidationReport) -> String {
+    format!(
+        "tool: {}\nenabled: {}\ncommand: {}\ncommand_present: {}\nvalidation_ok: {}\nmessage: {}",
+        report.id,
+        report.enabled,
+        report.command,
+        report.command_present,
+        report.validation_ok,
+        report.message
+    )
+}
+
+fn parse_enabled_disabled(value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "enabled" | "true" | "yes" | "on" => Ok(true),
+        "disabled" | "false" | "no" | "off" => Ok(false),
+        other => anyhow::bail!("expected enabled or disabled, got '{}'", other),
+    }
+}
+
+fn print_serialized_or_text<T: Serialize>(value: &T, json: bool, text: &str) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        println!("{text}");
+    }
+    Ok(())
+}
+
+fn runtime_profile_label(profile: config::RuntimeProfile) -> &'static str {
+    match profile {
+        config::RuntimeProfile::Edge => "edge",
+        config::RuntimeProfile::Laptop => "laptop",
+        config::RuntimeProfile::Vps => "vps",
+        config::RuntimeProfile::StaffOsWorker => "staff-os-worker",
+    }
+}
+
+fn format_model_pref(value: Option<&config::ModelPreference>) -> String {
+    value
+        .map(|pref| format!("{} {}", pref.provider, pref.model))
+        .unwrap_or_else(|| "unset".to_string())
+}
+
+fn format_channel_pref(value: &config::ChannelPreference) -> String {
+    let label = channels::channel_label(value.channel);
+    match value.value.as_deref() {
+        Some(extra) => format!("{label}:{extra}"),
+        None => label.to_string(),
+    }
+}
+
+fn rebase_workspace_paths(cfg: &mut Config, new_workspace: PathBuf) {
+    let original_workspace = cfg.workspace_dir.clone();
+    cfg.workspace_dir = new_workspace;
+
+    rebase_path_if_under_workspace(
+        &mut cfg.memory.sqlite_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.memory.core_markdown,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.memory.daily_dir,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.state_sql.sqlite_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.heartbeat.tasks_file,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.worker.inbox_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.worker.outbox_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.worker.inflight_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.worker.state_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.worker.dead_letter_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.logging.file,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(&mut cfg.skills.dir, &original_workspace, &cfg.workspace_dir);
+    rebase_path_if_under_workspace(
+        &mut cfg.forex.redb_path,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+    rebase_path_if_under_workspace(
+        &mut cfg.runtime.session_dir,
+        &original_workspace,
+        &cfg.workspace_dir,
+    );
+}
+
+fn rebase_path_if_under_workspace(
+    path: &mut PathBuf,
+    original: &std::path::Path,
+    new_workspace: &std::path::Path,
+) {
+    if let Ok(relative) = path.strip_prefix(original) {
+        *path = if relative.as_os_str().is_empty() {
+            new_workspace.to_path_buf()
+        } else {
+            new_workspace.join(relative)
+        };
+    }
+}
+
+fn operator_identity(cfg: &Config) -> String {
+    env::var("QUANT_M_OPERATOR")
+        .or_else(|_| env::var("USER"))
+        .or_else(|_| env::var("USERNAME"))
+        .map(|value| format!("operator:{}", value.trim()))
+        .unwrap_or_else(|_| format!("operator:{}", cfg.node_id))
+}
+
+fn storage_mode_for_command(command: &Commands) -> StorageMode {
+    match command {
+        Commands::Config { .. }
+        | Commands::Setup { .. }
+        | Commands::Provider { .. }
+        | Commands::Tool { .. } => StorageMode::Inspect,
+        Commands::Doctor { .. } => StorageMode::SessionWrite,
+        Commands::Agent => StorageMode::Inspect,
+        Commands::Tui => StorageMode::Inspect,
+        Commands::Skill { .. }
+        | Commands::Policy { .. }
+        | Commands::Workflow { .. }
+        | Commands::Fsm { .. }
+        | Commands::Scheduler { .. }
+        | Commands::Desk { .. }
+        | Commands::Domain { .. }
+        | Commands::Channel { .. }
+        | Commands::Cockpit { .. }
+        | Commands::Compact { .. }
+        | Commands::ContextStatus { .. }
+        | Commands::Replay { .. }
+        | Commands::Cost { .. }
+        | Commands::InitTruth { .. } => StorageMode::Inspect,
+        Commands::Context { .. } => StorageMode::SessionWrite,
+        Commands::Question { command } => match command {
+            QuestionCommand::Ask {
+                write_proposals, ..
+            } => {
+                if *write_proposals {
+                    StorageMode::SessionWrite
+                } else {
+                    StorageMode::Inspect
+                }
+            }
+        },
+        Commands::Run { .. } | Commands::Consensus { .. } | Commands::Strategist { .. } => {
+            StorageMode::SessionWrite
+        }
+        Commands::Session { command } => match command {
+            SessionCommand::List
+            | SessionCommand::Show { .. }
+            | SessionCommand::Replay { .. }
+            | SessionCommand::ResumePlan { .. } => StorageMode::Inspect,
+            SessionCommand::Approve { .. }
+            | SessionCommand::Deny { .. }
+            | SessionCommand::NeedsInfo { .. } => StorageMode::SessionWrite,
+        },
+        Commands::Daemon { .. } | Commands::Heartbeat { .. } | Commands::Telegram { .. } => {
+            StorageMode::WorkerRun
+        }
+        Commands::Worker { command } => match command {
+            WorkerCommand::Proposal {
+                command: WorkerProposalCommand::List { .. },
+            } => StorageMode::Inspect,
+            WorkerCommand::Proposal {
+                command: WorkerProposalCommand::Submit { .. },
+            } => StorageMode::SessionWrite,
+            WorkerCommand::Submit { .. } | WorkerCommand::Once { .. } | WorkerCommand::Run => {
+                StorageMode::WorkerRun
+            }
+        },
+        Commands::Init { .. }
+        | Commands::Status
+        | Commands::Memory { .. }
+        | Commands::Adapter { .. }
+        | Commands::Llm { .. } => StorageMode::RuntimePreflight,
+        Commands::Loop { .. } => StorageMode::Inspect,
+        Commands::State { command } => match command {
+            StateCommand::List { .. }
+            | StateCommand::Show { .. }
+            | StateCommand::Snapshot { .. }
+            | StateCommand::Review { .. }
+            | StateCommand::ExpireStale => StorageMode::Inspect,
+            StateCommand::Init
+            | StateCommand::Summary
+            | StateCommand::SignalUpsert { .. }
+            | StateCommand::HandoffAdd { .. }
+            | StateCommand::HandoffList { .. }
+            | StateCommand::RiskAdd { .. }
+            | StateCommand::OrderAdd { .. }
+            | StateCommand::ForexIngest { .. }
+            | StateCommand::ForexGetSignal { .. }
+            | StateCommand::ForexGetHandoff { .. }
+            | StateCommand::SwapHealth { .. }
+            | StateCommand::SwapHealthGet { .. }
+            | StateCommand::MacroRefreshMql5 { .. }
+            | StateCommand::MacroGetPair { .. } => StorageMode::RuntimePreflight,
+        },
+        Commands::Skills { command } => match command {
+            SkillsCommand::List | SkillsCommand::Show { .. } => StorageMode::Inspect,
+            SkillsCommand::Run { .. } => StorageMode::RuntimePreflight,
+        },
+    }
+}
+
+fn parse_cockpit_host(value: &str) -> Result<terminal_cockpit::HostPlatform> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Ok(terminal_cockpit::HostPlatform::detect()),
+        "android" | "android-termux" | "android_termux" | "termux" => {
+            Ok(terminal_cockpit::HostPlatform::AndroidTermux)
+        }
+        "macos" | "mac" | "darwin" | "apple" => Ok(terminal_cockpit::HostPlatform::Macos),
+        "linux" => Ok(terminal_cockpit::HostPlatform::Linux),
+        "windows" | "win" => Ok(terminal_cockpit::HostPlatform::Windows),
+        "unknown" | "plain" => Ok(terminal_cockpit::HostPlatform::Unknown),
+        other => Err(anyhow::anyhow!(
+            "unsupported cockpit host '{other}'; expected auto, android, macos, linux, windows, or unknown"
+        )),
+    }
+}
+
+fn build_cockpit_lane_inputs(
+    repo_paths: Vec<PathBuf>,
+    models: Vec<String>,
+) -> Vec<terminal_cockpit::CockpitLaneInput> {
+    repo_paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, repo_path)| terminal_cockpit::CockpitLaneInput {
+            repo_path,
+            model: models.get(index).cloned(),
+        })
+        .collect()
+}
+
+fn prepare_storage_for_command(cfg: &Config, command: &Commands) -> Result<()> {
+    prepare_storage_for_mode(cfg, storage_mode_for_command(command))
+}
+
+fn prepare_storage_for_mode(cfg: &Config, mode: StorageMode) -> Result<()> {
+    match mode {
+        StorageMode::Inspect | StorageMode::SessionWrite => Ok(()),
+        StorageMode::RuntimePreflight | StorageMode::WorkerRun => preflight_runtime(cfg),
+    }
+}
+
+fn preflight_runtime(cfg: &Config) -> Result<()> {
+    let _ = MemoryStore::open(cfg).context("memory preflight failed")?;
+    state_sql::sanity_check(cfg).context("shared-state preflight failed")?;
+    forex::preflight(cfg).context("forex redb preflight failed")?;
+    Ok(())
+}
+
+fn resolve_config_path(input: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = input {
+        return Ok(path);
+    }
+    Ok(std::env::current_dir()
+        .context("failed to read current directory")?
+        .join("quant-m.toml"))
+}
+
+fn print_status(cfg: &Config) -> Result<()> {
+    let payload = build_status_payload(cfg);
+    println!("{}", serde_json::to_string_pretty(&payload)?);
+    Ok(())
+}
+
+fn build_status_payload(cfg: &Config) -> serde_json::Value {
+    let mut status_errors = Vec::new();
+
+    let memory_count = match MemoryStore::open(cfg).and_then(|store| store.count()) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            status_errors.push(format!("memory_count_error={}", err));
+            None
+        }
+    };
+    let inbox_depth = match worker::queue_depth(&cfg.worker.inbox_path) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            status_errors.push(format!("inbox_depth_error={}", err));
+            None
+        }
+    };
+    let outbox_depth = match worker::queue_depth(&cfg.worker.outbox_path) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            status_errors.push(format!("outbox_depth_error={}", err));
+            None
+        }
+    };
+    let dead_letter_depth = match worker::queue_depth(&cfg.worker.dead_letter_path) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            status_errors.push(format!("dead_letter_depth_error={}", err));
+            None
+        }
+    };
+    let skills_count = match skills::list_skills(cfg).map(|items| items.len()) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            status_errors.push(format!("skills_count_error={}", err));
+            None
+        }
+    };
+    let worker_state = match worker::read_state_checked(&cfg.worker.state_path) {
+        Ok(state) => state,
+        Err(err) => {
+            status_errors.push(format!("worker_state_error={}", err));
+            None
+        }
+    };
+    let shared_state = match state_sql::summary(cfg) {
+        Ok(summary) => Some(summary),
+        Err(err) => {
+            status_errors.push(format!("shared_state_error={}", err));
+            None
+        }
+    };
+    let forex_redb_ready = match forex::preflight(cfg) {
+        Ok(()) => true,
+        Err(err) => {
+            status_errors.push(format!("forex_redb_error={}", err));
+            false
+        }
+    };
+
+    serde_json::json!({
+        "node_id": cfg.node_id,
+        "workspace": cfg.workspace_dir,
+        "memory_count": memory_count,
+        "skills_count": skills_count,
+        "queues": {
+            "inbox_depth": inbox_depth,
+            "outbox_depth": outbox_depth,
+            "dead_letter_depth": dead_letter_depth
+        },
+        "heartbeat": {
+            "enabled": cfg.heartbeat.enabled,
+            "interval_seconds": cfg.heartbeat.interval_seconds
+        },
+        "llm": {
+            "enabled": cfg.llm.enabled,
+            "model": cfg.llm.model
+        },
+        "http_get_lane": {
+            "enabled": cfg.worker.allow_http_get,
+            "mode": cfg.worker.http_get_mode
+        },
+        "telegram": {
+            "enabled": cfg.telegram.enabled,
+            "allowed_chat_id": cfg.telegram.allowed_chat_id
+        },
+        "chat_channels": {
+            "enabled": cfg.chat_channels.enabled,
+            "default_channel": channels::channel_label(cfg.chat_channels.default_channel),
+            "configured": channels::configured_channels(cfg)
+        },
+        "worker_state": worker_state
+        ,
+        "shared_state": shared_state,
+        "forex_state": {
+            "redb_path": cfg.forex.redb_path,
+            "ready": forex_redb_ready
+        },
+        "degraded": !status_errors.is_empty(),
+        "status_errors": status_errors
+    })
+}
+
+fn parse_json_input<T: DeserializeOwned>(raw: &str, label: &str) -> Result<T> {
+    serde_json::from_str(raw).with_context(|| format!("invalid JSON for {}", label))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared_state::SharedStateStore;
+    use redb::Database;
+    use std::thread;
+    use tempfile::TempDir;
+
+    fn temp_cfg() -> (TempDir, Config) {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = Config::default();
+        let workspace = tmp.path().join("workspace");
+        cfg.workspace_dir = workspace.clone();
+        cfg.memory.sqlite_path = workspace.join("memory/brain.db");
+        cfg.memory.core_markdown = workspace.join("MEMORY.md");
+        cfg.memory.daily_dir = workspace.join("daily");
+        cfg.worker.inbox_path = workspace.join("queue/inbox.ndjson");
+        cfg.worker.outbox_path = workspace.join("queue/outbox.ndjson");
+        cfg.worker.inflight_path = workspace.join("queue/inflight.json");
+        cfg.worker.state_path = workspace.join("state/worker_state.json");
+        cfg.worker.dead_letter_path = workspace.join("queue/dead-letter.ndjson");
+        cfg.logging.file = workspace.join("logs/quant-m.log");
+        cfg.skills.dir = workspace.join("skills");
+        cfg.state_sql.sqlite_path = workspace.join("state/shared-state.db");
+        cfg.forex.redb_path = workspace.join("state/forex.redb");
+        cfg.runtime.session_dir = workspace.join("state/sessions");
+        (tmp, cfg)
+    }
+
+    fn sample_shared_state_record() -> shared_state::SharedStateRecord {
+        shared_state::SharedStateRecord {
+            key: shared_state::SharedStateKey::new("shared.alpha"),
+            value: shared_state::SharedStateValue::Status("ready".to_string()),
+            domain_id: sessions::DomainId::new("domain:test"),
+            source: "test".to_string(),
+            confidence: 0.9,
+            updated_at: "2026-05-31T00:00:00+00:00".to_string(),
+            expires_at: Some("2026-06-01T00:00:00+00:00".to_string()),
+            session_id: None,
+        }
+    }
+
+    fn lock_forex_db(cfg: &Config) -> Database {
+        if let Some(parent) = cfg.forex.redb_path.parent() {
+            std::fs::create_dir_all(parent).expect("create forex state dir");
+        }
+        Database::create(&cfg.forex.redb_path).expect("lock forex redb")
+    }
+
+    fn config_path_for(tmp: &TempDir) -> PathBuf {
+        tmp.path().join("quant-m.toml")
+    }
+
+    #[test]
+    fn init_creates_config_with_safe_defaults() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+
+        let report = run_init_flow(&config_path, true).expect("init flow");
+        let cfg = Config::load_existing(&config_path).expect("load config");
+
+        assert_eq!(report.status, "ok");
+        assert!(config_path.exists());
+        assert!(cfg.workspace_dir.exists());
+        assert_eq!(
+            cfg.runtime.session_dir,
+            tmp.path().join("workspace/state/sessions")
+        );
+        assert!(!cfg.worker.allow_http_get);
+        assert!(!cfg.llm.enabled);
+        assert!(!cfg.telegram.enabled);
+    }
+
+    #[test]
+    fn setup_can_run_non_interactively() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+
+        let report = run_setup_flow(
+            &config_path,
+            SetupArgs {
+                non_interactive: true,
+                local_model_provider: Some("ollama".to_string()),
+                local_model: Some("qwen3-coder:7b".to_string()),
+                remote_model_provider: Some("openrouter".to_string()),
+                remote_model: Some("qwen/qwen3-coder".to_string()),
+                openrouter_model: Some("qwen/qwen3-coder".to_string()),
+                channel: Some("telegram".to_string()),
+                channel_value: Some("disabled".to_string()),
+                runtime_profile: Some("edge".to_string()),
+                workspace_path: Some(tmp.path().join("portable-workspace")),
+                state_path: Some(tmp.path().join("portable-workspace/state/shared-state.db")),
+                session_path: Some(tmp.path().join("portable-workspace/state/sessions")),
+                external_network: Some("disabled".to_string()),
+                selected_tools: Vec::new(),
+            },
+        )
+        .expect("setup");
+
+        let cfg = Config::load_existing(&config_path).expect("load config");
+        assert_eq!(report.status, "ok_non_interactive");
+        assert_eq!(cfg.runtime.profile, config::RuntimeProfile::Edge);
+        assert_eq!(cfg.workspace_dir, tmp.path().join("portable-workspace"));
+        assert_eq!(
+            cfg.state_sql.sqlite_path,
+            tmp.path().join("portable-workspace/state/shared-state.db")
+        );
+        assert_eq!(
+            cfg.runtime.session_dir,
+            tmp.path().join("portable-workspace/state/sessions")
+        );
+        assert_eq!(
+            cfg.preferences.preferred_openrouter_model.as_deref(),
+            Some("qwen/qwen3-coder")
+        );
+    }
+
+    #[test]
+    fn config_show_reads_typed_config() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+
+        let cfg = Config::load_existing(&config_path).expect("load");
+        let rendered = cfg.render_toml(&config_path).expect("render");
+
+        assert!(rendered.contains("workspace_dir = \"workspace\""));
+        assert!(rendered.contains("[runtime]"));
+    }
+
+    #[test]
+    fn config_set_model_updates_typed_config() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+
+        handle_config_command(
+            &config_path,
+            ConfigCommand::SetModel {
+                provider: "openrouter".to_string(),
+                model: "qwen/qwen3-coder".to_string(),
+            },
+        )
+        .expect("set model");
+
+        let cfg = Config::load_existing(&config_path).expect("load");
+        assert_eq!(
+            cfg.preferences.preferred_openrouter_model.as_deref(),
+            Some("qwen/qwen3-coder")
+        );
+        assert_eq!(cfg.llm.model, "qwen/qwen3-coder");
+    }
+
+    #[test]
+    fn config_set_channel_updates_typed_config() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+
+        handle_config_command(
+            &config_path,
+            ConfigCommand::SetChannel {
+                channel: "telegram".to_string(),
+                value: "disabled".to_string(),
+            },
+        )
+        .expect("set channel");
+
+        let cfg = Config::load_existing(&config_path).expect("load");
+        assert_eq!(
+            cfg.preferences.preferred_channel.channel,
+            config::ExternalChannel::Telegram
+        );
+        assert!(cfg.preferences.preferred_channel.value.is_none());
+    }
+
+    #[test]
+    fn doctor_does_not_perform_network_calls() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+
+        let mut cfg = Config::load_existing(&config_path).expect("load config");
+        cfg.llm.enabled = true;
+        cfg.llm.api_key = None;
+        cfg.telegram.enabled = true;
+        cfg.telegram.bot_token = None;
+        cfg.save(&config_path).expect("save config");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let report = rt
+            .block_on(run_doctor(&config_path, false, false))
+            .expect("doctor");
+        assert!(report.workflow_run_ok);
+        assert!(report.shared_state_list_ok);
+        assert!(report.session_list_ok);
+    }
+
+    #[test]
+    fn status_payload_contains_core_fields() {
+        let (_tmp, cfg) = temp_cfg();
+
+        let payload = build_status_payload(&cfg);
+        assert!(payload.get("node_id").is_some());
+        assert!(payload.get("queues").is_some());
+        assert!(payload.get("shared_state").is_some());
+        assert_eq!(
+            payload.get("degraded").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn status_payload_reports_degraded_when_reads_fail() {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = Config::default();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+        cfg.workspace_dir = workspace.clone();
+        cfg.memory.sqlite_path = workspace.clone();
+        cfg.memory.core_markdown = workspace.join("MEMORY.md");
+        cfg.memory.daily_dir = workspace.join("daily");
+        cfg.worker.inbox_path = workspace.clone();
+        cfg.worker.outbox_path = workspace.clone();
+        cfg.worker.inflight_path = workspace.join("queue/inflight.json");
+        cfg.worker.state_path = workspace.clone();
+        cfg.worker.dead_letter_path = workspace.clone();
+        cfg.logging.file = workspace.join("logs/quant-m.log");
+        cfg.skills.dir = workspace.join("skills");
+        cfg.state_sql.sqlite_path = workspace.clone();
+        cfg.forex.redb_path = workspace.clone();
+
+        let payload = build_status_payload(&cfg);
+        assert_eq!(
+            payload.get("degraded").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(
+            payload
+                .get("status_errors")
+                .and_then(|value| value.as_array())
+                .map(|items| !items.is_empty())
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn domain_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Domain {
+                command: DomainCommand::List
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Domain {
+                command: DomainCommand::Show {
+                    domain_id: "domain:mock-trading".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn skill_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Skill {
+                command: SkillCommand::List {
+                    domain: None,
+                    side_effect: None,
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Skill {
+                command: SkillCommand::Show {
+                    skill_id: "mock-research.capture-brief".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn policy_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Policy {
+                command: PolicyCommand::List {
+                    domain: None,
+                    side_effect: None,
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Policy {
+                command: PolicyCommand::Show {
+                    policy_id: "mock-trading.local-write".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Policy {
+                command: PolicyCommand::EvaluateSkill {
+                    skill_id: "mock-trading.prepare-paper-review".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn workflow_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Workflow {
+                command: WorkflowCommand::List { domain: None }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Workflow {
+                command: WorkflowCommand::Show {
+                    workflow_id: "workflow:mock-research-brief".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn fsm_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Fsm {
+                command: FsmCommand::List { domain: None }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Fsm {
+                command: FsmCommand::Show {
+                    fsm_id: "fsm:mock-research-brief".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn scheduler_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Scheduler {
+                command: SchedulerCommand::List {
+                    domain: None,
+                    trigger: None,
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Scheduler {
+                command: SchedulerCommand::Show {
+                    scheduler_id: "scheduler:mock-research-brief".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn desk_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Desk {
+                command: DeskCommand::List {
+                    category: None,
+                    domain: None,
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Desk {
+                command: DeskCommand::Show {
+                    desk_id: "desk:mock-trading-paper".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn run_workflow_commands_use_session_write_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::Run {
+                command: RunCommand::Workflow {
+                    workflow_id: "workflow:mock-research-brief".to_string()
+                }
+            }),
+            StorageMode::SessionWrite
+        );
+    }
+
+    #[test]
+    fn worker_proposal_commands_parse_and_use_safe_storage_modes() {
+        let submit = Cli::try_parse_from([
+            "quant-m",
+            "worker",
+            "proposal",
+            "submit",
+            "--surface",
+            "cmux_lane",
+            "--kind",
+            "evidence",
+            "--summary",
+            "Architecture lane recommends provider contracts after worker boundary hardening.",
+            "--json",
+        ])
+        .expect("parse worker proposal submit");
+        match submit.command {
+            Commands::Worker {
+                command:
+                    WorkerCommand::Proposal {
+                        command:
+                            WorkerProposalCommand::Submit {
+                                surface,
+                                kind,
+                                summary,
+                                json,
+                                ..
+                            },
+                    },
+            } => {
+                assert_eq!(surface, "cmux_lane");
+                assert_eq!(kind, "evidence");
+                assert!(summary.contains("provider contracts"));
+                assert!(json);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Worker {
+                        command: WorkerCommand::Proposal {
+                            command: WorkerProposalCommand::Submit {
+                                surface,
+                                kind,
+                                summary,
+                                worker_id: None,
+                                session_id: None,
+                                workflow_id: None,
+                                decision_scope: None,
+                                json,
+                            }
+                        }
+                    }),
+                    StorageMode::SessionWrite
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let list = Cli::try_parse_from([
+            "quant-m",
+            "worker",
+            "proposal",
+            "list",
+            "--surface",
+            "cmux_lane",
+            "--status",
+            "pending_review",
+            "--json",
+        ])
+        .expect("parse worker proposal list");
+        match list.command {
+            Commands::Worker {
+                command:
+                    WorkerCommand::Proposal {
+                        command:
+                            WorkerProposalCommand::List {
+                                surface,
+                                status,
+                                json,
+                            },
+                    },
+            } => {
+                assert_eq!(surface.as_deref(), Some("cmux_lane"));
+                assert_eq!(status.as_deref(), Some("pending_review"));
+                assert!(json);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Worker {
+                        command: WorkerCommand::Proposal {
+                            command: WorkerProposalCommand::List {
+                                surface,
+                                status,
+                                json,
+                            }
+                        }
+                    }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_packet_command_parses_and_writes_packet_artifacts_only() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "context",
+            "packet",
+            "--state",
+            "QUESTION_TO_WORKER_PROPOSAL_01_VALIDATED",
+            "--size",
+            "small",
+            "--task",
+            "Generate the next bounded agent packet.",
+            "--json",
+        ])
+        .expect("parse context packet");
+
+        match cli.command {
+            Commands::Context {
+                command:
+                    ContextCommand::Packet {
+                        state,
+                        size,
+                        task,
+                        json,
+                    },
+            } => {
+                assert_eq!(state, "QUESTION_TO_WORKER_PROPOSAL_01_VALIDATED");
+                assert_eq!(size, "small");
+                assert_eq!(
+                    task.as_deref(),
+                    Some("Generate the next bounded agent packet.")
+                );
+                assert!(json);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Context {
+                        command: ContextCommand::Packet {
+                            state,
+                            size,
+                            task,
+                            json,
+                        }
+                    }),
+                    StorageMode::SessionWrite
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consensus_command_parses_and_uses_session_write_mode() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "consensus",
+            "--dry-run",
+            "Should we adopt this API design?",
+        ])
+        .expect("parse consensus");
+        match cli.command {
+            Commands::Consensus { dry_run, question } => {
+                assert!(dry_run);
+                assert_eq!(question, "Should we adopt this API design?");
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Consensus { dry_run, question }),
+                    StorageMode::SessionWrite
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consensus_command_requires_question() {
+        let err = Cli::try_parse_from(["quant-m", "consensus", "--dry-run"])
+            .expect_err("missing question fails");
+        assert!(err.to_string().contains("required"));
+    }
+
+    #[test]
+    fn strategist_dry_run_commands_parse_and_use_session_write_mode() {
+        let cli =
+            Cli::try_parse_from(["quant-m", "strategist", "--dry-run"]).expect("parse strategist");
+        match cli.command {
+            Commands::Strategist { dry_run, json } => {
+                assert!(dry_run);
+                assert!(!json);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Strategist { dry_run, json }),
+                    StorageMode::SessionWrite
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["quant-m", "strategist", "--dry-run", "--json"])
+            .expect("parse strategist json");
+        match cli.command {
+            Commands::Strategist { dry_run, json } => {
+                assert!(dry_run);
+                assert!(json);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Strategist { dry_run, json }),
+                    StorageMode::SessionWrite
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn question_command_parses_three_modes_and_uses_inspect_mode() {
+        for (mode, text, json) in [
+            ("agent-cluster", "How should this be reviewed?", false),
+            ("handoff", "What should Codex implement next?", true),
+            ("harness", "Which model route should handle this?", true),
+        ] {
+            let mut args = vec!["quant-m", "question", "ask", "--mode", mode, text];
+            if json {
+                args.push("--json");
+            }
+            let cli = Cli::try_parse_from(args).expect("parse question ask");
+            match cli.command {
+                Commands::Question { command } => match command {
+                    QuestionCommand::Ask {
+                        mode,
+                        question,
+                        json: parsed_json,
+                        write_proposals,
+                    } => {
+                        assert_eq!(question, text);
+                        assert_eq!(parsed_json, json);
+                        assert!(!write_proposals);
+                        assert!(mode.parse::<question::QuantMQuestionMode>().is_ok());
+                        assert_eq!(
+                            storage_mode_for_command(&Commands::Question {
+                                command: QuestionCommand::Ask {
+                                    mode,
+                                    question,
+                                    json: parsed_json,
+                                    write_proposals,
+                                }
+                            }),
+                            StorageMode::Inspect
+                        );
+                    }
+                },
+                other => panic!("unexpected command: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn question_write_proposals_flag_uses_session_write_mode() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "question",
+            "ask",
+            "--mode",
+            "agent-cluster",
+            "Review this API design decision",
+            "--write-proposals",
+            "--json",
+        ])
+        .expect("parse question write proposals");
+        match cli.command {
+            Commands::Question { command } => match command {
+                QuestionCommand::Ask {
+                    mode,
+                    question,
+                    json,
+                    write_proposals,
+                } => {
+                    assert_eq!(mode, "agent-cluster");
+                    assert_eq!(question, "Review this API design decision");
+                    assert!(json);
+                    assert!(write_proposals);
+                    assert_eq!(
+                        storage_mode_for_command(&Commands::Question {
+                            command: QuestionCommand::Ask {
+                                mode,
+                                question,
+                                json,
+                                write_proposals,
+                            }
+                        }),
+                        StorageMode::SessionWrite
+                    );
+                }
+            },
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_command_parses_and_uses_inspect_mode() {
+        let cli = Cli::try_parse_from(["quant-m", "replay", "session-1", "--json"])
+            .expect("parse replay");
+        match cli.command {
+            Commands::Replay { session_id, json } => {
+                assert_eq!(session_id, "session-1");
+                assert!(json);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Replay { session_id, json }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cost_summary_command_parses_and_uses_inspect_mode() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "cost",
+            "summary",
+            "--json",
+            "--workflow",
+            "workflow:one",
+            "--session",
+            "session-one",
+        ])
+        .expect("parse cost summary");
+        match cli.command {
+            Commands::Cost { command } => match command {
+                CostCommand::Summary {
+                    json,
+                    workflow,
+                    session,
+                } => {
+                    assert!(json);
+                    assert_eq!(workflow.as_deref(), Some("workflow:one"));
+                    assert_eq!(session.as_deref(), Some("session-one"));
+                    assert_eq!(
+                        storage_mode_for_command(&Commands::Cost {
+                            command: CostCommand::Summary {
+                                json,
+                                workflow,
+                                session,
+                            }
+                        }),
+                        StorageMode::Inspect
+                    );
+                }
+            },
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_state_commands_use_inspect_mode() {
+        assert_eq!(
+            storage_mode_for_command(&Commands::State {
+                command: StateCommand::List { domain: None }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::State {
+                command: StateCommand::Show {
+                    key: "shared.alpha".to_string()
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::State {
+                command: StateCommand::Snapshot { domain: None }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::State {
+                command: StateCommand::ExpireStale
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::State {
+                command: StateCommand::Review {
+                    domain: Some("consensus".to_string()),
+                    json: true,
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn domain_list_and_show_do_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Domain {
+                command: DomainCommand::List,
+            },
+        )
+        .expect("domain list inspect");
+        let listed = domain::builtin_registry().expect("registry").list();
+        assert_eq!(listed.len(), 2);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Domain {
+                command: DomainCommand::Show {
+                    domain_id: "domain:mock-trading".to_string(),
+                },
+            },
+        )
+        .expect("domain show inspect");
+        let shown = domain::builtin_registry()
+            .expect("registry")
+            .show(&"domain:mock-trading".parse().expect("domain id"))
+            .expect("show domain");
+        assert_eq!(shown.name, "Mock Trading");
+    }
+
+    #[test]
+    fn read_only_session_commands_do_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let context = sessions::runtime_context("test-node", "worker");
+        sessions::append_event(
+            &cfg,
+            &context,
+            sessions::SessionEvent::Observation {
+                message: "inspect".to_string(),
+                job_id: None,
+                detail: Some("read-only".to_string()),
+            },
+        )
+        .expect("append session event");
+
+        let _lock = lock_forex_db(&cfg);
+
+        for command in [
+            SessionCommand::List,
+            SessionCommand::Show {
+                id: context.session_id.to_string(),
+            },
+            SessionCommand::Replay {
+                id: context.session_id.to_string(),
+            },
+            SessionCommand::ResumePlan {
+                id: context.session_id.to_string(),
+            },
+        ] {
+            prepare_storage_for_command(&cfg, &Commands::Session { command })
+                .expect("session inspect");
+        }
+
+        assert_eq!(sessions::list_sessions(&cfg).expect("list").len(), 1);
+        assert_eq!(
+            sessions::show_session(&cfg, &context.session_id)
+                .expect("show")
+                .events
+                .len(),
+            1
+        );
+        assert_eq!(
+            sessions::replay_session(&cfg, &context.session_id)
+                .expect("replay")
+                .summary
+                .session_id,
+            context.session_id
+        );
+        assert_eq!(
+            sessions::resume_plan_session(&cfg, &context.session_id)
+                .expect("resume plan")
+                .session_id,
+            context.session_id
+        );
+    }
+
+    #[test]
+    fn operator_decision_commands_do_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let context = sessions::runtime_context("test-node", "worker");
+        sessions::append_event(
+            &cfg,
+            &context,
+            sessions::SessionEvent::PolicyDecision {
+                policy: "worker.allow_shell_commands".to_string(),
+                allowed: false,
+                reason: "shell disabled".to_string(),
+            },
+        )
+        .expect("append policy");
+
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Session {
+                command: SessionCommand::Approve {
+                    id: context.session_id.to_string(),
+                    reason: "approved for follow-up".to_string(),
+                },
+            },
+        )
+        .expect("session approve mode");
+        let record = sessions::record_operator_decision(
+            &cfg,
+            &context.session_id,
+            sessions::OperatorDecision::Approved,
+            "approved for follow-up",
+            "operator:test",
+        )
+        .expect("record decision");
+        assert_eq!(record.session_id, context.session_id);
+    }
+
+    #[test]
+    fn skill_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Skill {
+                command: SkillCommand::List {
+                    domain: Some("domain:mock-trading".to_string()),
+                    side_effect: Some("read_only".to_string()),
+                },
+            },
+        )
+        .expect("skill list inspect");
+        let readonly = skill_registry::builtin_registry().expect("registry").list(
+            Some(&"domain:mock-trading".parse().expect("domain id")),
+            Some(&"read_only".parse().expect("side effect")),
+        );
+        assert!(!readonly.is_empty());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Skill {
+                command: SkillCommand::Show {
+                    skill_id: "mock-research.capture-brief".to_string(),
+                },
+            },
+        )
+        .expect("skill show inspect");
+        let shown = skill_registry::builtin_registry()
+            .expect("registry")
+            .show("mock-research.capture-brief")
+            .expect("show skill");
+        assert_eq!(
+            shown.side_effect_level,
+            skill_registry::SideEffectLevel::ReadOnly
+        );
+    }
+
+    #[test]
+    fn policy_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Policy {
+                command: PolicyCommand::List {
+                    domain: Some("domain:mock-trading".to_string()),
+                    side_effect: Some("local_write".to_string()),
+                },
+            },
+        )
+        .expect("policy list inspect");
+        let listed = policy_registry::builtin_registry().expect("registry").list(
+            Some(&"domain:mock-trading".parse().expect("domain id")),
+            Some(&"local_write".parse().expect("side effect")),
+        );
+        assert!(!listed.is_empty());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Policy {
+                command: PolicyCommand::Show {
+                    policy_id: "mock-trading.local-write".to_string(),
+                },
+            },
+        )
+        .expect("policy show inspect");
+        let shown = policy_registry::builtin_registry()
+            .expect("registry")
+            .show("mock-trading.local-write")
+            .expect("show policy");
+        assert_eq!(
+            shown.default_decision,
+            policy_registry::PolicyDecision::RequireApproval
+        );
+    }
+
+    #[test]
+    fn workflow_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Workflow {
+                command: WorkflowCommand::List {
+                    domain: Some("domain:mock-trading".to_string()),
+                },
+            },
+        )
+        .expect("workflow list inspect");
+        let listed = workflow_registry::builtin_registry()
+            .expect("registry")
+            .list(Some(&"domain:mock-trading".parse().expect("domain id")));
+        assert!(!listed.is_empty());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Workflow {
+                command: WorkflowCommand::Show {
+                    workflow_id: "workflow:mock-research-brief".to_string(),
+                },
+            },
+        )
+        .expect("workflow show inspect");
+        let shown = workflow_registry::builtin_registry()
+            .expect("registry")
+            .show(&"workflow:mock-research-brief".parse().expect("workflow id"))
+            .expect("show workflow");
+        assert_eq!(shown.steps.len(), 1);
+    }
+
+    #[test]
+    fn fsm_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Fsm {
+                command: FsmCommand::List {
+                    domain: Some("domain:mock-trading".to_string()),
+                },
+            },
+        )
+        .expect("fsm list inspect");
+        let listed = fsm_registry::builtin_registry()
+            .expect("registry")
+            .list(Some(&"domain:mock-trading".parse().expect("domain id")));
+        assert!(!listed.is_empty());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Fsm {
+                command: FsmCommand::Show {
+                    fsm_id: "fsm:mock-research-brief".to_string(),
+                },
+            },
+        )
+        .expect("fsm show inspect");
+        let shown = fsm_registry::builtin_registry()
+            .expect("registry")
+            .show(&"fsm:mock-research-brief".parse().expect("fsm id"))
+            .expect("show fsm");
+        assert_eq!(shown.transitions.len(), 1);
+    }
+
+    #[test]
+    fn scheduler_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Scheduler {
+                command: SchedulerCommand::List {
+                    domain: Some("domain:mock-trading".to_string()),
+                    trigger: Some("polling".to_string()),
+                },
+            },
+        )
+        .expect("scheduler list inspect");
+        let listed = scheduler_registry::builtin_registry()
+            .expect("registry")
+            .list(
+                Some(&"domain:mock-trading".parse().expect("domain id")),
+                Some(&"polling".parse().expect("trigger")),
+            );
+        assert!(!listed.is_empty());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Scheduler {
+                command: SchedulerCommand::Show {
+                    scheduler_id: "scheduler:mock-research-brief".to_string(),
+                },
+            },
+        )
+        .expect("scheduler show inspect");
+        let shown = scheduler_registry::builtin_registry()
+            .expect("registry")
+            .show(
+                &"scheduler:mock-research-brief"
+                    .parse()
+                    .expect("scheduler id"),
+            )
+            .expect("show scheduler");
+        assert_eq!(
+            shown.cadence.trigger_kind,
+            scheduler_registry::ScheduleTriggerKind::Cron
+        );
+    }
+
+    #[test]
+    fn desk_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Desk {
+                command: DeskCommand::List {
+                    category: Some("forex".to_string()),
+                    domain: Some("domain:mock-trading".to_string()),
+                },
+            },
+        )
+        .expect("desk list inspect");
+        let listed = desk_registry::builtin_registry().expect("registry").list(
+            Some(&"forex".parse().expect("category")),
+            Some(&"domain:mock-trading".parse().expect("domain id")),
+        );
+        assert!(!listed.is_empty());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Desk {
+                command: DeskCommand::Show {
+                    desk_id: "desk:mock-trading-paper".to_string(),
+                },
+            },
+        )
+        .expect("desk show inspect");
+        let shown = desk_registry::builtin_registry()
+            .expect("registry")
+            .show(&"desk:mock-trading-paper".parse().expect("desk id"))
+            .expect("show desk");
+        assert!(shown.storage_profile.paper_only);
+    }
+
+    #[test]
+    fn mock_research_workflow_run_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Run {
+                command: RunCommand::Workflow {
+                    workflow_id: "workflow:mock-research-brief".to_string(),
+                },
+            },
+        )
+        .expect("run workflow mode");
+        let result = execution_runtime::run_workflow(
+            &cfg,
+            &"workflow:mock-research-brief".parse().expect("workflow id"),
+        )
+        .expect("run workflow");
+        assert_eq!(result.status, "ok");
+    }
+
+    #[test]
+    fn policy_evaluation_does_not_execute_skills() {
+        let (_tmp, cfg) = temp_cfg();
+        let marker = cfg.workspace_dir.join("policy-eval-marker.txt");
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Policy {
+                command: PolicyCommand::EvaluateSkill {
+                    skill_id: "mock-trading.prepare-paper-review".to_string(),
+                },
+            },
+        )
+        .expect("policy evaluate mode");
+        let skills = skill_registry::builtin_registry().expect("skills");
+        let policies = policy_registry::builtin_registry().expect("policies");
+        let skill = skills
+            .show("mock-trading.prepare-paper-review")
+            .expect("show skill");
+        let evaluation = policies.evaluate_skill(&skill);
+        assert_eq!(
+            evaluation.decision,
+            policy_registry::PolicyDecision::RequireApproval
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn workflow_inspection_does_not_execute_workflows() {
+        let (_tmp, cfg) = temp_cfg();
+        let marker = cfg.workspace_dir.join("workflow-exec-marker.txt");
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Workflow {
+                command: WorkflowCommand::Show {
+                    workflow_id: "workflow:mock-trading-paper-review".to_string(),
+                },
+            },
+        )
+        .expect("workflow show mode");
+        let workflow = workflow_registry::builtin_registry()
+            .expect("registry")
+            .show(
+                &"workflow:mock-trading-paper-review"
+                    .parse()
+                    .expect("workflow id"),
+            )
+            .expect("show workflow");
+        assert_eq!(workflow.steps.len(), 2);
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn fsm_inspection_does_not_execute_fsms() {
+        let (_tmp, cfg) = temp_cfg();
+        let marker = cfg.workspace_dir.join("fsm-exec-marker.txt");
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Fsm {
+                command: FsmCommand::Show {
+                    fsm_id: "fsm:mock-trading-paper-review".to_string(),
+                },
+            },
+        )
+        .expect("fsm show mode");
+        let fsm = fsm_registry::builtin_registry()
+            .expect("registry")
+            .show(&"fsm:mock-trading-paper-review".parse().expect("fsm id"))
+            .expect("show fsm");
+        assert_eq!(fsm.transitions.len(), 2);
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn scheduler_inspection_does_not_execute_schedulers() {
+        let (_tmp, cfg) = temp_cfg();
+        let marker = cfg.workspace_dir.join("scheduler-exec-marker.txt");
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Scheduler {
+                command: SchedulerCommand::Show {
+                    scheduler_id: "scheduler:mock-trading-paper-review".to_string(),
+                },
+            },
+        )
+        .expect("scheduler show mode");
+        let scheduler = scheduler_registry::builtin_registry()
+            .expect("registry")
+            .show(
+                &"scheduler:mock-trading-paper-review"
+                    .parse()
+                    .expect("scheduler id"),
+            )
+            .expect("show scheduler");
+        assert_eq!(
+            scheduler.cadence.trigger_kind,
+            scheduler_registry::ScheduleTriggerKind::Polling
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn desk_inspection_does_not_execute_desks() {
+        let (_tmp, cfg) = temp_cfg();
+        let marker = cfg.workspace_dir.join("desk-exec-marker.txt");
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Desk {
+                command: DeskCommand::Show {
+                    desk_id: "desk:mock-trading-paper".to_string(),
+                },
+            },
+        )
+        .expect("desk show mode");
+        let desk = desk_registry::builtin_registry()
+            .expect("registry")
+            .show(&"desk:mock-trading-paper".parse().expect("desk id"))
+            .expect("show desk");
+        assert!(desk.storage_profile.paper_only);
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn shared_state_inspection_does_not_open_forex_redb() {
+        let (_tmp, cfg) = temp_cfg();
+        let store = shared_state::HybridSharedStateStore::from_config(&cfg);
+        store
+            .put(sample_shared_state_record())
+            .expect("put shared state");
+        let _lock = lock_forex_db(&cfg);
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::State {
+                command: StateCommand::List { domain: None },
+            },
+        )
+        .expect("state list inspect");
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::State {
+                command: StateCommand::Show {
+                    key: "shared.alpha".to_string(),
+                },
+            },
+        )
+        .expect("state show inspect");
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::State {
+                command: StateCommand::Snapshot { domain: None },
+            },
+        )
+        .expect("state snapshot inspect");
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::State {
+                command: StateCommand::ExpireStale,
+            },
+        )
+        .expect("state expire inspect");
+
+        assert_eq!(shared_state::list_state(&cfg, None).expect("list").len(), 1);
+        assert!(
+            shared_state::show_state(&cfg, &"shared.alpha".parse().expect("key"))
+                .expect("show")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn shared_state_inspection_does_not_trigger_worker_execution() {
+        let (_tmp, cfg) = temp_cfg();
+        let store = shared_state::HybridSharedStateStore::from_config(&cfg);
+        store
+            .put(sample_shared_state_record())
+            .expect("put shared state");
+
+        let before_inbox = worker::queue_depth(&cfg.worker.inbox_path).expect("inbox depth");
+        let before_outbox = worker::queue_depth(&cfg.worker.outbox_path).expect("outbox depth");
+
+        let _ = shared_state::snapshot_state(&cfg, None).expect("snapshot");
+        let _ =
+            shared_state::show_state(&cfg, &"shared.alpha".parse().expect("key")).expect("show");
+
+        let after_inbox = worker::queue_depth(&cfg.worker.inbox_path).expect("inbox depth");
+        let after_outbox = worker::queue_depth(&cfg.worker.outbox_path).expect("outbox depth");
+        assert_eq!(before_inbox, after_inbox);
+        assert_eq!(before_outbox, after_outbox);
+    }
+
+    #[test]
+    fn runtime_preflight_still_opens_required_stores() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        let err = prepare_storage_for_mode(&cfg, StorageMode::RuntimePreflight)
+            .expect_err("runtime preflight should fail when forex db is locked");
+        let message = err.to_string();
+        assert!(
+            message.contains("forex redb preflight failed")
+                || message.contains("failed to open redb")
+                || message.contains("Database already open")
+        );
+    }
+
+    #[test]
+    fn parallel_read_only_cli_commands_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let context = sessions::runtime_context("test-node", "worker");
+        sessions::append_event(
+            &cfg,
+            &context,
+            sessions::SessionEvent::Observation {
+                message: "parallel inspect".to_string(),
+                job_id: None,
+                detail: Some("safe".to_string()),
+            },
+        )
+        .expect("append event");
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_domain = cfg.clone();
+        let cfg_for_skill = cfg.clone();
+
+        thread::scope(|scope| {
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+            let skill_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_skill,
+                    &Commands::Skill {
+                        command: SkillCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                            side_effect: Some("read_only".to_string()),
+                        },
+                    },
+                )
+                .expect("skill inspect");
+                skill_registry::builtin_registry().expect("registry").list(
+                    Some(&"domain:mock-trading".parse().expect("domain id")),
+                    Some(&"read_only".parse().expect("side effect")),
+                )
+            });
+
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+            assert!(!skill_thread.join().expect("join skill").is_empty());
+        });
+    }
+
+    #[test]
+    fn parallel_policy_skill_domain_inspection_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_policy = cfg.clone();
+        let cfg_for_skill = cfg.clone();
+        let cfg_for_domain = cfg.clone();
+
+        thread::scope(|scope| {
+            let policy_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_policy,
+                    &Commands::Policy {
+                        command: PolicyCommand::EvaluateSkill {
+                            skill_id: "mock-trading.prepare-paper-review".to_string(),
+                        },
+                    },
+                )
+                .expect("policy inspect");
+                let skills = skill_registry::builtin_registry().expect("skills");
+                let policies = policy_registry::builtin_registry().expect("policies");
+                let skill = skills
+                    .show("mock-trading.prepare-paper-review")
+                    .expect("show skill");
+                policies.evaluate_skill(&skill)
+            });
+            let skill_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_skill,
+                    &Commands::Skill {
+                        command: SkillCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                            side_effect: Some("read_only".to_string()),
+                        },
+                    },
+                )
+                .expect("skill inspect");
+                skill_registry::builtin_registry().expect("registry").list(
+                    Some(&"domain:mock-trading".parse().expect("domain id")),
+                    Some(&"read_only".parse().expect("side effect")),
+                )
+            });
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+
+            assert_eq!(
+                policy_thread.join().expect("join policy").decision,
+                policy_registry::PolicyDecision::RequireApproval
+            );
+            assert!(!skill_thread.join().expect("join skill").is_empty());
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+        });
+    }
+
+    #[test]
+    fn parallel_workflow_skill_domain_inspection_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_workflow = cfg.clone();
+        let cfg_for_skill = cfg.clone();
+        let cfg_for_domain = cfg.clone();
+
+        thread::scope(|scope| {
+            let workflow_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_workflow,
+                    &Commands::Workflow {
+                        command: WorkflowCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                        },
+                    },
+                )
+                .expect("workflow inspect");
+                workflow_registry::builtin_registry()
+                    .expect("registry")
+                    .list(Some(&"domain:mock-trading".parse().expect("domain id")))
+            });
+            let skill_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_skill,
+                    &Commands::Skill {
+                        command: SkillCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                            side_effect: Some("read_only".to_string()),
+                        },
+                    },
+                )
+                .expect("skill inspect");
+                skill_registry::builtin_registry().expect("registry").list(
+                    Some(&"domain:mock-trading".parse().expect("domain id")),
+                    Some(&"read_only".parse().expect("side effect")),
+                )
+            });
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+
+            assert!(!workflow_thread.join().expect("join workflow").is_empty());
+            assert!(!skill_thread.join().expect("join skill").is_empty());
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+        });
+    }
+
+    #[test]
+    fn parallel_fsm_workflow_domain_inspection_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_fsm = cfg.clone();
+        let cfg_for_workflow = cfg.clone();
+        let cfg_for_domain = cfg.clone();
+
+        thread::scope(|scope| {
+            let fsm_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_fsm,
+                    &Commands::Fsm {
+                        command: FsmCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                        },
+                    },
+                )
+                .expect("fsm inspect");
+                fsm_registry::builtin_registry()
+                    .expect("registry")
+                    .list(Some(&"domain:mock-trading".parse().expect("domain id")))
+            });
+            let workflow_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_workflow,
+                    &Commands::Workflow {
+                        command: WorkflowCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                        },
+                    },
+                )
+                .expect("workflow inspect");
+                workflow_registry::builtin_registry()
+                    .expect("registry")
+                    .list(Some(&"domain:mock-trading".parse().expect("domain id")))
+            });
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+
+            assert!(!fsm_thread.join().expect("join fsm").is_empty());
+            assert!(!workflow_thread.join().expect("join workflow").is_empty());
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+        });
+    }
+
+    #[test]
+    fn parallel_scheduler_fsm_workflow_domain_inspection_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_scheduler = cfg.clone();
+        let cfg_for_fsm = cfg.clone();
+        let cfg_for_workflow = cfg.clone();
+        let cfg_for_domain = cfg.clone();
+
+        thread::scope(|scope| {
+            let scheduler_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_scheduler,
+                    &Commands::Scheduler {
+                        command: SchedulerCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                            trigger: Some("polling".to_string()),
+                        },
+                    },
+                )
+                .expect("scheduler inspect");
+                scheduler_registry::builtin_registry()
+                    .expect("registry")
+                    .list(
+                        Some(&"domain:mock-trading".parse().expect("domain id")),
+                        Some(&"polling".parse().expect("trigger")),
+                    )
+            });
+            let fsm_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_fsm,
+                    &Commands::Fsm {
+                        command: FsmCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                        },
+                    },
+                )
+                .expect("fsm inspect");
+                fsm_registry::builtin_registry()
+                    .expect("registry")
+                    .list(Some(&"domain:mock-trading".parse().expect("domain id")))
+            });
+            let workflow_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_workflow,
+                    &Commands::Workflow {
+                        command: WorkflowCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                        },
+                    },
+                )
+                .expect("workflow inspect");
+                workflow_registry::builtin_registry()
+                    .expect("registry")
+                    .list(Some(&"domain:mock-trading".parse().expect("domain id")))
+            });
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+
+            assert!(!scheduler_thread.join().expect("join scheduler").is_empty());
+            assert!(!fsm_thread.join().expect("join fsm").is_empty());
+            assert!(!workflow_thread.join().expect("join workflow").is_empty());
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+        });
+    }
+
+    #[test]
+    fn parallel_desk_scheduler_domain_inspection_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_desk = cfg.clone();
+        let cfg_for_scheduler = cfg.clone();
+        let cfg_for_domain = cfg.clone();
+
+        thread::scope(|scope| {
+            let desk_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_desk,
+                    &Commands::Desk {
+                        command: DeskCommand::List {
+                            category: Some("forex".to_string()),
+                            domain: Some("domain:mock-trading".to_string()),
+                        },
+                    },
+                )
+                .expect("desk inspect");
+                desk_registry::builtin_registry().expect("registry").list(
+                    Some(&"forex".parse().expect("category")),
+                    Some(&"domain:mock-trading".parse().expect("domain id")),
+                )
+            });
+            let scheduler_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_scheduler,
+                    &Commands::Scheduler {
+                        command: SchedulerCommand::List {
+                            domain: Some("domain:mock-trading".to_string()),
+                            trigger: Some("polling".to_string()),
+                        },
+                    },
+                )
+                .expect("scheduler inspect");
+                scheduler_registry::builtin_registry()
+                    .expect("registry")
+                    .list(
+                        Some(&"domain:mock-trading".parse().expect("domain id")),
+                        Some(&"polling".parse().expect("trigger")),
+                    )
+            });
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+
+            assert!(!desk_thread.join().expect("join desk").is_empty());
+            assert!(!scheduler_thread.join().expect("join scheduler").is_empty());
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+        });
+    }
+
+    #[test]
+    fn parallel_shared_state_inspection_can_run_safely() {
+        let (_tmp, cfg) = temp_cfg();
+        let store = shared_state::HybridSharedStateStore::from_config(&cfg);
+        store
+            .put(sample_shared_state_record())
+            .expect("put shared state");
+        let _lock = lock_forex_db(&cfg);
+
+        let cfg_for_state = cfg.clone();
+        let cfg_for_domain = cfg.clone();
+
+        thread::scope(|scope| {
+            let state_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_state,
+                    &Commands::State {
+                        command: StateCommand::Snapshot { domain: None },
+                    },
+                )
+                .expect("state inspect");
+                shared_state::snapshot_state(&cfg_for_state, None).expect("snapshot")
+            });
+            let domain_thread = scope.spawn(move || {
+                prepare_storage_for_command(
+                    &cfg_for_domain,
+                    &Commands::Domain {
+                        command: DomainCommand::List,
+                    },
+                )
+                .expect("domain inspect");
+                domain::builtin_registry().expect("registry").list()
+            });
+
+            assert_eq!(state_thread.join().expect("join state").len(), 1);
+            assert_eq!(domain_thread.join().expect("join domain").len(), 2);
+        });
+    }
+}

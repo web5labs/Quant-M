@@ -1,0 +1,33 @@
+.DS_Store
+
+# Rust build output
+/target/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/coverage/
+
+# Local runtime state
+/workspace/logs/
+/workspace/memory/*.db
+/workspace/memory/*.db-*
+/workspace/queue/*.ndjson
+/workspace/queue/*.json
+/workspace/state/
+/workspace/daily/
+/workspace/skills/
+
+# Local copied runtime/state workspace
+/workspace-copy/
+
+# Local reference copies and generated scratch folders
+/The-Sataff/
+
+# Local env/config overrides
+.env
+.env.*
+*.local.toml
+
+# OS/editor noise
+*.swp
+*.swo

@@ -1,0 +1,20 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# QUAN-M Pi hardening cron template.
+# Replace __QUANTM_DIR__ with your repo path.
+
+# Runtime health probe every 15 minutes.
+*/15 * * * * cd __QUANTM_DIR__ && mkdir -p workspace/logs workspace/locks && flock -n workspace/locks/healthcheck.lock ./scripts/healthcheck.sh USDJPY >> workspace/logs/healthcheck.log 2>&1
+
+# swap_health daily run with post-5pm buffer.
+10 17 * * * cd __QUANTM_DIR__ && mkdir -p workspace/logs workspace/locks && flock -n workspace/locks/swap_health.lock ./scripts/swap_health.sh __QUANTM_DIR__/workspace/state/swap_health_payload.json >> workspace/logs/swap_health.log 2>&1
+
+# swap_health retry window to handle delayed rollover updates.
+25 17 * * * cd __QUANTM_DIR__ && mkdir -p workspace/logs workspace/locks && flock -n workspace/locks/swap_health.lock ./scripts/swap_health.sh __QUANTM_DIR__/workspace/state/swap_health_payload.json >> workspace/logs/swap_health.log 2>&1
+
+# Macro refresh (weekday hourly for next 48h).
+5 * * * 1-5 cd __QUANTM_DIR__ && mkdir -p workspace/logs workspace/locks && flock -n workspace/locks/macro_refresh.lock ./target/release/quant-m --config ./quant-m.toml state macro-refresh-mql5 --hours-ahead 48 >> workspace/logs/macro_refresh.log 2>&1
+
+# Daily macro horizon refresh (next 7 days) with post-5pm buffer.
+20 17 * * * cd __QUANTM_DIR__ && mkdir -p workspace/logs workspace/locks && flock -n workspace/locks/macro_refresh.lock ./target/release/quant-m --config ./quant-m.toml state macro-refresh-mql5 --hours-ahead 168 >> workspace/logs/macro_refresh.log 2>&1

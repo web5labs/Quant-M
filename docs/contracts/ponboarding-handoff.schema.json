@@ -1,0 +1,490 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-staff.local/ponboarding/contracts/ponboarding-handoff.schema.json",
+  "title": "PONboarding To Staff OS Handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "generatedAt",
+    "sourceProject",
+    "projectContext",
+    "repoResearch",
+    "recommendedApiStack",
+    "modelStack",
+    "delegationPlan",
+    "staffOsIntake"
+  ],
+  "properties": {
+    "contractVersion": {
+      "type": "string"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sourceProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "projectType",
+        "status"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "projectType": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "idea",
+            "scaffolded",
+            "specifying",
+            "ready_for_build",
+            "in_execution"
+          ]
+        },
+        "repoRoot": {
+          "type": "string"
+        }
+      }
+    },
+    "projectContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "oneLineThesis",
+        "outcome",
+        "constraints",
+        "successCriteria",
+        "specStatus",
+        "shippableStatus"
+      ],
+      "properties": {
+        "oneLineThesis": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "successCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "specStatus": {
+          "type": "string",
+          "enum": [
+            "scaffolded",
+            "draft",
+            "approved"
+          ]
+        },
+        "shippableStatus": {
+          "type": "string",
+          "enum": [
+            "scaffolded",
+            "draft",
+            "approved"
+          ]
+        },
+        "wikiManifestPath": {
+          "type": "string"
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "repoResearch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "searchQueries",
+        "acceptedReferences",
+        "rejectedReferences",
+        "watchlistReferences",
+        "scorecards"
+      ],
+      "properties": {
+        "searchQueries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "query",
+              "intent"
+            ],
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "query": {
+                "type": "string"
+              },
+              "intent": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "acceptedReferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rejectedReferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "watchlistReferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "documentationNotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "architecturePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scorecards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repoScorecard"
+          }
+        }
+      }
+    },
+    "recommendedApiStack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providers",
+        "tools",
+        "resources"
+      ],
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recommendedApiSurface"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recommendedApiSurface"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recommendedApiSurface"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "modelStack": {
+      "$ref": "#/$defs/modelStackRecommendation"
+    },
+    "delegationPlan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lane",
+          "staffRole",
+          "goal",
+          "deliverables"
+        ],
+        "properties": {
+          "lane": {
+            "type": "string",
+            "enum": [
+              "research",
+              "product",
+              "ui-ux",
+              "backend",
+              "implementation",
+              "audit"
+            ]
+          },
+          "staffRole": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "deliverables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reviewBy": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "staffOsIntake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providers",
+        "tools",
+        "channels",
+        "routingNotes"
+      ],
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "routingNotes": {
+          "type": "string"
+        },
+        "memoryNotes": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "recommendedApiSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "summary",
+        "homepageUrl"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "homepageUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "docsUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "consoleUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "apiKeyUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "credentialEnvVar": {
+          "type": "string"
+        },
+        "recommendedFor": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recommendedModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "repoScorecard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "weights",
+        "candidate"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectFit",
+            "activity",
+            "documentationQuality",
+            "architectureUsefulness",
+            "licenseFit",
+            "maintainability",
+            "adoptionSignal"
+          ],
+          "properties": {
+            "projectFit": {
+              "type": "number"
+            },
+            "activity": {
+              "type": "number"
+            },
+            "documentationQuality": {
+              "type": "number"
+            },
+            "architectureUsefulness": {
+              "type": "number"
+            },
+            "licenseFit": {
+              "type": "number"
+            },
+            "maintainability": {
+              "type": "number"
+            },
+            "adoptionSignal": {
+              "type": "number"
+            }
+          }
+        },
+        "candidate": {
+          "type": "object"
+        }
+      }
+    },
+    "modelStackRecommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "benchmarkSources",
+        "weights",
+        "laneRecommendations"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "benchmarkSources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "benchmarkScore",
+            "reasoningFit",
+            "codeFit",
+            "toolUseFit",
+            "modalityFit",
+            "latencyFit",
+            "costEfficiency",
+            "providerReliability"
+          ],
+          "properties": {
+            "benchmarkScore": {
+              "type": "number"
+            },
+            "reasoningFit": {
+              "type": "number"
+            },
+            "codeFit": {
+              "type": "number"
+            },
+            "toolUseFit": {
+              "type": "number"
+            },
+            "modalityFit": {
+              "type": "number"
+            },
+            "latencyFit": {
+              "type": "number"
+            },
+            "costEfficiency": {
+              "type": "number"
+            },
+            "providerReliability": {
+              "type": "number"
+            }
+          }
+        },
+        "laneRecommendations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

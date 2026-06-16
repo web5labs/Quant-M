@@ -1,0 +1,38 @@
+[Unit]
+Description=QUAN-M daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__QUANTM_USER__
+Group=__QUANTM_USER__
+WorkingDirectory=__QUANTM_DIR__
+Environment=RUST_LOG=info
+EnvironmentFile=-/etc/default/quant-m
+ExecStartPre=/usr/bin/test -x __QUANTM_DIR__/target/release/quant-m
+ExecStartPre=/usr/bin/test -f __QUANTM_DIR__/quant-m.toml
+ExecStart=__QUANTM_DIR__/target/release/quant-m --config __QUANTM_DIR__/quant-m.toml daemon start
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=__QUANTM_DIR__/workspace __QUANTM_DIR__/target __QUANTM_DIR__/quant-m.toml
+UMask=0077
+PrivateTmp=true
+LimitNOFILE=4096
+TasksMax=256
+MemoryMax=512M
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

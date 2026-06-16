@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-staff.local/ponboarding/contracts/repo-scorecard.schema.json",
+  "title": "PONboarding Repo Scorecard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "weights",
+    "candidate"
+  ],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectFit",
+        "activity",
+        "documentationQuality",
+        "architectureUsefulness",
+        "licenseFit",
+        "maintainability",
+        "adoptionSignal"
+      ],
+      "properties": {
+        "projectFit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "activity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "documentationQuality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "architectureUsefulness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "licenseFit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maintainability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "adoptionSignal": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fullName",
+        "decision",
+        "dimensionScores",
+        "weightedScore",
+        "notes"
+      ],
+      "properties": {
+        "fullName": {
+          "type": "string"
+        },
+        "htmlUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "homepageUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "primaryLanguage": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string"
+        },
+        "stars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastUpdated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "rejected",
+            "watchlist"
+          ]
+        },
+        "dimensionScores": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectFit",
+            "activity",
+            "documentationQuality",
+            "architectureUsefulness",
+            "licenseFit",
+            "maintainability",
+            "adoptionSignal"
+          ],
+          "properties": {
+            "projectFit": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "activity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "documentationQuality": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "architectureUsefulness": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "licenseFit": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maintainability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "adoptionSignal": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "weightedScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "documentationSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "url",
+              "notes"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "github",
+                  "official-site",
+                  "context7",
+                  "vendor-doc",
+                  "web-search"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
