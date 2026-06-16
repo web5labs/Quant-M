@@ -1,78 +1,80 @@
 # Quant-M
 
-![Quant-M silver armored micro-agent mascot](assets/quant-m-product.png)
+<p align="center">
+  <img src="assets/quant-m-product.png" alt="Quant-M silver armored micro-agent mascot" width="360">
+</p>
 
-**Local-first Rust control plane for governed AI work.**
+**A local-first Rust agent runtime for evidence, replay, and operator control.**
 
-Quant-M helps you turn research, model output, worker notes, and operator decisions into evidence-backed workflows. It keeps local session history, shared state, policy checks, context handoffs, and replay records close to the machine where the work happens.
+Quant-M is a small CLI runtime you can clone, build, and run on your own machine. It helps AI-assisted work leave a trail: what happened, what was accepted, what was blocked, what it cost, and how to replay it without doing the work again.
 
 > v0.1.0-beta: CLI-first, local-first, and intentionally conservative. Sharp edges are expected.
 
-[Documentation](docs/README.md) | [Quick Start](#quick-start) | [First-Use Walkthrough](#first-use-walkthrough) | [Benchmarks](BENCHMARKS.md) | [Release Notes](docs/release/v0.1.0-beta.md)
+[Quick Start](#quick-start) | [First Proof Loop](#first-proof-loop) | [Features](#features) | [Benchmarks](BENCHMARKS.md) | [Release Notes](docs/release/v0.1.0-beta.md)
 
 ## Why Quant-M?
 
-Long-running AI work gets messy. Context drifts, worker output becomes hard to trust, and it is easy to forget which model said what, which policy blocked an action, or what is safe to do next.
+AI work gets messy fast. A model suggests something, a worker writes notes, a session gets long, and suddenly nobody remembers what was actually proven.
 
-Quant-M keeps the work grounded:
+Quant-M keeps that work grounded:
 
-- evidence is written to local session logs
-- workers can propose, but they do not decide
-- policy checks stay between output and action
-- shared state records what has been accepted
-- replay lets you inspect a run without repeating side effects
-- compact packets distill long sessions into reviewable handoffs
-- context guardian creates handoffs only when needed
-- context and memory degradation are reported instead of hidden
-- operator control stays above automation
+- **Evidence:** every meaningful run writes local session artifacts.
+- **Replay:** inspect what happened without repeating side effects.
+- **Compact packets:** turn long sessions into handoff files a human or agent can read.
+- **Context guardian:** prepare continuity handoffs only when the current context needs it.
+- **Operator control:** workers can propose; they do not silently take over.
+- **Local-first governance:** no broker, hosted service, or API key is needed for the proof path.
 
-Quant-M is not a hosted agent platform, trading bot, Codex or Claude Code replacement, production enterprise suite, or automatic unchecked agent executor. It is a local runtime for governed work.
+It is not a hosted agent platform, a trading bot, a Codex or Claude Code replacement, production enterprise software, or an automatic unchecked agent executor.
 
 ## Quick Start
 
-Clone, build, initialize local state, then run the first proof command.
+Clone it and run it like a normal Rust CLI project:
 
 ```bash
 git clone git@github.com:web5labs/Quant-M.git
 cd Quant-M
+cargo run --release -- init
+cargo run --release -- init-truth
+cargo run --release -- setup --non-interactive --runtime-profile laptop --context-guardian true
+cargo run --release -- doctor
+```
+
+That is the fastest path for new users. If you prefer a release-style binary:
+
+```bash
 cargo build --release
-./target/release/quant-m init
-./target/release/quant-m init-truth
-./target/release/quant-m setup --non-interactive --runtime-profile laptop --context-guardian true
 ./target/release/quant-m doctor
 ```
 
-The proof path is intentionally local. It does not require a broker, live model call, browser harness, hosted service, or API key.
+The first run is intentionally local. No broker. No live model call. No browser harness. No hosted service. No API key.
 
-## First-Use Walkthrough
+## First Proof Loop
 
-Run these commands from the repo root after `cargo build --release`.
+Run a local dry run, then replay and compact it:
 
 ```bash
-./target/release/quant-m init
-./target/release/quant-m init-truth
-./target/release/quant-m setup --non-interactive --runtime-profile laptop --context-guardian true
-./target/release/quant-m context-status
-./target/release/quant-m consensus --dry-run "What should a new Quant-M user inspect first?"
+cargo run --release -- context-status
+cargo run --release -- consensus --dry-run "What should a new Quant-M user inspect first?"
 ```
 
 Copy the `session_id` printed by the consensus command, then inspect the evidence path:
 
 ```bash
 SESSION_ID=session-...
-./target/release/quant-m replay "$SESSION_ID"
-./target/release/quant-m compact "$SESSION_ID"
-./target/release/quant-m context guard --json
-./target/release/quant-m cost summary
+cargo run --release -- replay "$SESSION_ID"
+cargo run --release -- compact "$SESSION_ID"
+cargo run --release -- context guard --json
+cargo run --release -- cost summary
 ```
 
-Expected result:
+You should see:
 
-- consensus writes session evidence under `workspace/state/sessions/`
-- replay validates that evidence without side effects
-- compact writes a compact packet under `workspace/state/compacted/`
-- context guardian writes a continuity handoff under `workspace/state/context-guardian/`
-- cost summary reports the local mock cost ledger
+- session evidence in `workspace/state/sessions/`
+- replay validation with no side effects
+- a compact packet in `workspace/state/compacted/`
+- a continuity handoff in `workspace/state/context-guardian/`
+- a local cost summary for the mock run
 
 ## First Session
 
