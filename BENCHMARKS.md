@@ -41,6 +41,42 @@ The beta walkthrough produced:
 - Do not compare provider/model performance without naming configuration and network conditions.
 - Prefer local, repeatable CLI checks over synthetic claims.
 
+## Peer Harness Comparison Plan
+
+Quant-M should be compared with adjacent agent harnesses and local runtimes, not with coding tools that can run beside it. Codex, Claude Code, Antigravity CLI, and similar tools are part of the operator/tool ecosystem; they are not the direct benchmark lane.
+
+The direct comparison set for the public beta is:
+
+- OpenClaw
+- Hermes Agent
+- ZeroClaw
+- Quant-M
+
+Peer numbers should stay marked as pending until each project is measured from a fresh checkout on the same machine, with the same timing method.
+
+| Metric | OpenClaw | Hermes Agent | ZeroClaw | Quant-M v0.1.0-beta |
+| --- | --- | --- | --- | --- |
+| Repo size | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 3.7M clean export |
+| Release/binary size | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 4.2M release binary |
+| Fresh build speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 70.83s release build |
+| Startup/help speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 0.44s |
+| Proof-loop speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | consensus dry run 0.04s; replay/compact/guardian/cost below local timer precision |
+| Tool-use posture | Pending same-harness review | Pending same-harness review | Pending same-harness review | gated, recorded, replay-aware |
+| Channel posture | Pending same-harness review | Pending same-harness review | Pending same-harness review | CLI now; channels stay policy-gated |
+| Token-saving posture | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | compact packets and handoffs reduce context reload; exact saved tokens pending model/channel benchmarks |
+| API consistency | Pending same-harness review | Pending same-harness review | Pending same-harness review | typed payload normalization before state, replay, cost, and handoff writes |
+
+## API Payload Normalization Benchmark Direction
+
+Quant-M treats model and tool output as untrusted until it is parsed into typed local records. Future benchmark packets should measure:
+
+- malformed payload rejection
+- schema/version acceptance
+- replay determinism after normalized writes
+- compact packet size
+- estimated tokens saved by handoff packets versus raw session reloads
+- channel consistency across CLI, worker, model, and replay payloads
+
 ## Available Helpers
 
 ```bash

@@ -21,7 +21,7 @@ It helps answer:
 
 > v0.1.0-beta: CLI-first, local-first, and intentionally conservative. Sharp edges are expected.
 
-[Quick Start](#quick-start) | [Try The Proof Loop](#try-the-proof-loop) | [Features](#features) | [How It Compares](#how-quant-m-compares) | [Release Notes](docs/release/v0.1.0-beta.md)
+[Quick Start](#quick-start) | [Try The Proof Loop](#try-the-proof-loop) | [Features](#features) | [Harness Comparison](#agent-harness-comparison) | [Release Notes](docs/release/v0.1.0-beta.md)
 
 ## Why This Exists
 
@@ -97,23 +97,53 @@ You should see:
 | Cost ledger | Dry runs and provider paths can leave cost records. | Cost becomes reviewable instead of mysterious. |
 | Memory/context degradation | Stale or unsupported context is flagged. | Quant-M does not pretend old memory is fresh truth. |
 | Local-first setup | The proof path runs on your machine. | No hosted broker or API key is required to understand the system. |
+| API payload normalization | Model, worker, state, and replay payloads are parsed into typed local records. | Agent tools can disagree or fail without corrupting the canonical state shape. |
 | Multi-model readiness | The runtime is built to record model and worker evidence. | Multiple models can contribute without erasing accountability. |
 | Edge worker direction | Designed for laptops, SSH boxes, Raspberry Pi class devices, and Android/Termux-style nodes. | Agent work can move closer to the machine doing the job. |
 
-## How Quant-M Compares
+## Agent Harness Comparison
 
-This is not a leaderboard. Quant-M is not claiming to beat coding agents, orchestration libraries, or terminal-task benchmarks at their own jobs. Its lane is local governance: evidence, replay, handoff, and operator control.
+This is not a leaderboard. Codex, Claude Code, Antigravity CLI, and similar coding tools are better understood as tools that can be used with Quant-M, not competitors to Quant-M.
 
-| Tool | Best At | Weak Spot | Quant-M Difference |
-| --- | --- | --- | --- |
-| Codex CLI | Coding tasks and repo edits. | Work can still disappear into long session history. | Quant-M preserves local evidence and handoff packets around the work. |
-| Claude Code | Interactive coding and codebase reasoning. | Session continuity and proof records are still operator-managed. | Quant-M gives continuation a local record to inspect. |
-| Aider/OpenCode | Fast code edits through familiar developer loops. | Less focused on governance and replay as first-class artifacts. | Quant-M treats replay and evidence as core runtime behavior. |
-| CrewAI | Multi-agent orchestration patterns. | Orchestration can outpace proof if governance is bolted on later. | Quant-M starts from the audit trail. |
-| LangGraph | Stateful agent graphs and application flow. | Requires app-level design around persistence and review. | Quant-M is a local control plane for evidence and operator decisions. |
-| AutoGPT-style agents | Autonomous task attempts. | Unchecked autonomy can drift or hide weak evidence. | Quant-M favors governed execution over silent autonomy. |
-| Hermes/OpenClaw-style harnesses | Agent harness ideas, tools, and runtime patterns. | Public examples vary in focus and operational proof. | Quant-M narrows the lane to local-first evidence, replay, compact packets, and edge readiness. |
-| Quant-M | Evidence, replay, context handoff, local governance, and operator-controlled agent work. | Early beta, CLI-first, smaller ecosystem. | Built as a control plane, not just a task runner. |
+The closer comparison is with agent harnesses and local agent runtimes such as OpenClaw, Hermes Agent, and ZeroClaw. Quant-M's lane is local governance: evidence, replay, handoff, payload consistency, token-aware continuity, and operator control.
+
+| Harness | Best At | Typical Channel | Tool-Use Style | Token / Context Posture | Quant-M Difference |
+| --- | --- | --- | --- | --- | --- |
+| OpenClaw | Autonomous local assistant workflows and broad tool integration. | Messaging and gateway-style control. | Agent acts through skills/tools. | Strong long-session ambition; token saving depends on configured memory and prompts. | Quant-M is narrower: evidence, replay, compact packets, and safer continuation before autonomy. |
+| Hermes Agent | CLI agent harness and agent runtime experimentation. | Terminal/CLI. | Agent drives tools through a harness. | Context handling depends on the selected harness/model loop. | Quant-M records what happened as structured local evidence and replayable state. |
+| ZeroClaw | Lightweight claw-style experimentation. | Terminal/CLI. | Minimal harness/tool loop. | Usually optimized for small surface area rather than durable handoff proof. | Quant-M adds policy gates, cost records, compact packets, and context-guardian handoffs. |
+| Quant-M | Evidence, replay, context handoff, local governance, typed payloads, and operator-controlled agent work. | CLI now; edge workers and channels later. | Workers propose; Quant-M records, gates, normalizes, and replays. | Compact packets and handoffs reduce context reloads; exact saved tokens are benchmark-pending by model/channel. | Built as a control plane, not just a task runner. |
+
+## Comparison Metrics
+
+Peer rows are intentionally marked as pending unless measured by the same local harness on the same machine. Quant-M numbers below are measured from the v0.1.0-beta clean local export.
+
+| Metric | OpenClaw | Hermes Agent | ZeroClaw | Quant-M v0.1.0-beta |
+| --- | --- | --- | --- | --- |
+| Repo size | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 3.7M clean export |
+| Release/binary size | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 4.2M release binary |
+| Fresh build speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 70.83s release build |
+| Startup/help speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 0.44s |
+| Proof-loop speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | consensus dry run 0.04s; replay/compact/guardian/cost below local timer precision |
+| Tool-use posture | Broad autonomous tool/skill use | Harness-driven tool use | Lightweight tool loop | Tool use is gated, recorded, and replay-aware |
+| Channel posture | Messaging/gateway-oriented | CLI-oriented | CLI-oriented | CLI now; channels stay policy-gated |
+| Token-saving posture | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | Compact packets and handoffs reduce context reload; exact saved tokens pending model/channel benchmarks |
+| API consistency | Depends on harness and adapters | Depends on harness and adapters | Depends on harness and adapters | Typed payload normalization before state, replay, cost, and handoff writes |
+| Safety model | Autonomy needs careful sandboxing | Harness-dependent | Harness-dependent | Local-first, no hidden model calls, workers propose, operator decides |
+
+## API Payload Normalization
+
+Quant-M treats model and tool output as untrusted until it is normalized.
+
+The process is simple:
+
+1. Receive a model, worker, CLI, or tool payload.
+2. Parse it into a typed Quant-M record.
+3. Validate required fields, policy tags, timestamps, session IDs, and domain metadata.
+4. Write accepted facts to shared state, cost records, session evidence, or compact packets.
+5. Keep malformed or risky payloads out of canonical state.
+
+That normalization layer is what makes Quant-M useful beside coding tools and agent harnesses. A model can be creative, a worker can be messy, and an API can change shape; Quant-M still tries to preserve a consistent local record of what was actually accepted.
 
 ## v0.1.0-beta Proof
 
