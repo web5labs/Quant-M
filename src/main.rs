@@ -12,6 +12,7 @@ mod context_guardian;
 mod context_status;
 mod cost_ledger;
 mod daemon;
+mod demo_flow;
 mod desk_registry;
 mod domain;
 mod execution_runtime;
@@ -71,7 +72,6 @@ const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
 const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
 const ANSI_YELLOW: &str = "\x1b[38;2;245;200;95m";
 const ANSI_MAGENTA: &str = "\x1b[38;2;210;140;255m";
-const MOCK_RESEARCH_WORKFLOW_ID: &str = "workflow:mock-research-brief";
 
 #[derive(Parser, Debug)]
 #[command(name = "quant-m")]
@@ -851,22 +851,8 @@ async fn main() -> Result<()> {
             tui_shell::run(&cfg, &config_path)?;
         }
         Commands::Demo => {
-            let workflow_id = MOCK_RESEARCH_WORKFLOW_ID.parse::<workflow_registry::WorkflowId>()?;
-            let result = execution_runtime::run_workflow(&cfg, &workflow_id)?;
-            let command = quant_m_command_hint();
-            println!(
-                "Demo workflow complete\nstatus: {}\nworkflow_id: {}\nsteps_completed: {}\nshared_state_writes: {}\nsession_id: {}\n\nnext:\n  {command} session replay {}\n  {command} state list\n  {command} agent",
-                result.status,
-                result.workflow_id,
-                result.steps_completed,
-                if result.shared_state_writes.is_empty() {
-                    "none".to_string()
-                } else {
-                    result.shared_state_writes.join(", ")
-                },
-                result.session_id,
-                result.session_id,
-            );
+            let result = demo_flow::run(&cfg)?;
+            print!("{}", demo_flow::render(&result));
         }
         Commands::Status => {
             print_status(&cfg)?;

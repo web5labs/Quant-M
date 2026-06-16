@@ -1,5 +1,6 @@
 use crate::bootstrap;
 use crate::config::{Config, ModelPreference};
+use crate::demo_flow;
 use crate::domain;
 use crate::execution_runtime::{self, WorkflowRunResult};
 use crate::sessions::{self, SessionId, SessionReplay, SessionSummary};
@@ -351,10 +352,8 @@ fn execute_command(
             })
         }
         AgentShellCommand::RunDemo => {
-            let workflow_id = WorkflowId::new(MOCK_RESEARCH_WORKFLOW);
-            let result = execution_runtime::run_workflow(cfg, &workflow_id)?;
             Ok(AgentShellResponse {
-                output: format_run_result(&result, true),
+                output: demo_flow::render(&demo_flow::run(cfg)?),
                 should_exit: false,
             })
         }
@@ -1011,16 +1010,24 @@ mod tests {
     }
 
     #[test]
-    fn run_demo_triggers_mock_research_workflow() {
+    fn run_demo_triggers_first_success_proof_loop() {
         let (_temp, config_path, cfg) = temp_cfg();
         let response =
             execute_command(&cfg, &config_path, AgentShellCommand::RunDemo).expect("run demo");
-        assert!(response.output.contains("Workflow run complete"));
-        assert!(response.output.contains("session_id:"));
-        assert_eq!(
-            shared_state::list_state(&cfg, None).expect("state").len(),
-            1
+        assert!(response.output.contains("Quant-M demo"));
+        assert!(response.output.contains("Evidence created"));
+        assert!(response.output.contains("Replay validated"));
+        assert!(response.output.contains("Compact packet generated"));
+        assert!(response.output.contains("Context Guardian handoff created"));
+        assert!(response.output.contains("Cost record written"));
+        assert!(response.output.contains("Artifacts:"));
+        assert!(response.output.contains("Excerpt"));
+        assert!(
+            !shared_state::list_state(&cfg, None)
+                .expect("state")
+                .is_empty()
         );
+        assert!(!response.should_exit);
     }
 
     #[test]
@@ -1054,7 +1061,7 @@ mod tests {
             .expect("session recent");
         assert!(response.output.contains("Recent sessions"));
         assert!(response.output.contains("status=ok"));
-        assert!(response.output.contains("fsm=state:summary_drafted"));
+        assert!(response.output.contains("fsm="));
     }
 
     #[test]
@@ -1070,11 +1077,8 @@ mod tests {
         )
         .expect("session show");
         assert!(response.output.contains("Session"));
-        assert!(
-            response
-                .output
-                .contains("final_fsm_state: state:summary_drafted")
-        );
+        assert!(response.output.contains("final_fsm_state:"));
+        assert!(response.output.contains("event_count:"));
     }
 
     #[test]

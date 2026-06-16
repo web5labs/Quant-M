@@ -12,6 +12,7 @@ pub mod context_guardian;
 pub mod context_status;
 pub mod cost_ledger;
 pub mod daemon;
+pub mod demo_flow;
 pub mod desk_registry;
 pub mod domain;
 pub mod execution_runtime;
