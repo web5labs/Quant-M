@@ -4,7 +4,7 @@
   <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="340">
 </p>
 
-**A local-first Rust control plane for AI work that needs evidence, replay, handoff, and operator control.**
+**Quant-M is a flight recorder and control plane for AI-assisted work. It preserves evidence, decisions, costs, and context so agents can continue safely instead of starting over.**
 
 AI agents can generate work fast, but they often lose the trail. Decisions disappear into chat history. Evidence gets buried. Context gets too long. Another model continues without knowing what was proven, what was rejected, or what still needs review.
 
@@ -21,7 +21,7 @@ It helps answer:
 
 > v0.1.0-beta: CLI-first, local-first, and intentionally conservative. Sharp edges are expected.
 
-[Quick Start](#quick-start) | [Try The Proof Loop](#try-the-proof-loop) | [Features](#features) | [Harness Comparison](#agent-harness-comparison) | [Release Notes](docs/release/v0.1.0-beta.md)
+[Quick Start](#quick-start) | [Workflow](#workflow) | [Continuity Story](#continuity-story) | [Features](#features) | [Harness Comparison](#agent-harness-comparison) | [Release Notes](docs/release/v0.1.0-beta.md)
 
 ## Why This Exists
 
@@ -35,13 +35,37 @@ It favors governed execution over unchecked autonomy.
 
 The goal is not flashy autonomy. The goal is durable intelligence: local evidence, replayable sessions, compact handoffs, degraded-context warnings, and human authority over worker output.
 
+## Workflow
+
+Long AI sessions tend to fail the same way: the work grows, the context window fills, and the next agent has to guess what mattered. Quant-M turns that into a local proof loop.
+
+```mermaid
+flowchart LR
+    A["Long AI session"] --> B["Context gets crowded"]
+    B --> C["Quant-M records evidence"]
+    C --> D["Replay checks what happened"]
+    D --> E["Compact packet preserves the useful state"]
+    E --> F["Context Guardian writes a handoff"]
+    F --> G["Next agent continues with proof"]
+```
+
+Quant-M does not try to make agents more magical. It makes their work easier to inspect, replay, resume, and stop.
+
+## Continuity Story
+
+Imagine an eight-hour research or coding session. The agent has inspected files, rejected bad paths, found useful evidence, and spent tokens getting there. Then the context window is nearly exhausted.
+
+Without Quant-M, the next session starts by rereading chat history and hoping the summary is right.
+
+With Quant-M, the run leaves behind session evidence, a replayable record, a compact packet, a continuity handoff, and cost records. A new agent can resume from the accepted facts instead of rebuilding the whole trail from memory.
+
 ## Why The Water Bear?
 
-The water bear is not just a mascot. It is the design metaphor.
+The water bear is not just a mascot. It is the product philosophy.
 
 Tardigrades are famous for surviving brutal conditions: pressure, radiation, dehydration, cold, heat, and even space-like environments. Quant-M is built for the harsh parts of agent work: context loss, drift, stale memory, incomplete evidence, failed runs, and handoffs between models.
 
-The little armored creature is a reminder: make the work resilient before making it autonomous.
+Most AI tools optimize for speed, autonomy, and more agents. Quant-M optimizes for survival, continuity, and resilience. The little armored creature is a reminder: make the work durable before making it autonomous.
 
 ## Quick Start
 
@@ -86,20 +110,20 @@ You should see:
 
 ## Features
 
-| Feature | Plain-English Meaning | Why It Matters |
+| Feature | What You Get | Why It Matters |
 | --- | --- | --- |
-| Evidence trail | Quant-M writes local records of meaningful work. | You can inspect what happened instead of trusting vibes. |
+| Evidence trail | See what happened and where the proof lives. | You do not have to trust a chat summary. |
 | Replay | Re-check a run without repeating side effects. | Reviews become safer and less guessy. |
-| Compact packets | Long sessions become small handoff files. | Another agent can continue from a durable packet, not a fading chat scroll. |
-| Context Guardian | Watches local session evidence and prepares handoffs when risk is high. | Context rot becomes visible before it quietly damages work. |
-| Worker proposals | Workers can submit evidence and suggestions. | Workers help without silently becoming the boss. |
-| Policy gates | Risky actions stay behind explicit guardrails. | Chat text does not become authority. |
-| Cost ledger | Dry runs and provider paths can leave cost records. | Cost becomes reviewable instead of mysterious. |
-| Memory/context degradation | Stale or unsupported context is flagged. | Quant-M does not pretend old memory is fresh truth. |
-| Local-first setup | The proof path runs on your machine. | No hosted broker or API key is required to understand the system. |
-| API payload normalization | Model, worker, state, and replay payloads are parsed into typed local records. | Agent tools can disagree or fail without corrupting the canonical state shape. |
-| Multi-model readiness | The runtime is built to record model and worker evidence. | Multiple models can contribute without erasing accountability. |
-| Edge worker direction | Designed for laptops, SSH boxes, Raspberry Pi class devices, and Android/Termux-style nodes. | Agent work can move closer to the machine doing the job. |
+| Compact packets | Turn long sessions into small continuation files. | Another agent can continue from durable state, not a fading chat scroll. |
+| Context Guardian | Get handoffs when context is stale, risky, or too long. | Context rot becomes visible before it quietly damages work. |
+| Worker proposals | Let workers suggest actions without silently taking over. | Agent help stays under operator control. |
+| Policy gates | Keep risky actions behind explicit guardrails. | Chat text does not become authority. |
+| Cost ledger | Inspect dry-run and provider-path costs locally. | Cost becomes reviewable instead of mysterious. |
+| Memory/context degradation | Flag stale or unsupported context. | Quant-M does not pretend old memory is fresh truth. |
+| Local-first setup | Run the proof path on your machine. | No hosted broker or API key is required to understand the system. |
+| API payload normalization | Switch between OpenAI, Gemini, OpenRouter, local models, workers, and CLIs with a steadier state shape. | Provider and tool payloads can vary without corrupting your workflow records. |
+| Multi-model readiness | Keep model and worker contributions attributable. | Multiple models can help without erasing accountability. |
+| Edge worker direction | Run closer to laptops, SSH boxes, Raspberry Pi class devices, and Android/Termux-style nodes. | Agent work can move closer to the machine doing the job. |
 
 ## Agent Harness Comparison
 
@@ -133,7 +157,7 @@ Peer rows are intentionally marked as pending unless measured by the same local 
 
 ## API Payload Normalization
 
-Quant-M treats model and tool output as untrusted until it is normalized.
+Quant-M treats model and tool output as untrusted until it is normalized. The user benefit is simple: you should be able to move between OpenAI, Gemini, OpenRouter, local models, workers, and CLI tools without rewriting your workflow records every time a payload shape changes.
 
 The process is simple:
 
