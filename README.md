@@ -21,7 +21,7 @@ It helps answer:
 
 > v0.1.0-beta: CLI-first, local-first, and intentionally conservative. Sharp edges are expected.
 
-[Quick Start](#quick-start) | [Workflow](#workflow) | [Continuity Story](#continuity-story) | [Features](#features) | [Harness Comparison](#agent-harness-comparison) | [Release Notes](docs/release/v0.1.0-beta.md)
+[Quick Start](#quick-start) | [How It Works](#how-it-works) | [Continuity Story](#continuity-story) | [Features](#features) | [Where It Fits](#where-quant-m-fits) | [Release Notes](docs/release/v0.1.0-beta.md)
 
 ## Why This Exists
 
@@ -35,18 +35,19 @@ It favors governed execution over unchecked autonomy.
 
 The goal is not flashy autonomy. The goal is durable intelligence: local evidence, replayable sessions, compact handoffs, degraded-context warnings, and human authority over worker output.
 
-## Workflow
+## How It Works
 
 Long AI sessions tend to fail the same way: the work grows, the context window fills, and the next agent has to guess what mattered. Quant-M turns that into a local proof loop.
 
-| Step | What Happens | What Quant-M Leaves Behind |
-| --- | --- | --- |
-| 1 | An agent works through a long task. | Local session evidence |
-| 2 | Context gets crowded or stale. | Degradation signals |
-| 3 | Quant-M replays what happened. | Reviewable proof |
-| 4 | The useful state gets compacted. | Compact packet |
-| 5 | The Context Guardian prepares continuation. | Handoff file |
-| 6 | A new agent resumes. | Accepted facts, not guesswork |
+An agent works.
+
+Quant-M records evidence.
+
+When context becomes stale, Quant-M creates a compact packet.
+
+The Context Guardian prepares a continuation handoff.
+
+A new agent resumes from accepted facts instead of rereading thousands of lines.
 
 Quant-M does not try to make agents more magical. It makes their work easier to inspect, replay, resume, and stop.
 
@@ -109,79 +110,41 @@ You should see:
 
 ## Features
 
-| Feature | What You Get | Why It Matters |
-| --- | --- | --- |
-| Evidence trail | See what happened and where the proof lives. | You do not have to trust a chat summary. |
-| Replay | Re-check a run without repeating side effects. | Reviews become safer and less guessy. |
-| Compact packets | Turn long sessions into small continuation files. | Another agent can continue from durable state, not a fading chat scroll. |
-| Context Guardian | Get handoffs when context is stale, risky, or too long. | Context rot becomes visible before it quietly damages work. |
-| Worker proposals | Let workers suggest actions without silently taking over. | Agent help stays under operator control. |
-| Policy gates | Keep risky actions behind explicit guardrails. | Chat text does not become authority. |
-| Cost ledger | Inspect dry-run and provider-path costs locally. | Cost becomes reviewable instead of mysterious. |
-| Memory/context degradation | Flag stale or unsupported context. | Quant-M does not pretend old memory is fresh truth. |
-| Local-first setup | Run the proof path on your machine. | No hosted broker or API key is required to understand the system. |
-| API payload normalization | Switch between OpenAI, Gemini, OpenRouter, local models, workers, and CLIs with a steadier state shape. | Provider and tool payloads can vary without corrupting your workflow records. |
-| Multi-model readiness | Keep model and worker contributions attributable. | Multiple models can help without erasing accountability. |
-| Edge worker direction | Run closer to laptops, SSH boxes, Raspberry Pi class devices, and Android/Termux-style nodes. | Agent work can move closer to the machine doing the job. |
+Quant-M keeps the homepage promise small and sharp:
 
-## Agent Harness Comparison
+- Evidence trail: see what happened and where the proof lives.
+- Replay: re-check a run without repeating side effects.
+- Compact packets: turn long sessions into small continuation files.
+- Context Guardian: prepare handoffs when context is stale, risky, or too long.
+- Cost ledger: inspect dry-run and provider-path costs locally.
+- Policy gates: keep risky actions behind explicit operator control.
+- API payload normalization: switch between OpenAI, Gemini, OpenRouter, local models, workers, and CLIs with a steadier state shape.
+- Local-first setup: run the proof path without a hosted broker or API key.
 
-This is not a leaderboard. Codex, Claude Code, Antigravity CLI, and similar coding tools are better understood as tools that can be used with Quant-M, not competitors to Quant-M.
+## Where Quant-M Fits
 
-The closer comparison is with agent harnesses and local agent runtimes such as OpenClaw, Hermes Agent, and ZeroClaw. Quant-M's lane is local governance: evidence, replay, handoff, payload consistency, token-aware continuity, and operator control.
+Coding agents generate code.
 
-| Harness | Best At | Typical Channel | Tool-Use Style | Token / Context Posture | Quant-M Difference |
-| --- | --- | --- | --- | --- | --- |
-| OpenClaw | Autonomous local assistant workflows and broad tool integration. | Messaging and gateway-style control. | Agent acts through skills/tools. | Strong long-session ambition; token saving depends on configured memory and prompts. | Quant-M is narrower: evidence, replay, compact packets, and safer continuation before autonomy. |
-| Hermes Agent | CLI agent harness and agent runtime experimentation. | Terminal/CLI. | Agent drives tools through a harness. | Context handling depends on the selected harness/model loop. | Quant-M records what happened as structured local evidence and replayable state. |
-| ZeroClaw | Lightweight claw-style experimentation. | Terminal/CLI. | Minimal harness/tool loop. | Usually optimized for small surface area rather than durable handoff proof. | Quant-M adds policy gates, cost records, compact packets, and context-guardian handoffs. |
-| Quant-M | Evidence, replay, context handoff, local governance, typed payloads, and operator-controlled agent work. | CLI now; edge workers and channels later. | Workers propose; Quant-M records, gates, normalizes, and replays. | Compact packets and handoffs reduce context reloads; exact saved tokens are benchmark-pending by model/channel. | Built as a control plane, not just a task runner. |
+Agent harnesses coordinate tools and workers.
 
-## Comparison Metrics
+Quant-M preserves evidence, replays work, normalizes payloads, tracks cost, and helps the next agent continue safely.
 
-Peer rows are intentionally marked as pending unless measured by the same local harness on the same machine. Quant-M numbers below are measured from the v0.1.0-beta clean local export.
-
-| Metric | OpenClaw | Hermes Agent | ZeroClaw | Quant-M v0.1.0-beta |
-| --- | --- | --- | --- | --- |
-| Repo size | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 3.7M clean export |
-| Release/binary size | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 4.2M release binary |
-| Fresh build speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 70.83s release build |
-| Startup/help speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | 0.44s |
-| Proof-loop speed | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | consensus dry run 0.04s; replay/compact/guardian/cost below local timer precision |
-| Tool-use posture | Broad autonomous tool/skill use | Harness-driven tool use | Lightweight tool loop | Tool use is gated, recorded, and replay-aware |
-| Channel posture | Messaging/gateway-oriented | CLI-oriented | CLI-oriented | CLI now; channels stay policy-gated |
-| Token-saving posture | Pending same-harness measurement | Pending same-harness measurement | Pending same-harness measurement | Compact packets and handoffs reduce context reload; exact saved tokens pending model/channel benchmarks |
-| API consistency | Depends on harness and adapters | Depends on harness and adapters | Depends on harness and adapters | Typed payload normalization before state, replay, cost, and handoff writes |
-| Safety model | Autonomy needs careful sandboxing | Harness-dependent | Harness-dependent | Local-first, no hidden model calls, workers propose, operator decides |
+Codex, Claude Code, Antigravity CLI, and similar tools are better understood as tools that can run beside Quant-M, not competitors to Quant-M. Deeper harness comparisons and benchmark notes live in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## API Payload Normalization
 
 Quant-M treats model and tool output as untrusted until it is normalized. The user benefit is simple: you should be able to move between OpenAI, Gemini, OpenRouter, local models, workers, and CLI tools without rewriting your workflow records every time a payload shape changes.
 
-The process is simple:
-
-1. Receive a model, worker, CLI, or tool payload.
-2. Parse it into a typed Quant-M record.
-3. Validate required fields, policy tags, timestamps, session IDs, and domain metadata.
-4. Write accepted facts to shared state, cost records, session evidence, or compact packets.
-5. Keep malformed or risky payloads out of canonical state.
-
-That normalization layer is what makes Quant-M useful beside coding tools and agent harnesses. A model can be creative, a worker can be messy, and an API can change shape; Quant-M still tries to preserve a consistent local record of what was actually accepted.
+That normalization layer is what makes Quant-M useful beside coding tools and agent harnesses. A model can be creative, a worker can be messy, and an API can change shape; Quant-M still preserves a consistent local record of what was actually accepted.
 
 ## v0.1.0-beta Proof
 
-These are local beta proof metrics, not industry leaderboard scores.
+The beta proof path is intentionally small:
 
-| Check | Result |
-| --- | --- |
-| Repo export size | 3.7M |
-| Release binary | 4.2M |
-| Fresh release build | 70.83s |
-| Startup/help | 0.44s |
-| Consensus dry run | 0.04s |
-| Replay, compact, guardian, cost summary | Below timer precision in local benchmark |
-| Tests | 236 library tests + 303 binary tests |
-| Validation | fmt, clippy, tests, onboarding lint, README link check, secret scan, clean repo audit |
+- 539 tests passing
+- 3.7M clean repository export
+- 4.2M release binary
+- local-first proof path with evidence, replay, compact packets, context guardian handoff, and cost summary
 
 Verified from a clean local export. Empty-machine verification pending.
 
