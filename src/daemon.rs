@@ -1,6 +1,6 @@
 use crate::adapters::AdapterHub;
 use crate::config::Config;
-use crate::{heartbeat, logutil, shutdown, telegram, worker};
+use crate::{context_guardian, heartbeat, logutil, shutdown, telegram, worker};
 use anyhow::Result;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -40,6 +40,15 @@ pub async fn run(cfg: Config) -> Result<()> {
             telegram::run_loop_with_shutdown(cfg, adapters, Some(telegram_shutdown_rx.clone()))
         },
     );
+    let guardian_shutdown_rx = shutdown_rx.clone();
+    let guardian_task = spawn_supervisor(
+        "context-guardian",
+        cfg.clone(),
+        adapters.clone(),
+        move |cfg, _adapters| {
+            context_guardian::run_loop_with_shutdown(cfg, Some(guardian_shutdown_rx.clone()))
+        },
+    );
 
     shutdown::wait_for_shutdown_signal().await?;
     logutil::append_log(&cfg.logging, "daemon shutdown signal received")?;
@@ -63,6 +72,12 @@ pub async fn run(cfg: Config) -> Result<()> {
     let telegram_shutdown = tokio::time::timeout(Duration::from_secs(10), &mut telegram_task).await;
     if telegram_shutdown.is_err() {
         telegram_task.abort();
+    }
+
+    let mut guardian_task = guardian_task;
+    let guardian_shutdown = tokio::time::timeout(Duration::from_secs(10), &mut guardian_task).await;
+    if guardian_shutdown.is_err() {
+        guardian_task.abort();
     }
 
     logutil::append_log(&cfg.logging, "daemon stopped")?;

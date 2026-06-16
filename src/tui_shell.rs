@@ -7,8 +7,8 @@ use crate::workflow_registry::{self, WorkflowId};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
-use ratatui::text::{Line, Text};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use std::path::Path;
@@ -69,7 +69,7 @@ pub fn run(cfg: &Config, config_path: &Path) -> Result<()> {
         snapshot,
         doctor: None,
         last_run: None,
-        notice: "Ready. Press r to run mock-research, d for doctor, q to quit.".to_string(),
+        notice: "✨ Ready. Press r to run mock-research, d for doctor, q to quit.".to_string(),
         view: TuiView::Overview,
     };
 
@@ -94,27 +94,27 @@ fn run_app(
                     KeyCode::Char('d') => {
                         app.doctor = Some(run_doctor_snapshot(cfg, config_path));
                         app.view = TuiView::Doctor;
-                        app.notice = "Doctor refreshed.".to_string();
+                        app.notice = "🩺 Doctor refreshed.".to_string();
                     }
                     KeyCode::Char('w') => {
                         app.snapshot = collect_snapshot(cfg)?;
                         app.view = TuiView::Workflows;
-                        app.notice = "Workflow list refreshed.".to_string();
+                        app.notice = "⚙ Workflow list refreshed.".to_string();
                     }
                     KeyCode::Char('s') => {
                         app.snapshot = collect_snapshot(cfg)?;
                         app.view = TuiView::Sessions;
-                        app.notice = "Session list refreshed.".to_string();
+                        app.notice = "📜 Session list refreshed.".to_string();
                     }
                     KeyCode::Char('t') => {
                         app.snapshot = collect_snapshot(cfg)?;
                         app.view = TuiView::SharedState;
-                        app.notice = "Shared-state list refreshed.".to_string();
+                        app.notice = "🧠 Shared-state list refreshed.".to_string();
                     }
                     KeyCode::Char('o') => {
                         app.snapshot = collect_snapshot(cfg)?;
                         app.view = TuiView::Overview;
-                        app.notice = "Overview refreshed.".to_string();
+                        app.notice = "✨ Overview refreshed.".to_string();
                     }
                     KeyCode::Char('r') => {
                         let workflow_id = WorkflowId::new(MOCK_RESEARCH_WORKFLOW);
@@ -124,7 +124,7 @@ fn run_app(
                                 app.snapshot = collect_snapshot(cfg)?;
                                 app.view = TuiView::Overview;
                                 app.notice = format!(
-                                    "Workflow ok: {} session={}",
+                                    "✓ Workflow ok: {} session={}",
                                     result.workflow_id, result.session_id
                                 );
                             }
@@ -230,16 +230,50 @@ fn render(frame: &mut Frame, app: &TuiApp) {
 
 fn render_header(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let title = Paragraph::new(Text::from(vec![
-        Line::from(format!("Quant-M v{APP_VERSION}"))
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-        Line::from(format!(
-            "Workspace: {} | Profile: {} | Network: {}",
-            app.snapshot.workspace_path,
-            app.snapshot.runtime_profile,
-            app.snapshot.external_network_posture
-        )),
+        Line::from(vec![
+            Span::styled(
+                "🧠 Quant-M ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("v{APP_VERSION}"),
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Workspace: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.snapshot.workspace_path.clone(),
+                Style::default().fg(Color::White),
+            ),
+            Span::raw("  "),
+            Span::styled("Profile: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.snapshot.runtime_profile.clone(),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw("  "),
+            Span::styled("Network: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.snapshot.external_network_posture.clone(),
+                if app.snapshot.external_network_posture == "enabled" {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::LightRed)
+                },
+            ),
+        ]),
     ]))
-    .block(Block::default().borders(Borders::ALL).title("Runtime"));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Blue))
+            .title(" Runtime "),
+    );
     frame.render_widget(title, area);
 }
 
@@ -282,22 +316,26 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &TuiApp) {
         Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(left);
 
     let overview = Paragraph::new(Text::from(vec![
-        Line::from(format!(
-            "Preferred local model: {}",
-            app.snapshot.preferred_local_model
-        )),
-        Line::from(format!(
-            "Preferred OpenRouter model: {}",
-            app.snapshot.preferred_openrouter_model
-        )),
-        Line::from(format!("Session count: {}", app.snapshot.session_count)),
-        Line::from(format!(
-            "Shared-state count: {}",
-            app.snapshot.shared_state_count
-        )),
-        Line::from("CLI remains primary for Staff OS and cmux.".to_string()),
+        metric_line(
+            "🧩 Preferred local model",
+            &app.snapshot.preferred_local_model,
+        ),
+        metric_line(
+            "🌐 Preferred OpenRouter model",
+            &app.snapshot.preferred_openrouter_model,
+        ),
+        metric_line("📜 Session count", &app.snapshot.session_count.to_string()),
+        metric_line(
+            "🧠 Shared-state count",
+            &app.snapshot.shared_state_count.to_string(),
+        ),
+        Line::from("CLI remains primary for Staff OS and cmux.").style(
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ),
     ]))
-    .block(Block::default().borders(Borders::ALL).title("Overview"))
+    .block(panel_block(" Overview ", Color::Cyan))
     .wrap(Wrap { trim: true });
     frame.render_widget(overview, top_left);
 
@@ -325,7 +363,7 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &TuiApp) {
         lines.push(Line::from("Last run: none yet"));
     }
     let status = Paragraph::new(Text::from(lines))
-        .block(Block::default().borders(Borders::ALL).title("Last Action"))
+        .block(panel_block(" Last Action ", Color::Green))
         .wrap(Wrap { trim: true });
     frame.render_widget(status, bottom);
 }
@@ -334,31 +372,30 @@ fn render_doctor(frame: &mut Frame, area: Rect, app: &TuiApp) {
     frame.render_widget(Clear, area);
     let lines = match &app.doctor {
         Some(doctor) => vec![
-            Line::from(format!("config_exists: {}", doctor.config_exists)),
-            Line::from(format!("workspace_exists: {}", doctor.workspace_exists)),
-            Line::from(format!("state_path_exists: {}", doctor.state_path_exists)),
-            Line::from(format!(
-                "session_path_exists: {}",
-                doctor.session_path_exists
-            )),
-            Line::from(format!("workflow_run_ok: {}", doctor.workflow_run_ok)),
-            Line::from(format!(
-                "shared_state_list_ok: {}",
-                doctor.shared_state_list_ok
-            )),
-            Line::from(format!("session_list_ok: {}", doctor.session_list_ok)),
-            Line::from(format!(
-                "generated_session_id: {}",
-                doctor.generated_session_id.as_deref().unwrap_or("none")
-            )),
+            check_line("config_exists", doctor.config_exists),
+            check_line("workspace_exists", doctor.workspace_exists),
+            check_line("state_path_exists", doctor.state_path_exists),
+            check_line("session_path_exists", doctor.session_path_exists),
+            check_line("workflow_run_ok", doctor.workflow_run_ok),
+            check_line("shared_state_list_ok", doctor.shared_state_list_ok),
+            check_line("session_list_ok", doctor.session_list_ok),
+            metric_line(
+                "generated_session_id",
+                doctor.generated_session_id.as_deref().unwrap_or("none"),
+            ),
         ],
         None => vec![
-            Line::from("Doctor has not been run in this TUI session."),
-            Line::from("Press d to run the local doctor checks."),
+            Line::from("Doctor has not been run in this TUI session.")
+                .style(Style::default().fg(Color::Yellow)),
+            Line::from("Press d to run the local doctor checks.").style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            ),
         ],
     };
     let paragraph = Paragraph::new(Text::from(lines))
-        .block(Block::default().borders(Borders::ALL).title("Doctor"))
+        .block(panel_block(" 🩺 Doctor ", Color::Yellow))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
 }
@@ -371,7 +408,12 @@ fn render_list_view(frame: &mut Frame, area: Rect, title: &str, items: &[String]
     );
     frame.render_widget(
         Paragraph::new(hint)
-            .block(Block::default().borders(Borders::ALL).title("Note"))
+            .style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .block(panel_block(" Note ", Color::DarkGray))
             .wrap(Wrap { trim: true }),
         bottom,
     );
@@ -379,23 +421,85 @@ fn render_list_view(frame: &mut Frame, area: Rect, title: &str, items: &[String]
 
 fn list_widget<'a>(title: &'a str, items: &'a [String], empty: &'a str) -> List<'a> {
     let list_items = if items.is_empty() {
-        vec![ListItem::new(empty.to_string())]
+        vec![ListItem::new(empty.to_string()).style(Style::default().fg(Color::DarkGray))]
     } else {
         items
             .iter()
-            .map(|item| ListItem::new(item.clone()))
+            .map(|item| ListItem::new(format!("• {item}")).style(Style::default().fg(Color::White)))
             .collect()
     };
-    List::new(list_items).block(Block::default().borders(Borders::ALL).title(title))
+    List::new(list_items).block(panel_block(title, Color::Magenta))
+}
+
+fn panel_block(title: &str, color: Color) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(color))
+        .title(title.to_string())
+}
+
+fn metric_line(label: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{label}: "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(value.to_string(), Style::default().fg(Color::White)),
+    ])
+}
+
+fn check_line(label: &str, ok: bool) -> Line<'static> {
+    let (icon, color, value) = if ok {
+        ("✓", Color::Green, "ok")
+    } else {
+        ("!", Color::LightRed, "needs attention")
+    };
+    Line::from(vec![
+        Span::styled(
+            format!("{icon} "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{label}: "), Style::default().fg(Color::White)),
+        Span::styled(value.to_string(), Style::default().fg(color)),
+    ])
+}
+
+fn key_span(value: &str) -> Span<'static> {
+    Span::styled(
+        value.to_string(),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let help = Paragraph::new(Text::from(vec![
-        Line::from("q quit | d doctor | w workflows | s sessions | t state | r run mock-research | o overview")
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-        Line::from(app.notice.clone()).italic(),
+        Line::from(vec![
+            key_span("q"),
+            Span::raw(" quit  "),
+            key_span("d"),
+            Span::raw(" doctor  "),
+            key_span("w"),
+            Span::raw(" workflows  "),
+            key_span("s"),
+            Span::raw(" sessions  "),
+            key_span("t"),
+            Span::raw(" state  "),
+            key_span("r"),
+            Span::raw(" run demo  "),
+            key_span("o"),
+            Span::raw(" overview"),
+        ]),
+        Line::from(app.notice.clone()).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::ITALIC),
+        ),
     ]))
-    .block(Block::default().borders(Borders::ALL).title("Shortcuts"))
+    .block(panel_block(" Shortcuts ", Color::Blue))
     .wrap(Wrap { trim: true });
     frame.render_widget(help, area);
 }

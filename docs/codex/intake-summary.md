@@ -2,20 +2,20 @@
 
 ## Source context
 
-- Existing Quant-M Rust runtime copied into `/Users/julio/Desktop/The-Staff/quantm`
-- Local copies of `Ponboarding` and `Staff-OS` placed under `quantm/The-Sataff/` for reference during the real-project test
-- Existing project docs include a product README, feature map, deployment notes, workspace memory files, and forex desk docs
+- Existing Quant-M Rust runtime is the product under review.
+- Earlier private reference copies were used only for pattern study and are not part of the public export.
+- Existing project docs include a product README, feature map, deployment notes, governance doctrine, and runtime docs.
 
 ## Confirmed facts
 
 - Quant-M is intentionally local-first and CLI-driven.
 - The repo already contains runtime code for memory, worker jobs, heartbeat, adapters, skills, shared state, LLM, Telegram, and forex flows.
 - There is no required browser UI in the current product boundary.
-- `quant-m.toml` currently contains machine-specific absolute paths.
+- `quant-m.toml` should remain portable and use relative paths or environment variables.
 
 ## Assumptions
 
-- The copied Ponboarding and Staff-OS repos are reference material, not the product under test.
+- External and private references are pattern material, not product requirements.
 - The onboarding goal is to prepare Quant-M for future implementation slices, not to implement new features yet.
 - Runtime safety defaults should remain intact while the docs are stabilized.
 

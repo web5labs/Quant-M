@@ -1,3 +1,0 @@
-# MEMORY
-
-- Quant-M initialized

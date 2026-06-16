@@ -17,10 +17,11 @@ Read project documents in this order:
 7. `docs/fsm/project-execution-fsm.md`
 8. `docs/fsm/product-state-machines.md`
 9. Relevant files in `docs/wiki/`
-10. `workspace/AGENTS.md`, `workspace/HEARTBEAT.md`, `workspace/MEMORY.md`, `workspace/SOUL.md`, `workspace/USER.md`
-11. `desks/forex/*.md` when the slice touches the desk pipeline
-12. `docs/codex/execution-plan.md`
-13. `docs/codex/goal-prompt.md`
+10. `docs/governance/runtime-doctrine.md`
+11. Runtime files under `workspace/` only when inspecting generated local state
+12. `desks/forex/*.md` when the slice touches the desk pipeline
+13. `docs/codex/execution-plan.md`
+14. `docs/codex/goal-prompt.md`
 
 If documents conflict, record the conflict in `docs/codex/blockers.md` and continue only if safe.
 
@@ -51,7 +52,7 @@ Use approved external source repos only as pattern references. Prefer `npx opens
 
 ## Wiki protocol
 
-Read `docs/wiki/MANIFEST.md` first. Load only relevant wiki files for the active task. Preserve raw files in `docs/wiki/raw/`. Put normalized summaries in `docs/wiki/ingested/`.
+Read `docs/wiki/MANIFEST.md` first. Load only relevant wiki files for the active task. Keep raw wiki files small and intentional. Put normalized summaries in `docs/wiki/ingested/`.
 
 If the slice appears to need more than 8 files, stop and propose a smaller boundary.
 

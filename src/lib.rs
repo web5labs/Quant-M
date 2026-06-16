@@ -8,6 +8,7 @@ pub mod config;
 pub mod consensus;
 pub mod context_decay;
 pub mod context_firewall;
+pub mod context_guardian;
 pub mod context_status;
 pub mod cost_ledger;
 pub mod daemon;

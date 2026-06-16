@@ -62,16 +62,34 @@ poll_interval_seconds = 3
 
 [chat_channels]
 enabled = false
-allowed_channels = ["telegram", "discord", "slack", "signal", "whatsapp", "ichat", "email"]
+allowed_channels = [
+    "telegram",
+    "discord",
+    "slack",
+    "signal",
+    "whatsapp",
+    "ichat",
+    "email",
+]
 default_channel = "telegram"
 
 [forex]
 redb_path = "workspace/state/forex.redb"
 
 [runtime]
-profile = "laptop"
+profile = "edge"
 session_dir = "workspace/state/sessions"
 external_network_enabled = false
+multi_model_enabled = false
+search_enabled = false
+browser_harness_enabled = false
+
+[context_guardian]
+enabled = true
+interval_seconds = 300
+min_event_count = 1
+high_risk_event_count = 40
+branch_packet_path = "workspace/state/context-guardian/continuity-handoff.md"
 
 [preferences]
 preferred_openrouter_model = "qwen/qwen3-coder"
@@ -81,4 +99,114 @@ provider = "openrouter"
 model = "qwen/qwen3-coder"
 
 [preferences.preferred_channel]
-channel = "telegram"
+channel = "none"
+
+[providers.lmstudio]
+enabled = false
+kind = "lm_studio"
+api_base = "http://127.0.0.1:1234/v1"
+api_key_env = ""
+preferred_models = []
+live_validation_allowed = false
+
+[providers.ollama]
+enabled = false
+kind = "ollama"
+api_base = "http://127.0.0.1:11434"
+api_key_env = ""
+preferred_models = ["qwen3-coder:7b"]
+live_validation_allowed = false
+
+[providers.openai]
+enabled = false
+kind = "open_ai"
+api_base = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+preferred_models = [
+    "gpt-5-codex",
+    "gpt-5",
+]
+live_validation_allowed = false
+
+[providers.openrouter]
+enabled = true
+kind = "open_router"
+api_base = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+preferred_models = [
+    "qwen/qwen3-coder",
+    "openai/gpt-4o-mini",
+]
+live_validation_allowed = false
+
+[tools.antgravity]
+enabled = false
+kind = "antgravity"
+command = "antgravity"
+validation_args = ["--version"]
+
+[tools.anthropic]
+enabled = false
+kind = "anthropic"
+command = "anthropic"
+validation_args = ["--version"]
+
+[tools.antigravity]
+enabled = false
+kind = "antigravity"
+command = "antigravity"
+validation_args = ["--version"]
+
+[tools.claude]
+enabled = false
+kind = "claude"
+command = "claude"
+validation_args = ["--version"]
+
+[tools.codex]
+enabled = true
+kind = "codex"
+command = "codex"
+validation_args = ["--version"]
+
+[tools.gemini]
+enabled = false
+kind = "gemini"
+command = "gemini"
+validation_args = ["--version"]
+
+[tools.hermes]
+enabled = false
+kind = "hermes"
+command = "hermes"
+validation_args = ["--version"]
+
+[tools.lmstudio]
+enabled = false
+kind = "lm_studio"
+command = "lms"
+validation_args = ["--version"]
+
+[tools.ollama]
+enabled = false
+kind = "ollama"
+command = "ollama"
+validation_args = ["--version"]
+
+[tools.openclaw]
+enabled = false
+kind = "open_claw"
+command = "openclaw"
+validation_args = ["--version"]
+
+[tools.opencode]
+enabled = false
+kind = "open_code"
+command = "opencode"
+validation_args = ["--version"]
+
+[tools.pi-agent]
+enabled = false
+kind = "pi_agent"
+command = "pi-agent"
+validation_args = ["--version"]

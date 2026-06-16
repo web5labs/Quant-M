@@ -8,6 +8,7 @@ mod config;
 mod consensus;
 mod context_decay;
 mod context_firewall;
+mod context_guardian;
 mod context_status;
 mod cost_ledger;
 mod daemon;
@@ -55,15 +56,29 @@ use worker::job_from_json;
 
 const CLI_BANNER: &str = "\
 \x1b[38;2;25;95;255mQ\
-\x1b[38;2;35;110;255mU\
-\x1b[38;2;45;125;255mA\
-\x1b[38;2;55;140;255mN\
-\x1b[38;2;65;155;255m-\
-\x1b[38;2;75;170;255mM\x1b[0m\n";
+\x1b[38;2;35;110;255mu\
+\x1b[38;2;45;125;255ma\
+\x1b[38;2;55;140;255mn\
+\x1b[38;2;65;155;255mt\
+\x1b[38;2;75;170;255m-\
+\x1b[38;2;85;185;255mM\x1b[0m\n";
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_DIM: &str = "\x1b[2m";
+const ANSI_UNDERLINE: &str = "\x1b[4m";
+const ANSI_BLUE: &str = "\x1b[38;2;80;160;255m";
+const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
+const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
+const ANSI_YELLOW: &str = "\x1b[38;2;245;200;95m";
+const ANSI_MAGENTA: &str = "\x1b[38;2;210;140;255m";
+const MOCK_RESEARCH_WORKFLOW_ID: &str = "workflow:mock-research-brief";
 
 #[derive(Parser, Debug)]
 #[command(name = "quant-m")]
-#[command(about = "QUAN-M: minimal local-first worker runtime", long_about = None)]
+#[command(
+    about = "Quant-M: local-first governed agent work",
+    long_about = "Quant-M is a local-first Rust runtime for governed agent work. It preserves memory, shared state, replayable session evidence, worker proposals, and human approval boundaries. A configured device runs as a Quant-M Agent Node."
+)]
 #[command(before_help = CLI_BANNER)]
 struct Cli {
     #[arg(long)]
@@ -76,12 +91,21 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
+    /// Guided first-run setup for humans.
+    Onboard {
+        #[arg(long)]
+        advanced: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create config and workspace files with safe defaults.
     Init {
         #[arg(long)]
         non_interactive: bool,
         #[arg(long)]
         json: bool,
     },
+    /// Configure models, API keys, channels, paths, and runtime profile.
     Setup {
         #[arg(long)]
         non_interactive: bool,
@@ -95,8 +119,10 @@ enum Commands {
         remote_model_provider: Option<String>,
         #[arg(long)]
         remote_model: Option<String>,
+        #[arg(long = "openrouter-model")]
+        openrouter_models: Vec<String>,
         #[arg(long)]
-        openrouter_model: Option<String>,
+        openrouter_api_key: Option<String>,
         #[arg(long)]
         channel: Option<String>,
         #[arg(long)]
@@ -111,6 +137,8 @@ enum Commands {
         session_path: Option<PathBuf>,
         #[arg(long)]
         external_network: Option<String>,
+        #[arg(long)]
+        context_guardian: Option<String>,
     },
     Config {
         #[command(subcommand)]
@@ -132,12 +160,20 @@ enum Commands {
         #[command(subcommand)]
         command: ToolCommand,
     },
+    /// Show opt-in runtime features and integration status.
+    Settings {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(visible_alias = "shell")]
     Agent,
     Tui,
+    /// Run the local proof workflow and print the next inspection commands.
+    Demo,
     Status,
     Daemon {
         #[command(subcommand)]
-        command: DaemonCommand,
+        command: Option<DaemonCommand>,
     },
     Worker {
         #[command(subcommand)]
@@ -399,6 +435,10 @@ enum ToolCommand {
         #[arg(long)]
         json: bool,
     },
+    Scan {
+        #[arg(long)]
+        json: bool,
+    },
     Validate {
         tool: String,
         #[arg(long)]
@@ -565,6 +605,14 @@ enum ContextCommand {
         #[arg(long)]
         json: bool,
     },
+    Guard {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        watch: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -675,6 +723,10 @@ struct SetupReport {
     session_dir: PathBuf,
     runtime_profile: config::RuntimeProfile,
     external_network_enabled: bool,
+    multi_model_enabled: bool,
+    search_enabled: bool,
+    browser_harness_enabled: bool,
+    context_guardian_enabled: bool,
     preferred_channel: config::ChannelPreference,
     preferred_local_model: Option<config::ModelPreference>,
     preferred_remote_model: Option<config::ModelPreference>,
@@ -682,6 +734,7 @@ struct SetupReport {
     openrouter_key_present: bool,
     provider_count: usize,
     tool_count: usize,
+    enabled_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -718,6 +771,17 @@ struct ToolListItem {
     command: String,
     validation_args: Vec<String>,
     command_present: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SettingsReport {
+    multi_model_enabled: bool,
+    search_enabled: bool,
+    browser_harness_enabled: bool,
+    external_network_enabled: bool,
+    context_guardian_enabled: bool,
+    enabled_tools: Vec<String>,
+    detected_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -769,22 +833,41 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init { .. }
+        | Commands::Onboard { .. }
         | Commands::Setup { .. }
         | Commands::Config { .. }
         | Commands::Doctor { .. }
         | Commands::Provider { .. }
-        | Commands::Tool { .. } => unreachable!("onboarding commands are handled earlier"),
+        | Commands::Tool { .. }
+        | Commands::Settings { .. } => unreachable!("onboarding commands are handled earlier"),
         Commands::Agent => {
             agent_shell::run(&cfg, &config_path)?;
         }
         Commands::Tui => {
             tui_shell::run(&cfg, &config_path)?;
         }
+        Commands::Demo => {
+            let workflow_id = MOCK_RESEARCH_WORKFLOW_ID.parse::<workflow_registry::WorkflowId>()?;
+            let result = execution_runtime::run_workflow(&cfg, &workflow_id)?;
+            println!(
+                "Demo workflow complete\nstatus: {}\nworkflow_id: {}\nsteps_completed: {}\nshared_state_writes: {}\nsession_id: {}\n\nnext:\n  ./target/release/quant-m session replay {}\n  ./target/release/quant-m state list\n  ./target/release/quant-m agent",
+                result.status,
+                result.workflow_id,
+                result.steps_completed,
+                if result.shared_state_writes.is_empty() {
+                    "none".to_string()
+                } else {
+                    result.shared_state_writes.join(", ")
+                },
+                result.session_id,
+                result.session_id,
+            );
+        }
         Commands::Status => {
             print_status(&cfg)?;
         }
         Commands::Daemon { command } => match command {
-            DaemonCommand::Start => {
+            None | Some(DaemonCommand::Start) => {
                 daemon::run(cfg.clone()).await?;
             }
         },
@@ -1222,6 +1305,33 @@ async fn main() -> Result<()> {
                     );
                 }
             }
+            ContextCommand::Guard { json, force, watch } => {
+                if watch {
+                    if json {
+                        eprintln!(
+                            "--json is ignored with --watch; guardian activity is written to the Quant-M log"
+                        );
+                    }
+                    if force {
+                        let report = context_guardian::tick_with_options(
+                            &cfg,
+                            context_guardian::GuardianTickOptions::force(),
+                        )?;
+                        print!("{}", context_guardian::render_guardian_report(&report));
+                    }
+                    context_guardian::run_loop_with_shutdown(cfg.clone(), None).await?;
+                    return Ok(());
+                }
+                let report = context_guardian::tick_with_options(
+                    &cfg,
+                    context_guardian::GuardianTickOptions { force },
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", context_guardian::render_guardian_report(&report));
+                }
+            }
         },
         Commands::Replay { session_id, json } => {
             let session_id = session_id.parse::<sessions::SessionId>()?;
@@ -1448,16 +1558,46 @@ fn is_onboarding_command(command: &Commands) -> bool {
     matches!(
         command,
         Commands::Init { .. }
+            | Commands::Onboard { .. }
             | Commands::Setup { .. }
             | Commands::Config { .. }
             | Commands::Doctor { .. }
             | Commands::Provider { .. }
             | Commands::Tool { .. }
+            | Commands::Settings { .. }
     )
 }
 
 async fn handle_onboarding_command(command: Commands, config_path: &std::path::Path) -> Result<()> {
     match command {
+        Commands::Onboard { advanced, json } => {
+            let report = run_setup_flow(
+                config_path,
+                SetupArgs {
+                    non_interactive: false,
+                    force_interactive: true,
+                    advanced,
+                    local_model_provider: None,
+                    local_model: None,
+                    local_models: Vec::new(),
+                    remote_model_provider: None,
+                    remote_model: None,
+                    openrouter_models: Vec::new(),
+                    openrouter_api_key: None,
+                    enable_openrouter: false,
+                    channel: None,
+                    channel_value: None,
+                    runtime_profile: None,
+                    workspace_path: None,
+                    state_path: None,
+                    session_path: None,
+                    external_network: None,
+                    context_guardian: None,
+                    selected_tools: Vec::new(),
+                },
+            )?;
+            print_setup_report(&report, json)
+        }
         Commands::Init {
             non_interactive,
             json,
@@ -1484,7 +1624,8 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
             local_model,
             remote_model_provider,
             remote_model,
-            openrouter_model,
+            openrouter_models,
+            openrouter_api_key,
             channel,
             channel_value,
             runtime_profile,
@@ -1492,16 +1633,22 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
             state_path,
             session_path,
             external_network,
+            context_guardian,
         } => {
             let report = run_setup_flow(
                 config_path,
                 SetupArgs {
                     non_interactive,
+                    force_interactive: false,
+                    advanced: false,
                     local_model_provider,
                     local_model,
+                    local_models: Vec::new(),
                     remote_model_provider,
                     remote_model,
-                    openrouter_model,
+                    openrouter_models,
+                    openrouter_api_key,
+                    enable_openrouter: false,
                     channel,
                     channel_value,
                     runtime_profile,
@@ -1509,33 +1656,11 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     state_path,
                     session_path,
                     external_network,
+                    context_guardian,
                     selected_tools: Vec::new(),
                 },
             )?;
-            let local_model = format_model_pref(report.preferred_local_model.as_ref());
-            let remote_model = format_model_pref(report.preferred_remote_model.as_ref());
-            let channel = format_channel_pref(&report.preferred_channel);
-            print_serialized_or_text(
-                &report,
-                json,
-                &format!(
-                    "status: {}\nconfig: {}\nworkspace: {}\nstate_sqlite: {}\nsession_dir: {}\nruntime_profile: {}\nexternal_network_enabled: {}\npreferred_channel: {}\npreferred_local_model: {}\npreferred_remote_model: {}\npreferred_openrouter_model: {}",
-                    report.status,
-                    report.config.display(),
-                    report.workspace.display(),
-                    report.state_sqlite.display(),
-                    report.session_dir.display(),
-                    runtime_profile_label(report.runtime_profile),
-                    report.external_network_enabled,
-                    channel,
-                    local_model,
-                    remote_model,
-                    report
-                        .preferred_openrouter_model
-                        .as_deref()
-                        .unwrap_or("unset"),
-                ),
-            )
+            print_setup_report(&report, json)
         }
         Commands::Config { command } => handle_config_command(config_path, command),
         Commands::Doctor {
@@ -1580,18 +1705,24 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
         }
         Commands::Provider { command } => handle_provider_command(config_path, command).await,
         Commands::Tool { command } => handle_tool_command(config_path, command),
+        Commands::Settings { json } => handle_settings_command(config_path, json),
         _ => unreachable!("not an onboarding command"),
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SetupArgs {
     non_interactive: bool,
+    force_interactive: bool,
+    advanced: bool,
     local_model_provider: Option<String>,
     local_model: Option<String>,
+    local_models: Vec<String>,
     remote_model_provider: Option<String>,
     remote_model: Option<String>,
-    openrouter_model: Option<String>,
+    openrouter_models: Vec<String>,
+    openrouter_api_key: Option<String>,
+    enable_openrouter: bool,
     channel: Option<String>,
     channel_value: Option<String>,
     runtime_profile: Option<String>,
@@ -1599,7 +1730,49 @@ struct SetupArgs {
     state_path: Option<PathBuf>,
     session_path: Option<PathBuf>,
     external_network: Option<String>,
+    context_guardian: Option<String>,
     selected_tools: Vec<String>,
+}
+
+fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
+    let local_model = format_model_pref(report.preferred_local_model.as_ref());
+    let remote_model = format_model_pref(report.preferred_remote_model.as_ref());
+    let channel = format_channel_pref(&report.preferred_channel);
+    let command = quant_m_command_hint();
+    let openrouter_model = report
+        .preferred_openrouter_model
+        .as_deref()
+        .unwrap_or("unset");
+    let tools = if report.enabled_tools.is_empty() {
+        "none".to_string()
+    } else {
+        report.enabled_tools.join(", ")
+    };
+    print_serialized_or_text(
+        report,
+        json,
+        &format!(
+            "Setup complete.\nconfig: {}\nworkspace: {}\ndevice_type: {}\nnetwork: {}\noperator_channel: {}\ntools: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command} agent\n  {command} doctor\n  {command} demo\n  {command} context guard",
+            report.config.display(),
+            report.workspace.display(),
+            runtime_profile_label(report.runtime_profile),
+            if report.external_network_enabled {
+                "enabled"
+            } else {
+                "local only / ask before live checks"
+            },
+            channel,
+            tools,
+            enabled_label(report.multi_model_enabled),
+            enabled_label(report.search_enabled),
+            enabled_label(report.browser_harness_enabled),
+            enabled_label(report.context_guardian_enabled),
+            local_model,
+            remote_model,
+            openrouter_model,
+            report.openrouter_key_present,
+        ),
+    )
 }
 
 fn run_init_flow(config_path: &std::path::Path, _non_interactive: bool) -> Result<InitReport> {
@@ -1624,7 +1797,11 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     let mut cfg = Config::load_or_create(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
     cfg.ensure_onboarding_registries();
-    let args = if args.non_interactive || !io::stdin().is_terminal() {
+    let args = if args.force_interactive && !io::stdin().is_terminal() {
+        anyhow::bail!(
+            "onboard requires an interactive terminal; use setup --non-interactive for scripts"
+        );
+    } else if args.non_interactive || !io::stdin().is_terminal() {
         if !args.non_interactive && !io::stdin().is_terminal() {
             eprintln!("setup: stdin is not interactive; using safe defaults");
         }
@@ -1648,22 +1825,51 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     if let Some(external_network) = args.external_network {
         cfg.runtime.external_network_enabled = parse_enabled_disabled(&external_network)?;
     }
-    if let Some(openrouter_model) = args.openrouter_model {
-        let trimmed = openrouter_model.trim();
+    if let Some(context_guardian) = args.context_guardian {
+        cfg.context_guardian.enabled = parse_enabled_disabled(&context_guardian)?;
+    }
+    if args.enable_openrouter {
+        enable_provider(&mut cfg, "openrouter");
+        cfg.llm.api_base = "https://openrouter.ai/api/v1".to_string();
+        cfg.llm.api_key_env = "OPENROUTER_API_KEY".to_string();
+    }
+    let openrouter_models = normalize_model_list(args.openrouter_models);
+    if !openrouter_models.is_empty() {
+        enable_provider(&mut cfg, "openrouter");
+        cfg.preferences.preferred_openrouter_model = openrouter_models.first().cloned();
+        cfg.llm.api_base = "https://openrouter.ai/api/v1".to_string();
+        if let Some(first) = openrouter_models.first() {
+            cfg.llm.model = first.clone();
+        }
+        if let Some(provider) = cfg.providers.get_mut("openrouter") {
+            provider.preferred_models = openrouter_models;
+        }
+    }
+    if let Some(openrouter_api_key) = args.openrouter_api_key {
+        let trimmed = openrouter_api_key.trim();
         if !trimmed.is_empty() {
             enable_provider(&mut cfg, "openrouter");
-            cfg.preferences.preferred_openrouter_model = Some(trimmed.to_string());
-            cfg.llm.model = trimmed.to_string();
+            cfg.llm.enabled = true;
+            cfg.llm.api_base = "https://openrouter.ai/api/v1".to_string();
+            cfg.llm.api_key_env = "OPENROUTER_API_KEY".to_string();
+            cfg.llm.api_key = Some(trimmed.to_string());
         }
     }
 
+    let local_models = normalize_model_list(args.local_models);
     match (args.local_model_provider, args.local_model) {
         (Some(provider), Some(model)) => {
-            enable_provider(&mut cfg, provider.trim());
+            let provider_id = normalize_registry_id(provider.trim());
+            enable_provider(&mut cfg, &provider_id);
             cfg.preferences.preferred_local_model = Some(config::ModelPreference {
-                provider: provider.trim().to_string(),
+                provider: provider_id.clone(),
                 model: model.trim().to_string(),
             });
+            if !local_models.is_empty()
+                && let Some(provider) = cfg.providers.get_mut(&provider_id)
+            {
+                provider.preferred_models = local_models;
+            }
         }
         (None, None) => {}
         _ => anyhow::bail!("--local-model-provider and --local-model must be provided together"),
@@ -1709,163 +1915,227 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
         session_dir: cfg.runtime.session_dir.clone(),
         runtime_profile: cfg.runtime.profile,
         external_network_enabled: cfg.runtime.external_network_enabled,
+        multi_model_enabled: cfg.runtime.multi_model_enabled,
+        search_enabled: cfg.runtime.search_enabled,
+        browser_harness_enabled: cfg.runtime.browser_harness_enabled,
+        context_guardian_enabled: cfg.context_guardian.enabled,
         preferred_channel: cfg.preferences.preferred_channel.clone(),
         preferred_local_model: cfg.preferences.preferred_local_model.clone(),
         preferred_remote_model: cfg.preferences.preferred_remote_model.clone(),
         preferred_openrouter_model: cfg.preferences.preferred_openrouter_model.clone(),
-        openrouter_key_present: provider_key_present(&cfg, "openrouter"),
+        openrouter_key_present: provider_key_present(&cfg, "openrouter")
+            || cfg.resolve_llm_api_key().is_some(),
         provider_count: cfg.providers.len(),
         tool_count: cfg.tools.len(),
+        enabled_tools: enabled_tool_ids(&cfg),
     })
 }
 
 fn run_interactive_setup(
     config_path: &std::path::Path,
-    mut args: SetupArgs,
+    args: SetupArgs,
     cfg: &Config,
 ) -> Result<SetupArgs> {
-    println!("Quant-M setup");
-    println!("This writes config only. It will not store API keys or make live calls by default.");
+    let base_args = args.clone();
+    let mut args = args;
+
+    println!("{CLI_BANNER}");
+    println!(
+        "{}{}🧠 Welcome to Quant-M{}",
+        ANSI_BOLD, ANSI_BLUE, ANSI_RESET
+    );
+    println!();
+    println!(
+        "{}Quant-M is a local-first Rust runtime for governed agent work.{}",
+        ANSI_BOLD, ANSI_RESET
+    );
+    println!("It stores memory, sessions, shared state, and replay evidence on this device.");
+    println!(
+        "{}This device can run as a Quant-M Agent Node.{}",
+        ANSI_DIM, ANSI_RESET
+    );
+    println!();
 
     if args.workspace_path.is_none() {
-        let default = cfg.workspace_dir.display().to_string();
-        let answer = prompt_default("Workspace path", &default)?;
+        print_onboarding_section(
+            "1",
+            "Workspace",
+            "Choose where local memory and sessions live.",
+        );
+        let default = "./workspace";
+        let answer = prompt_workspace_path(
+            "Where should Quant-M store its local memory, state, sessions, and queues?",
+            default,
+        )?;
         args.workspace_path = Some(PathBuf::from(answer));
     }
 
     if args.runtime_profile.is_none() {
-        let default = runtime_profile_label(cfg.runtime.profile);
-        args.runtime_profile = Some(prompt_choice(
-            "Runtime profile [laptop/edge/staff-os-worker/vps]",
-            default,
-            &["laptop", "edge", "staff-os-worker", "vps"],
+        print_onboarding_section("2", "Device", "Pick the closest runtime profile.");
+        args.runtime_profile = Some(prompt_numbered_choice(
+            "Choose this device type.",
+            &[
+                ("💻 Laptop or desktop", "laptop"),
+                ("📱 Phone / Termux / edge device", "edge"),
+                ("🏢 Staff-OS worker node", "staff-os-worker"),
+                ("🖥️ VPS / server", "vps"),
+            ],
+            1,
         )?);
     }
 
-    let openrouter_choice = prompt_choice(
-        "OpenRouter [env/paste/export/skip]",
-        "skip",
-        &["env", "paste", "export", "skip"],
-    )?;
-    match openrouter_choice.as_str() {
-        "env" => {
-            println!(
-                "OpenRouter will use {} if present.",
-                cfg.providers
-                    .get("openrouter")
-                    .map(|provider| provider.api_key_env.as_str())
-                    .unwrap_or("OPENROUTER_API_KEY")
-            );
+    if args.external_network.is_none() {
+        print_onboarding_section("3", "Network", "Keep first-run safe unless you opt in.");
+        let network_mode = prompt_numbered_choice(
+            "Should Quant-M use the internet?",
+            &[
+                ("🔒 No, local only", "disabled"),
+                ("✋ Ask me before network use", "explicit"),
+                ("🌐 Yes, allow provider checks", "enabled"),
+            ],
+            1,
+        )?;
+        args.external_network = Some(if network_mode == "enabled" {
+            "enabled".to_string()
+        } else {
+            "disabled".to_string()
+        });
+        if network_mode == "explicit" {
+            println!("Quant-M will stay local by default and ask before live provider checks.");
         }
-        "paste" => {
-            let key = prompt_secret_like("Paste OpenRouter key for this validation session only")?;
+    }
+
+    print_onboarding_section("4", "Models", "Codex can work locally without OpenRouter.");
+    let model_provider = prompt_numbered_choice(
+        "Do you want to connect a model provider now?",
+        &[
+            ("⏭️ Skip for now", "skip"),
+            ("🔑 Use OPENROUTER_API_KEY from my environment", "env"),
+            ("💾 Paste and save OpenRouter key locally", "save"),
+            ("📋 Show me the export command", "export"),
+        ],
+        1,
+    )?;
+    match model_provider.as_str() {
+        "skip" => {}
+        "env" => {
+            args.enable_openrouter = true;
+            println!("Quant-M will read OPENROUTER_API_KEY from your environment when needed.");
+        }
+        "save" => {
+            println!(
+                "This stores the key in local quant-m.toml. Prefer env vars on shared machines."
+            );
+            let key = prompt_secret_like("Paste OpenRouter API key to save locally")?;
             if !key.trim().is_empty() {
-                println!(
-                    "Key received for this process only. Export it with: export OPENROUTER_API_KEY='<redacted>'"
-                );
+                args.openrouter_api_key = Some(key);
             }
         }
         "export" => {
             println!("Run: export OPENROUTER_API_KEY='<your-openrouter-key>'");
         }
-        "skip" => {}
         _ => unreachable!("choice is constrained"),
     }
 
-    if args.openrouter_model.is_none() {
-        let model_choice = prompt_choice(
-            "Preferred OpenRouter model [coding/cheap/custom/unset]",
-            "coding",
-            &["coding", "cheap", "custom", "unset"],
-        )?;
-        args.openrouter_model = match model_choice.as_str() {
-            "coding" => Some("qwen/qwen3-coder".to_string()),
-            "cheap" => Some("openai/gpt-4o-mini".to_string()),
-            "custom" => {
-                let value = prompt_default("Custom OpenRouter model", "qwen/qwen3-coder")?;
-                if value.trim().is_empty() {
-                    None
-                } else {
-                    Some(value)
-                }
-            }
-            "unset" => None,
-            _ => unreachable!("choice is constrained"),
-        };
-    }
-
-    let openai_or_codex = prompt_choice(
-        "Direct OpenAI or Codex [codex/openai/neither]",
-        "neither",
-        &["codex", "openai", "neither"],
-    )?;
-    match openai_or_codex.as_str() {
-        "codex" => enable_tool_arg(&mut args, "codex"),
-        "openai" => {
-            args.remote_model_provider = Some("openai".to_string());
-            args.remote_model = Some("gpt-5-codex".to_string());
-        }
-        "neither" => {}
-        _ => unreachable!("choice is constrained"),
-    }
-
-    let harness = prompt_choice(
-        "Optional harness detection [hermes/pi-agent/openclaw/skip]",
-        "skip",
-        &["hermes", "pi-agent", "openclaw", "skip"],
-    )?;
-    if harness != "skip" {
-        enable_tool_arg(&mut args, &harness);
-    }
-
-    let validation = prompt_choice(
-        "Validation posture [local/live/none]",
-        "local",
-        &["local", "live", "none"],
-    )?;
-    if validation == "live" {
+    if args.advanced {
+        println!();
         println!(
-            "Live validation is explicit. Run provider validate <provider> --live after setup."
+            "{}{}⚙ Advanced model routing{}",
+            ANSI_BOLD, ANSI_MAGENTA, ANSI_RESET
         );
-    }
-
-    if args.external_network.is_none() {
-        args.external_network = Some(prompt_choice(
-            "Default network posture [disabled/explicit/enabled]",
-            "disabled",
-            &["disabled", "explicit", "enabled"],
-        )?);
-        if args.external_network.as_deref() == Some("explicit") {
-            args.external_network = Some("disabled".to_string());
+        if !matches!(model_provider.as_str(), "skip") && args.openrouter_models.is_empty() {
+            args.openrouter_models = prompt_openrouter_models()?;
+        }
+        let has_local_models = prompt_yes_no("Do you have local model(s) available?", false)?;
+        if has_local_models {
+            let local_provider = prompt_choice(
+                "Local model provider [ollama/lmstudio]",
+                "ollama",
+                &["ollama", "lmstudio"],
+            )?;
+            let local_models = prompt_local_models(&local_provider)?;
+            if let Some(first) = local_models.first() {
+                args.local_model_provider = Some(local_provider);
+                args.local_model = Some(first.clone());
+                args.local_models = local_models;
+            }
+        }
+        let validation = prompt_choice(
+            "Provider validation posture [local/live/none]",
+            "local",
+            &["local", "live", "none"],
+        )?;
+        if validation == "live" {
             println!(
-                "Network remains disabled. Explicit provider validation can still use --live."
+                "Live validation is explicit. Run provider validate <provider> --live after setup."
             );
         }
+        let harness = prompt_choice(
+            "Optional companion runtime to recognize [hermes/pi-agent/openclaw/skip]",
+            "skip",
+            &["hermes", "pi-agent", "openclaw", "skip"],
+        )?;
+        if harness == "openclaw" {
+            println!("🦞 OpenClaw recognized.");
+        }
+        if harness != "skip" {
+            enable_tool_arg(&mut args, &harness);
+        }
     }
 
-    let fallback = prompt_choice(
-        "Local fallback [ollama/lmstudio/none]",
-        "none",
-        &["ollama", "lmstudio", "none"],
+    print_onboarding_section(
+        "5",
+        "Developer tools",
+        "Detect Codex, Gemini, Claude, OpenCode, and Antigravity-style CLIs already on PATH.",
+    );
+    let scan_tools = prompt_numbered_choice(
+        "Scan for supported developer tools?",
+        &[("🔎 Yes, scan PATH", "yes"), ("⏭️ Skip for now", "skip")],
+        1,
     )?;
-    match fallback.as_str() {
-        "ollama" => {
-            args.local_model_provider = Some("ollama".to_string());
-            args.local_model = Some("qwen3-coder:7b".to_string());
+    if scan_tools == "yes" {
+        let detected = scan_supported_developer_tools(cfg);
+        if detected.is_empty() {
+            let command = quant_m_command_hint();
+            println!(
+                "{}No supported developer CLI tools detected.{} You can add them later with `{command} tool scan`.",
+                ANSI_YELLOW, ANSI_RESET
+            );
+            print_codex_setup_steps();
+        } else {
+            for tool in &detected {
+                enable_tool_arg(&mut args, &tool.id);
+            }
+            println!(
+                "{}{}✓ Detected:{} {}",
+                ANSI_BOLD,
+                ANSI_GREEN,
+                ANSI_RESET,
+                detected
+                    .iter()
+                    .map(|tool| tool.display.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            let command = quant_m_command_hint();
+            println!("Validate any detected tool later with: {command} tool validate <tool>");
         }
-        "lmstudio" => {
-            args.local_model_provider = Some("lmstudio".to_string());
-            args.local_model = Some("local-model".to_string());
-        }
-        "none" => {}
-        _ => unreachable!("choice is constrained"),
     }
 
     if args.channel.is_none() {
-        let channel = prompt_choice(
-            "Channel [terminal/telegram-later/webhook-later]",
-            "terminal",
-            &["terminal", "telegram-later", "webhook-later"],
+        print_onboarding_section(
+            "6",
+            "Operator channel",
+            "Choose the default way Quant-M talks to you.",
+        );
+        let channel = prompt_numbered_choice(
+            "How should Quant-M talk to you?",
+            &[
+                ("⌨️ Terminal", "terminal"),
+                ("🔗 Webhook later", "webhook-later"),
+                ("✈️ Telegram later", "telegram-later"),
+            ],
+            1,
         )?;
         match channel.as_str() {
             "terminal" => {
@@ -1883,29 +2153,490 @@ fn run_interactive_setup(
         }
     }
 
-    println!(
-        "Next: quant-m doctor{}",
-        if config_path.exists() {
-            ""
-        } else {
-            " after config is written"
-        }
-    );
+    if args.context_guardian.is_none() {
+        print_onboarding_section(
+            "7",
+            "Continuity",
+            "Keep long sessions recoverable with local handoff packets.",
+        );
+        let guardian = prompt_numbered_choice(
+            "Start context guardian automatically when the Quant-M daemon runs?",
+            &[
+                ("🛡️ Yes, keep continuity handoffs ready", "enabled"),
+                ("⏭️ No, I will run context guard manually", "disabled"),
+            ],
+            1,
+        )?;
+        args.context_guardian = Some(guardian);
+    }
+
+    print_onboarding_review(config_path, &args);
+    let finish = prompt_numbered_choice(
+        "Ready to save this onboarding profile?",
+        &[
+            ("✅ Save and continue", "save"),
+            ("🔁 Start over", "restart"),
+        ],
+        1,
+    )?;
+    if finish == "restart" {
+        println!();
+        println!(
+            "{}{}↻ Restarting onboarding.{}",
+            ANSI_BOLD, ANSI_MAGENTA, ANSI_RESET
+        );
+        return run_interactive_setup(config_path, restart_interactive_args(&base_args), cfg);
+    }
+
+    println!();
+    println!("{}{}✓ Setup complete.{}", ANSI_BOLD, ANSI_GREEN, ANSI_RESET);
+    println!("Config will be written to: {}", config_path.display());
+    println!("{}Next:{}", ANSI_UNDERLINE, ANSI_RESET);
+    let command = quant_m_command_hint();
+    println!("  {command} agent");
+    println!("  {command} doctor");
+    println!("  {command} demo");
     Ok(args)
 }
 
 fn prompt_default(label: &str, default: &str) -> Result<String> {
-    print!("{label} [{default}]: ");
+    print!(
+        "{}{}{} {}[{}]{}: ",
+        ANSI_BOLD, label, ANSI_RESET, ANSI_DIM, default, ANSI_RESET
+    );
     io::stdout().flush().context("failed to flush prompt")?;
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
         .context("failed to read setup answer")?;
-    let trimmed = input.trim();
+    let raw = input.trim();
+    let cleaned = strip_terminal_escape_input(raw);
+    if cleaned != raw {
+        if cleaned.is_empty() {
+            println!("I detected extra terminal input. Press Enter to use the default.");
+        } else {
+            println!("I detected extra terminal input. Did you mean {cleaned}?");
+        }
+    }
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         Ok(default.to_string())
     } else {
         Ok(trimmed.to_string())
+    }
+}
+
+fn prompt_workspace_path(label: &str, default: &str) -> Result<String> {
+    loop {
+        let value = prompt_default(label, default)?;
+        if looks_like_pasted_command(&value) {
+            println!(
+                "{}⚠ That looks like a command, not a folder path.{} Press Enter to use ./workspace or enter a real folder path.",
+                ANSI_YELLOW, ANSI_RESET
+            );
+            continue;
+        }
+        return Ok(value);
+    }
+}
+
+fn print_onboarding_section(step: &str, title: &str, hint: &str) {
+    println!();
+    println!(
+        "{}────────────────────────────────────────{}",
+        ANSI_DIM, ANSI_RESET
+    );
+    println!(
+        "{}{}Step {step}: {}{}",
+        ANSI_BOLD, ANSI_CYAN, title, ANSI_RESET
+    );
+    println!("{}{}{}", ANSI_DIM, hint, ANSI_RESET);
+}
+
+fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
+    let workspace = args
+        .workspace_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "./workspace".to_string());
+    let profile = args.runtime_profile.as_deref().unwrap_or("laptop");
+    let network = match args.external_network.as_deref() {
+        Some("enabled") => "enabled",
+        Some("disabled") | None => "local only / ask before live checks",
+        Some(other) => other,
+    };
+    let tools = if args.selected_tools.is_empty() {
+        "none".to_string()
+    } else {
+        normalize_model_list(args.selected_tools.clone()).join(", ")
+    };
+    let model_provider = if args.enable_openrouter || args.openrouter_api_key.is_some() {
+        "OpenRouter"
+    } else {
+        "none"
+    };
+    let channel = args.channel.as_deref().unwrap_or("none");
+    let context_guardian = match args.context_guardian.as_deref() {
+        Some("disabled") => "disabled",
+        _ => "enabled",
+    };
+
+    println!();
+    println!(
+        "{}╭─ Onboarding review ─────────────────────╮{}",
+        ANSI_CYAN, ANSI_RESET
+    );
+    println!("{}│{} workspace       {}", ANSI_CYAN, ANSI_RESET, workspace);
+    println!("{}│{} device_type     {}", ANSI_CYAN, ANSI_RESET, profile);
+    println!("{}│{} network         {}", ANSI_CYAN, ANSI_RESET, network);
+    println!(
+        "{}│{} model_provider  {}",
+        ANSI_CYAN, ANSI_RESET, model_provider
+    );
+    println!("{}│{} tools           {}", ANSI_CYAN, ANSI_RESET, tools);
+    println!("{}│{} channel         {}", ANSI_CYAN, ANSI_RESET, channel);
+    println!(
+        "{}│{} guardian        {}",
+        ANSI_CYAN, ANSI_RESET, context_guardian
+    );
+    println!(
+        "{}│{} config          {}",
+        ANSI_CYAN,
+        ANSI_RESET,
+        config_path.display()
+    );
+    println!(
+        "{}╰─────────────────────────────────────────╯{}",
+        ANSI_CYAN, ANSI_RESET
+    );
+}
+
+fn restart_interactive_args(args: &SetupArgs) -> SetupArgs {
+    SetupArgs {
+        non_interactive: args.non_interactive,
+        force_interactive: args.force_interactive,
+        advanced: args.advanced,
+        local_model_provider: None,
+        local_model: None,
+        local_models: Vec::new(),
+        remote_model_provider: None,
+        remote_model: None,
+        openrouter_models: Vec::new(),
+        openrouter_api_key: None,
+        enable_openrouter: false,
+        channel: None,
+        channel_value: None,
+        runtime_profile: None,
+        workspace_path: None,
+        state_path: None,
+        session_path: None,
+        external_network: None,
+        context_guardian: None,
+        selected_tools: Vec::new(),
+    }
+}
+
+fn strip_terminal_escape_input(input: &str) -> String {
+    let mut output = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if ch == '^' && chars.peek() == Some(&'[') {
+            chars.next();
+            if chars.peek() == Some(&'[') {
+                chars.next();
+            }
+            while let Some(next) = chars.peek().copied() {
+                if next.is_ascii_alphabetic() || next == '~' {
+                    chars.next();
+                    break;
+                }
+                if next.is_ascii_digit() || next == ';' || next == '?' {
+                    chars.next();
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+        output.push(ch);
+    }
+    output.trim().to_string()
+}
+
+fn prompt_yes_no(label: &str, default: bool) -> Result<bool> {
+    let default_label = if default { "Y/n" } else { "y/N" };
+    loop {
+        print!(
+            "{}{}{} {}[{}]{}: ",
+            ANSI_BOLD, label, ANSI_RESET, ANSI_DIM, default_label, ANSI_RESET
+        );
+        io::stdout().flush().context("failed to flush prompt")?;
+        let mut answer = String::new();
+        io::stdin()
+            .read_line(&mut answer)
+            .context("failed to read setup answer")?;
+        let raw = answer.trim();
+        let cleaned = strip_terminal_escape_input(raw);
+        if cleaned != raw {
+            if cleaned.is_empty() {
+                println!("I detected extra terminal input. Press Enter to use the default.");
+            } else {
+                println!("I detected extra terminal input. Did you mean {cleaned}?");
+            }
+        }
+        match cleaned.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            "" => return Ok(default),
+            _ => println!("Please answer y or n."),
+        }
+    }
+}
+
+fn prompt_openrouter_models() -> Result<Vec<String>> {
+    let options = [
+        ("qwen/qwen3-coder", "coding default"),
+        ("openai/gpt-4.1-mini", "balanced general work"),
+        ("openai/gpt-4o-mini", "cheap fallback"),
+        ("anthropic/claude-3.5-sonnet", "reasoning/review lane"),
+        ("google/gemini-2.5-pro", "long-context reasoning lane"),
+    ];
+    prompt_model_menu(
+        "OpenRouter models for multiplexing/council routing",
+        &options,
+        true,
+    )
+}
+
+fn prompt_local_models(provider: &str) -> Result<Vec<String>> {
+    let ollama = [
+        ("qwen3-coder:7b", "local coding default"),
+        ("llama3.1:8b", "general local fallback"),
+        ("deepseek-coder:6.7b", "local code lane"),
+    ];
+    let lmstudio = [
+        ("local-model", "current LM Studio model"),
+        ("qwen3-coder", "coding model alias"),
+        ("llama-3.1-8b-instruct", "general local alias"),
+    ];
+    let options = if provider == "lmstudio" {
+        &lmstudio
+    } else {
+        &ollama
+    };
+    prompt_model_menu("Local models", options, false)
+}
+
+fn prompt_model_menu(
+    label: &str,
+    options: &[(&str, &str)],
+    allow_none: bool,
+) -> Result<Vec<String>> {
+    println!();
+    println!("{}{}{}{}", ANSI_BOLD, ANSI_MAGENTA, label, ANSI_RESET);
+    println!();
+    if allow_none {
+        println!("  {} 0{}   ⏭️ none for now", ANSI_CYAN, ANSI_RESET);
+    }
+    for (index, (model, note)) in options.iter().enumerate() {
+        println!(
+            "  {}{:>2}{}   {} {}({}){}",
+            ANSI_CYAN,
+            index + 1,
+            ANSI_RESET,
+            model,
+            ANSI_DIM,
+            note,
+            ANSI_RESET
+        );
+    }
+    println!();
+    println!(
+        "{}Type numbers separated by commas, a model id, or custom:<model-id>.{}",
+        ANSI_DIM, ANSI_RESET
+    );
+    println!();
+    let default = if allow_none { "0" } else { "1" };
+    loop {
+        let answer = prompt_default("Select model(s)", default)?;
+        let selected = parse_model_selection(&answer, options, allow_none);
+        match selected {
+            Ok(models) => return Ok(models),
+            Err(err) => println!("{err}"),
+        }
+    }
+}
+
+fn parse_model_selection(
+    answer: &str,
+    options: &[(&str, &str)],
+    allow_none: bool,
+) -> Result<Vec<String>> {
+    let trimmed = answer.trim();
+    if trimmed.is_empty() || (allow_none && trimmed == "0") || trimmed.eq_ignore_ascii_case("none")
+    {
+        return Ok(Vec::new());
+    }
+    let mut models = Vec::new();
+    for raw in trimmed.split(',') {
+        let item = raw.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if allow_none && (item == "0" || item.eq_ignore_ascii_case("none")) {
+            continue;
+        }
+        if let Some(custom) = item.strip_prefix("custom:") {
+            let custom = custom.trim();
+            if custom.is_empty() {
+                anyhow::bail!("custom model id cannot be empty");
+            }
+            models.push(custom.to_string());
+            continue;
+        }
+        if let Ok(index) = item.parse::<usize>() {
+            if index == 0 && allow_none {
+                continue;
+            }
+            let Some((model, _note)) = options.get(index.saturating_sub(1)) else {
+                anyhow::bail!("model number {index} is not in the menu");
+            };
+            models.push((*model).to_string());
+            continue;
+        }
+        models.push(item.to_string());
+    }
+    Ok(normalize_model_list(models))
+}
+
+fn looks_like_pasted_command(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("./target") || lower.contains("target/") || lower.contains(" --config ") {
+        return true;
+    }
+    let command_tokens = [
+        "cargo", "quant-m", "run", "clear", "cli", "demo", "doctor", "setup", "onboard", "git",
+        "npm", "pnpm", "node", "python", "bash", "zsh", "sh",
+    ];
+    lower
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '&' | '|'))
+        .filter(|part| !part.is_empty())
+        .any(|part| command_tokens.contains(&part))
+        || lower.contains(" --release")
+}
+
+fn looks_like_api_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.contains(char::is_whitespace) || trimmed.len() < 24 {
+        return false;
+    }
+    trimmed.starts_with("sk-")
+        || trimmed.starts_with("sk-or-")
+        || trimmed.starts_with("sk-proj-")
+        || trimmed.starts_with("sk-ant-")
+        || trimmed.starts_with("AIza")
+}
+
+fn normalize_model_list(values: Vec<String>) -> Vec<String> {
+    let mut models = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+            continue;
+        }
+        if !models.iter().any(|model: &String| model == trimmed) {
+            models.push(trimmed.to_string());
+        }
+    }
+    models
+}
+
+fn quant_m_command_hint() -> String {
+    if command_present("quant-m") {
+        return "quant-m".to_string();
+    }
+    let Ok(exe) = env::current_exe() else {
+        return "./target/release/quant-m".to_string();
+    };
+    if let Ok(cwd) = env::current_dir()
+        && let Ok(relative) = exe.strip_prefix(&cwd)
+    {
+        return format!("./{}", relative.display());
+    }
+    exe.display().to_string()
+}
+
+fn print_codex_setup_steps() {
+    println!();
+    println!("{}{}✨ Codex setup{}", ANSI_BOLD, ANSI_BLUE, ANSI_RESET);
+    println!("  1. Install or open the Codex CLI.");
+    println!("  2. Sign in with your OpenAI account.");
+    println!("  3. Verify it responds: codex --version");
+    let command = quant_m_command_hint();
+    println!("  4. Return here and run: {command} onboard");
+    println!("  5. After setup, run: {command} tool validate codex");
+}
+
+fn prompt_numbered_choice(
+    label: &str,
+    options: &[(&str, &str)],
+    default_index: usize,
+) -> Result<String> {
+    println!();
+    println!("{}{}{}{}", ANSI_BOLD, ANSI_CYAN, label, ANSI_RESET);
+    println!();
+    for (index, (display, _value)) in options.iter().enumerate() {
+        println!(
+            "  {}{:>2}{}   {}",
+            ANSI_CYAN,
+            index + 1,
+            ANSI_RESET,
+            display
+        );
+    }
+    println!();
+    let default = default_index.to_string();
+    loop {
+        let value = prompt_default("Select", &default)?;
+        if let Ok(index) = value.parse::<usize>()
+            && let Some((_display, selected)) = options.get(index.saturating_sub(1))
+        {
+            return Ok((*selected).to_string());
+        }
+        if let Some((_display, selected)) = options.iter().find(|(display, selected)| {
+            value.eq_ignore_ascii_case(display) || value.eq_ignore_ascii_case(selected)
+        }) {
+            return Ok((*selected).to_string());
+        }
+        if looks_like_api_key(&value) {
+            println!(
+                "{}That looks like an API key.{} For safety, choose option 3 if you want Quant-M to save it locally.",
+                ANSI_YELLOW, ANSI_RESET
+            );
+            continue;
+        }
+        let valid = options
+            .iter()
+            .enumerate()
+            .map(|(index, (display, value))| format!("{} ({}) or {}", index + 1, display, value))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Choose one of: {valid}");
     }
 }
 
@@ -1929,7 +2660,51 @@ fn prompt_secret_like(label: &str) -> Result<String> {
     io::stdin()
         .read_line(&mut input)
         .context("failed to read setup secret")?;
-    Ok(input.trim().to_string())
+    Ok(strip_terminal_escape_input(input.trim()))
+}
+
+#[derive(Debug, Clone)]
+struct DetectedTool {
+    id: String,
+    display: String,
+}
+
+fn developer_tool_display(id: &str) -> String {
+    match id {
+        "codex" => "Codex CLI".to_string(),
+        "gemini" => "Gemini CLI".to_string(),
+        "anthropic" => "Anthropic CLI".to_string(),
+        "claude" => "Claude CLI".to_string(),
+        "opencode" => "OpenCode CLI".to_string(),
+        "antigravity" => "Antigravity CLI".to_string(),
+        "antgravity" => "Antgravity CLI".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn supported_developer_tool_ids() -> &'static [&'static str] {
+    &[
+        "codex",
+        "gemini",
+        "anthropic",
+        "claude",
+        "opencode",
+        "antigravity",
+        "antgravity",
+    ]
+}
+
+fn scan_supported_developer_tools(cfg: &Config) -> Vec<DetectedTool> {
+    supported_developer_tool_ids()
+        .iter()
+        .filter_map(|id| {
+            let tool = cfg.tools.get(*id)?;
+            command_present(&tool.command).then(|| DetectedTool {
+                id: (*id).to_string(),
+                display: developer_tool_display(id),
+            })
+        })
+        .collect()
 }
 
 fn enable_provider(cfg: &mut Config, id: &str) {
@@ -2068,7 +2843,7 @@ fn handle_tool_command(config_path: &std::path::Path, command: ToolCommand) -> R
     let mut cfg = Config::load_or_create(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
     cfg.ensure_onboarding_registries();
-    let cfg = cfg.sanitize();
+    let mut cfg = cfg.sanitize();
     cfg.validate()?;
     cfg.save(config_path)?;
 
@@ -2096,11 +2871,93 @@ fn handle_tool_command(config_path: &std::path::Path, command: ToolCommand) -> R
             }
             Ok(())
         }
+        ToolCommand::Scan { json } => {
+            let detected = scan_supported_developer_tools(&cfg);
+            for tool in &detected {
+                enable_tool(&mut cfg, &tool.id);
+            }
+            let cfg = cfg.sanitize();
+            cfg.validate()?;
+            cfg.save(config_path)?;
+            let items = list_tools(&cfg);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&items)?);
+            } else if detected.is_empty() {
+                println!("No supported developer CLI tools detected.");
+            } else {
+                println!(
+                    "Detected: {}",
+                    detected
+                        .iter()
+                        .map(|tool| tool.display.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                println!("Enabled integrations:");
+                for item in items.into_iter().filter(|item| item.enabled) {
+                    println!("  {} ({})", item.id, item.command);
+                }
+            }
+            Ok(())
+        }
         ToolCommand::Validate { tool, json } => {
             let report = validate_tool(&cfg, &tool)?;
             print_serialized_or_text(&report, json, &format_tool_report(&report))
         }
     }
+}
+
+fn handle_settings_command(config_path: &std::path::Path, json: bool) -> Result<()> {
+    let mut cfg = Config::load_or_create(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    let cfg = cfg.sanitize();
+    cfg.validate()?;
+    cfg.save(config_path)?;
+    let report = settings_report(&cfg);
+    print_serialized_or_text(&report, json, &format_settings_report(&report))
+}
+
+fn settings_report(cfg: &Config) -> SettingsReport {
+    SettingsReport {
+        multi_model_enabled: cfg.runtime.multi_model_enabled,
+        search_enabled: cfg.runtime.search_enabled,
+        browser_harness_enabled: cfg.runtime.browser_harness_enabled,
+        external_network_enabled: cfg.runtime.external_network_enabled,
+        context_guardian_enabled: cfg.context_guardian.enabled,
+        enabled_tools: enabled_tool_ids(cfg),
+        detected_tools: scan_supported_developer_tools(cfg)
+            .into_iter()
+            .map(|tool| tool.display)
+            .collect(),
+    }
+}
+
+fn enabled_label(value: bool) -> &'static str {
+    if value { "enabled" } else { "disabled" }
+}
+
+fn format_settings_report(report: &SettingsReport) -> String {
+    let tools = if report.enabled_tools.is_empty() {
+        "none".to_string()
+    } else {
+        report.enabled_tools.join(", ")
+    };
+    let detected = if report.detected_tools.is_empty() {
+        "none".to_string()
+    } else {
+        report.detected_tools.join(", ")
+    };
+    format!(
+        "Settings\nmulti_model_enabled: {}\nsearch_enabled: {}\nbrowser_harness_enabled: {}\nexternal_network_enabled: {}\ncontext_guardian_enabled: {}\nenabled_tools: {}\ndetected_tools: {}\n\nOptional next steps:\n  quant-m context guard\n  quant-m tool scan\n  quant-m tool validate codex\n  quant-m onboard --advanced",
+        enabled_label(report.multi_model_enabled),
+        enabled_label(report.search_enabled),
+        enabled_label(report.browser_harness_enabled),
+        enabled_label(report.external_network_enabled),
+        enabled_label(report.context_guardian_enabled),
+        tools,
+        detected,
+    )
 }
 
 async fn run_doctor(
@@ -2207,6 +3064,14 @@ fn list_tools(cfg: &Config) -> Vec<ToolListItem> {
             validation_args: tool.validation_args.clone(),
             command_present: command_present(&tool.command),
         })
+        .collect()
+}
+
+fn enabled_tool_ids(cfg: &Config) -> Vec<String> {
+    cfg.tools
+        .iter()
+        .filter(|(_id, tool)| tool.enabled)
+        .map(|(id, _tool)| id.clone())
         .collect()
 }
 
@@ -2535,12 +3400,15 @@ fn operator_identity(cfg: &Config) -> String {
 fn storage_mode_for_command(command: &Commands) -> StorageMode {
     match command {
         Commands::Config { .. }
+        | Commands::Onboard { .. }
         | Commands::Setup { .. }
         | Commands::Provider { .. }
-        | Commands::Tool { .. } => StorageMode::Inspect,
+        | Commands::Tool { .. }
+        | Commands::Settings { .. } => StorageMode::Inspect,
         Commands::Doctor { .. } => StorageMode::SessionWrite,
         Commands::Agent => StorageMode::Inspect,
         Commands::Tui => StorageMode::Inspect,
+        Commands::Demo => StorageMode::SessionWrite,
         Commands::Skill { .. }
         | Commands::Policy { .. }
         | Commands::Workflow { .. }
@@ -2880,11 +3748,19 @@ mod tests {
             &config_path,
             SetupArgs {
                 non_interactive: true,
+                force_interactive: false,
+                advanced: false,
                 local_model_provider: Some("ollama".to_string()),
                 local_model: Some("qwen3-coder:7b".to_string()),
+                local_models: vec!["qwen3-coder:7b".to_string(), "llama3.1:8b".to_string()],
                 remote_model_provider: Some("openrouter".to_string()),
                 remote_model: Some("qwen/qwen3-coder".to_string()),
-                openrouter_model: Some("qwen/qwen3-coder".to_string()),
+                openrouter_models: vec![
+                    "qwen/qwen3-coder".to_string(),
+                    "openai/gpt-4o-mini".to_string(),
+                ],
+                openrouter_api_key: Some("test-key".to_string()),
+                enable_openrouter: false,
                 channel: Some("telegram".to_string()),
                 channel_value: Some("disabled".to_string()),
                 runtime_profile: Some("edge".to_string()),
@@ -2892,6 +3768,7 @@ mod tests {
                 state_path: Some(tmp.path().join("portable-workspace/state/shared-state.db")),
                 session_path: Some(tmp.path().join("portable-workspace/state/sessions")),
                 external_network: Some("disabled".to_string()),
+                context_guardian: Some("disabled".to_string()),
                 selected_tools: Vec::new(),
             },
         )
@@ -2913,6 +3790,83 @@ mod tests {
             cfg.preferences.preferred_openrouter_model.as_deref(),
             Some("qwen/qwen3-coder")
         );
+        assert_eq!(
+            cfg.providers
+                .get("openrouter")
+                .expect("openrouter")
+                .preferred_models,
+            vec![
+                "qwen/qwen3-coder".to_string(),
+                "openai/gpt-4o-mini".to_string(),
+            ]
+        );
+        assert_eq!(
+            cfg.providers
+                .get("ollama")
+                .expect("ollama")
+                .preferred_models,
+            vec!["qwen3-coder:7b".to_string(), "llama3.1:8b".to_string()]
+        );
+        assert!(cfg.llm.enabled);
+        assert_eq!(cfg.llm.api_key.as_deref(), Some("test-key"));
+        assert!(!cfg.context_guardian.enabled);
+    }
+
+    #[test]
+    fn onboard_command_parses() {
+        let cli = Cli::try_parse_from(["quant-m", "onboard"]).expect("parse onboard");
+        assert!(matches!(
+            cli.command,
+            Commands::Onboard {
+                advanced: false,
+                json: false
+            }
+        ));
+
+        let cli =
+            Cli::try_parse_from(["quant-m", "onboard", "--advanced"]).expect("parse advanced");
+        assert!(matches!(
+            cli.command,
+            Commands::Onboard {
+                advanced: true,
+                json: false
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "onboard", "--json"]).expect("parse json");
+        assert!(matches!(
+            cli.command,
+            Commands::Onboard {
+                advanced: false,
+                json: true
+            }
+        ));
+    }
+
+    #[test]
+    fn demo_command_parses() {
+        let cli = Cli::try_parse_from(["quant-m", "demo"]).expect("parse demo");
+        assert!(matches!(cli.command, Commands::Demo));
+
+        let cli = Cli::try_parse_from(["quant-m", "shell"]).expect("parse shell alias");
+        assert!(matches!(cli.command, Commands::Agent));
+    }
+
+    #[test]
+    fn onboarding_rejects_command_like_workspace_answers() {
+        assert!(looks_like_pasted_command("cargo test setup --release"));
+        assert!(looks_like_pasted_command("./target/release/quant-m --help"));
+        assert!(looks_like_pasted_command("run demo"));
+        assert!(looks_like_pasted_command("clear"));
+        assert!(!looks_like_pasted_command("./workspace"));
+        assert!(!looks_like_pasted_command("/home/user/quantm/workspace"));
+    }
+
+    #[test]
+    fn prompt_input_strips_terminal_escape_sequences() {
+        assert_eq!(strip_terminal_escape_input("\u{1b}[Cskip"), "skip");
+        assert_eq!(strip_terminal_escape_input("^[[Cskip"), "skip");
+        assert_eq!(strip_terminal_escape_input("skip"), "skip");
     }
 
     #[test]

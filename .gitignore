@@ -1,4 +1,13 @@
+# OS/editor noise
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.cursor/
+.codex/
 
 # Rust build output
 /target/
@@ -7,27 +16,43 @@
 /fuzz/corpus/
 /fuzz/coverage/
 
-# Local runtime state
-/workspace/logs/
-/workspace/memory/*.db
-/workspace/memory/*.db-*
-/workspace/queue/*.ndjson
-/workspace/queue/*.json
-/workspace/state/
-/workspace/daily/
-/workspace/skills/
+# Local runtime workspace/state
+/workspace/*
+!/workspace/.gitkeep
 
-# Local copied runtime/state workspace
+# Local copied runtime/state workspaces
 /workspace-copy/
+/workspace-*/
 
 # Local reference copies and generated scratch folders
 /The-Sataff/
+/Ponboarding/
+/Staff-OS/
+/setup --release/
+/cargo test setup --release/
+/tmp/
+/temp/
+/scratch/
+/cache/
+/.cache/
 
 # Local env/config overrides
 .env
 .env.*
 *.local.toml
+*.secret
+*.secrets
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
 
-# OS/editor noise
-*.swp
-*.swo
+# Logs and generated reports
+*.log
+logs/
+bench-output/
+benchmark-output/
+*.profraw
+*.profdata

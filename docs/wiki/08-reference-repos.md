@@ -4,23 +4,20 @@ Use this file to declare which external repos should be mined for patterns.
 
 ## Approved repos
 
-- `local-copy:quantm/The-Sataff/Ponboarding`
-- `local-copy:quantm/The-Sataff/Staff-OS`
-
-## Candidate repos
-
 - `openclaw/openclaw`
 - `nearai/ironclaw`
 - `paperclipai/paperclip`
 - `NousResearch/hermes-agent`
-- `OpenClaw-style local worker runtimes` if a concrete upstream repo is approved later
-- `lightweight Rust automation runtimes` if the current module boundaries prove insufficient
+
+## Candidate repos
+
+- Additional lightweight Rust automation runtimes, if the current module boundaries prove insufficient.
 
 ## Current note
 
-The approved references above are local copies shipped inside this test project. They are acceptable pattern sources for onboarding and contract alignment, but they are not direct product requirements for Quant-M.
+The approved references are public upstreams or ecosystem anchors to inspect when Quant-M needs runtime-pattern evidence. They should remain pattern references, not scope mandates.
 
-The candidate repos above are official upstreams or ecosystem anchors to inspect when Quant-M needs more direct runtime-pattern evidence. They should remain pattern references, not scope mandates.
+Local copied repos, private workspace folders, and raw source dumps must not be committed as reference material. Summarize relevant patterns in `docs/wiki/repo-ingest/` instead.
 
 ## Source-code fetch protocol
 

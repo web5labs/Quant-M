@@ -16,9 +16,9 @@ tags:
 
 This synthesis combines:
 
-- local references in `quantm/The-Sataff/Ponboarding`
-- local references in `quantm/The-Sataff/Staff-OS`
-- current summaries in `docs/wiki/external-docs/`
+- curated public reference summaries in `docs/wiki/external-docs/`
+- curated repo pattern notes in `docs/wiki/repo-ingest/`
+- current Quant-M runtime and project docs
 
 ## Primary conclusion
 

@@ -88,20 +88,16 @@ Prioritize:
 
 ## Required output architecture
 
-Create missing files and folders only. Preserve existing project docs.
+Create missing files and folders only. Preserve existing project docs. Keep local agent/plugin scaffolding out of the public Quant-M repository unless it is intentionally packaged as a separate artifact.
 
 ```text
 AGENTS.md
 LLM_PROJECT_ONBOARDING.md
 
-.agents/
-  skills/
-    model-project-onboarding/
-      SKILL.md
-
 scripts/
   bootstrap_project_onboarding.py
   ingest_wiki.py
+  generate_goal_prompt.py
   lint_project_onboarding.py
 
 docs/

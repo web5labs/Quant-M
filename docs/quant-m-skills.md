@@ -11,19 +11,19 @@ The repeatable skill pattern is to turn every important code capability into a s
 
 | Code or runtime area | Markdown counterpart | Purpose |
 | --- | --- | --- |
-| `src/config.rs`, `quant-m.toml`, `configs/` | `docs/wiki/raw/project/configuration.md` | Runtime profiles, path overrides, provider posture, deployment assumptions |
-| `src/memory.rs`, `workspace/MEMORY.md`, `workspace/daily/` | `docs/wiki/raw/workspace/memory.md` | What should be remembered, why it matters, and how it decays or compacts |
-| `src/heartbeat.rs`, `workspace/HEARTBEAT.md` | `docs/wiki/raw/workspace/heartbeat.md` | Proactive checks, scheduled tasks, and expected evidence |
-| `src/skill_registry.rs`, `workspace/skills/` | `docs/wiki/raw/project/skills-registry.md` | Skill contracts, side-effect levels, routing tags, and validation requirements |
-| `src/workflow_registry.rs` | `docs/wiki/raw/project/workflows.md` | Workflow intent, steps, state reads/writes, and replay expectations |
-| `src/fsm_registry.rs` | `docs/wiki/raw/project/fsms.md` | Allowed state transitions and what evidence advances each state |
-| `src/scheduler_registry.rs` | `docs/wiki/raw/project/schedulers.md` | Timing rules, triggers, cadence, and disabled/default behavior |
-| `src/policy_registry.rs`, `workspace/POLICY.md` | `docs/wiki/raw/project/policy.md` | Safety boundaries, approvals, blocks, and operator decisions |
-| `src/shared_state.rs`, `src/state_sql.rs` | `docs/wiki/raw/project/shared-state.md` | Canonical state keys, history rules, handoffs, and non-authoritative records |
-| `src/sessions.rs`, `src/replay` behavior | `docs/wiki/raw/project/session-evidence.md` | What counts as proof, how replay should be read, and what not to claim |
-| `src/cluster_boundary.rs`, `src/worker_proposals.rs` | `docs/wiki/raw/project/worker-boundary.md` | Worker proposal rules: workers propose, core decides |
-| `src/strategist.rs`, `src/question.rs`, `src/consensus.rs` | `docs/wiki/raw/project/governed-decisions.md` | Question utility, strategist dry runs, consensus boundaries, and next-action rules |
-| `src/forex.rs`, `desks/forex/`, `docs/wiki/raw/desks/forex/` | `docs/wiki/raw/desks/forex/skills.md` | Desk-specific strategy, evidence quality, carry filters, and forbidden actions |
+| `src/config.rs`, `quant-m.toml`, `configs/` | `docs/project-spec.md` | Runtime profiles, path overrides, provider posture, deployment assumptions |
+| `src/memory.rs`, `workspace/MEMORY.md`, `workspace/daily/` | `docs/governance/runtime-doctrine.md` | What should be remembered, why it matters, and how it decays or compacts |
+| `src/heartbeat.rs`, `workspace/HEARTBEAT.md` | `docs/governance/runtime-doctrine.md` | Proactive checks, scheduled tasks, and expected evidence |
+| `src/skill_registry.rs`, `workspace/skills/` | `docs/quant-m-skills.md` | Skill contracts, side-effect levels, routing tags, and validation requirements |
+| `src/workflow_registry.rs` | `docs/fsm/product-state-machines.md` | Workflow intent, steps, state reads/writes, and replay expectations |
+| `src/fsm_registry.rs` | `docs/fsm/product-state-machines.md` | Allowed state transitions and what evidence advances each state |
+| `src/scheduler_registry.rs` | `docs/fsm/product-state-machines.md` | Timing rules, triggers, cadence, and disabled/default behavior |
+| `src/policy_registry.rs`, `workspace/POLICY.md` | `docs/governance/runtime-doctrine.md` | Safety boundaries, approvals, blocks, and operator decisions |
+| `src/shared_state.rs`, `src/state_sql.rs` | `docs/shared_state.md` | Canonical state keys, history rules, handoffs, and non-authoritative records |
+| `src/sessions.rs`, `src/replay` behavior | `docs/governance/runtime-doctrine.md` | What counts as proof, how replay should be read, and what not to claim |
+| `src/cluster_boundary.rs`, `src/worker_proposals.rs` | `docs/feature-map.md` | Worker proposal rules: workers propose, core decides |
+| `src/strategist.rs`, `src/question.rs`, `src/consensus.rs` | `docs/feature-map.md` | Question utility, strategist dry runs, consensus boundaries, and next-action rules |
+| `src/forex.rs`, `desks/forex/` | `docs/feature-map.md` | Desk-specific strategy, evidence quality, carry filters, and forbidden actions |
 
 ## Repeatable Project Skills
 
@@ -41,7 +41,7 @@ Markdown home:
 
 Use when Quant-M absorbs a new subproject, desk, runtime lane, or external reference repo.
 
-The skill creates or updates the project spec, definition of shippable, wiki source folders, repo-ingest notes, validation plan, and FSM execution notes. This is already visible in the existing `LLM_PROJECT_ONBOARDING.md`, `.agents/skills/`, and `docs/wiki/` structure.
+The skill creates or updates the project spec, definition of shippable, wiki source folders, repo-ingest notes, validation plan, and FSM execution notes. This is already visible in `LLM_PROJECT_ONBOARDING.md` and `docs/wiki/`.
 
 Markdown home:
 - `LLM_PROJECT_ONBOARDING.md`
@@ -57,7 +57,7 @@ The skill records the feature in plain English: diagram intent, implementation f
 
 Markdown home:
 - `docs/feature-map.md`
-- `docs/wiki/raw/project/feature-map.md`
+- `docs/feature-map.md`
 
 ### 4. Registry Contract Authoring
 
@@ -66,10 +66,9 @@ Use when adding or changing domain, skill, workflow, FSM, scheduler, desk, or po
 The skill captures descriptor fields, side-effect level, required capabilities, policy tags, state reads/writes, and replay expectations. It should keep metadata-first behavior explicit.
 
 Markdown home:
-- `docs/wiki/raw/project/skills-registry.md`
-- `docs/wiki/raw/project/workflows.md`
-- `docs/wiki/raw/project/fsms.md`
-- `docs/wiki/raw/project/policy.md`
+- `docs/quant-m-skills.md`
+- `docs/fsm/product-state-machines.md`
+- `docs/governance/runtime-doctrine.md`
 
 ### 5. Evidence And Replay Discipline
 
@@ -78,7 +77,7 @@ Use when Quant-M performs meaningful work or claims completion.
 The skill preserves session artifacts, shared-state history, loop reports, evidence indexes, and validation output. Its core rule is simple: no proof, no claim.
 
 Markdown home:
-- `docs/wiki/raw/project/session-evidence.md`
+- `docs/governance/runtime-doctrine.md`
 - `workspace/state/sessions/`
 - `workspace/state/loops/`
 

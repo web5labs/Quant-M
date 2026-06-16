@@ -4,21 +4,17 @@ set -euo pipefail
 # Static benchmark scorer for heterogeneous agent frameworks.
 # Usage:
 #   ./scripts/benchmark_agent_frameworks.sh <repo1> <repo2> ...
-# If no repos are provided, the script uses the local default set.
-
-DEFAULT_REPOS=(
-  "/Users/julio/Downloads/agents/hermes-agent-main"
-  "/Users/julio/Downloads/agents/ironclaw-staging"
-  "/Users/julio/Downloads/agents/openclaw-main"
-  "/Users/julio/Downloads/agents/picoclaw-main"
-  "/Users/julio/Downloads/agents/zeroclaw-master"
-  "/Users/julio/Downloads/agents/coinclaw"
-)
+# If no repos are provided, set QUANTM_BENCHMARK_REPOS to a colon-separated
+# list of local checkout paths.
 
 if [ "$#" -gt 0 ]; then
   REPOS=("$@")
+elif [ -n "${QUANTM_BENCHMARK_REPOS:-}" ]; then
+  IFS=':' read -r -a REPOS <<< "$QUANTM_BENCHMARK_REPOS"
 else
-  REPOS=("${DEFAULT_REPOS[@]}")
+  echo "usage: $0 <repo1> <repo2> ..." >&2
+  echo "or set QUANTM_BENCHMARK_REPOS=/path/to/repo1:/path/to/repo2" >&2
+  exit 2
 fi
 
 if ! command -v rg >/dev/null 2>&1; then

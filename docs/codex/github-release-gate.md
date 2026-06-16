@@ -52,15 +52,15 @@ If validation cannot run because of local disk limits, the release state remains
 
 Latest validation run:
 
-- `cargo fmt --all -- --check`: passed
-- `cargo test context_firewall`: passed
-- `cargo test context_packet_command`: passed
-- `cargo clippy --all-targets -- -D warnings`: passed
-- `cargo test`: passed
-- `cargo build`: passed
-- `python3 scripts/ingest_wiki.py --target .`: passed
-- `python3 scripts/generate_goal_prompt.py --target .`: passed
-- `python3 scripts/lint_project_onboarding.py --target .`: passed
+- 2026-06-16: `cargo fmt --all -- --check`: passed
+- 2026-06-16: `cargo test context_firewall`: passed
+- 2026-06-16: `cargo test context_packet_command`: passed
+- 2026-06-16: `cargo clippy --all-targets -- -D warnings`: passed after mechanical clippy cleanup in `src/main.rs`
+- 2026-06-16: `cargo test`: passed
+- 2026-06-16: `cargo build`: passed
+- 2026-06-16: `python3 scripts/ingest_wiki.py --target .`: passed
+- 2026-06-16: `python3 scripts/generate_goal_prompt.py --target .`: passed
+- 2026-06-16: `python3 scripts/lint_project_onboarding.py --target .`: passed
 
 ## Git Setup Steps
 
@@ -96,7 +96,7 @@ Before remote deployment:
 ## Current Blockers
 
 - Human approval for `git init`, first commit, remote creation/selection, and first push is still required.
-- Disk is still tight after validation, so avoid unnecessary rebuilds until more cache cleanup is approved.
+- Review and intentionally stage or exclude current untracked artifacts, including `assets/`, `src/context_guardian.rs`, release docs, and generated runtime placeholders.
 - GitHub remote repository `web5labs/Quant-M` still needs to exist before first push.
 
 ## Next Safe Action

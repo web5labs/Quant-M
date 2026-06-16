@@ -42,6 +42,8 @@ pub struct Config {
     #[serde(default)]
     pub runtime: RuntimeConfig,
     #[serde(default)]
+    pub context_guardian: ContextGuardianConfig,
+    #[serde(default)]
     pub preferences: PreferenceConfig,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -166,6 +168,12 @@ pub struct ToolConfig {
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
     Codex,
+    Gemini,
+    Anthropic,
+    Claude,
+    OpenCode,
+    Antigravity,
+    Antgravity,
     Hermes,
     PiAgent,
     OpenClaw,
@@ -200,6 +208,26 @@ pub struct RuntimeConfig {
     pub session_dir: PathBuf,
     #[serde(default)]
     pub external_network_enabled: bool,
+    #[serde(default)]
+    pub multi_model_enabled: bool,
+    #[serde(default)]
+    pub search_enabled: bool,
+    #[serde(default)]
+    pub browser_harness_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextGuardianConfig {
+    #[serde(default = "default_context_guardian_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_context_guardian_interval_seconds")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_context_guardian_min_event_count")]
+    pub min_event_count: usize,
+    #[serde(default = "default_context_guardian_high_risk_event_count")]
+    pub high_risk_event_count: usize,
+    #[serde(default = "default_context_guardian_branch_packet_path")]
+    pub branch_packet_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -305,6 +333,7 @@ impl Default for Config {
             chat_channels: ChatChannelsConfig::default(),
             forex: ForexConfig::default(),
             runtime: RuntimeConfig::default(),
+            context_guardian: ContextGuardianConfig::default(),
             preferences: PreferenceConfig::default(),
             providers: default_provider_registry(),
             tools: default_tool_registry(),
@@ -370,6 +399,21 @@ impl Default for RuntimeConfig {
             profile: RuntimeProfile::default(),
             session_dir: default_session_dir(),
             external_network_enabled: false,
+            multi_model_enabled: false,
+            search_enabled: false,
+            browser_harness_enabled: false,
+        }
+    }
+}
+
+impl Default for ContextGuardianConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_seconds: default_context_guardian_interval_seconds(),
+            min_event_count: default_context_guardian_min_event_count(),
+            high_risk_event_count: default_context_guardian_high_risk_event_count(),
+            branch_packet_path: default_context_guardian_branch_packet_path(),
         }
     }
 }
@@ -620,6 +664,8 @@ impl Config {
         cfg.skills.dir = absolutize(&base, &cfg.skills.dir);
         cfg.forex.redb_path = absolutize(&base, &cfg.forex.redb_path);
         cfg.runtime.session_dir = absolutize(&base, &cfg.runtime.session_dir);
+        cfg.context_guardian.branch_packet_path =
+            absolutize(&base, &cfg.context_guardian.branch_packet_path);
 
         cfg
     }
@@ -645,6 +691,8 @@ impl Config {
         cfg.skills.dir = relativize_for_save(&base, &cfg.skills.dir);
         cfg.forex.redb_path = relativize_for_save(&base, &cfg.forex.redb_path);
         cfg.runtime.session_dir = relativize_for_save(&base, &cfg.runtime.session_dir);
+        cfg.context_guardian.branch_packet_path =
+            relativize_for_save(&base, &cfg.context_guardian.branch_packet_path);
 
         cfg
     }
@@ -724,6 +772,24 @@ impl Config {
             default_session_dir()
         } else {
             self.runtime.session_dir.clone()
+        };
+        self.context_guardian.interval_seconds =
+            self.context_guardian.interval_seconds.clamp(5, 86_400);
+        self.context_guardian.min_event_count =
+            self.context_guardian.min_event_count.clamp(1, 100_000);
+        self.context_guardian.high_risk_event_count = self
+            .context_guardian
+            .high_risk_event_count
+            .clamp(self.context_guardian.min_event_count, 100_000);
+        self.context_guardian.branch_packet_path = if self
+            .context_guardian
+            .branch_packet_path
+            .as_os_str()
+            .is_empty()
+        {
+            default_context_guardian_branch_packet_path()
+        } else {
+            self.context_guardian.branch_packet_path.clone()
         };
         self.preferences.preferred_local_model =
             sanitize_model_preference(self.preferences.preferred_local_model.take());
@@ -829,6 +895,11 @@ impl Config {
             Some(ENV_WORKER_DEAD_LETTER_PATH),
         )?;
         ensure_file_path(&self.logging.file, "logging.file", Some(ENV_LOG_FILE))?;
+        ensure_file_path(
+            &self.context_guardian.branch_packet_path,
+            "context_guardian.branch_packet_path",
+            None,
+        )?;
 
         let mut seen = std::collections::BTreeSet::new();
         for (name, path) in [
@@ -1105,6 +1176,26 @@ fn default_session_dir() -> PathBuf {
     PathBuf::from("workspace/state/sessions")
 }
 
+fn default_context_guardian_enabled() -> bool {
+    true
+}
+
+fn default_context_guardian_interval_seconds() -> u64 {
+    300
+}
+
+fn default_context_guardian_min_event_count() -> usize {
+    1
+}
+
+fn default_context_guardian_high_risk_event_count() -> usize {
+    40
+}
+
+fn default_context_guardian_branch_packet_path() -> PathBuf {
+    PathBuf::from("workspace/state/context-guardian/continuity-handoff.md")
+}
+
 fn trimmed_option_string(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1192,7 +1283,7 @@ fn default_provider_registry() -> BTreeMap<String, ProviderConfig> {
     providers.insert(
         "openrouter".to_string(),
         ProviderConfig {
-            enabled: true,
+            enabled: false,
             kind: ProviderKind::OpenRouter,
             api_base: "https://openrouter.ai/api/v1".to_string(),
             api_key_env: "OPENROUTER_API_KEY".to_string(),
@@ -1243,6 +1334,32 @@ fn default_tool_registry() -> BTreeMap<String, ToolConfig> {
     let mut tools = BTreeMap::new();
     for (id, kind, command, args) in [
         ("codex", ToolKind::Codex, "codex", vec!["--version"]),
+        ("gemini", ToolKind::Gemini, "gemini", vec!["--version"]),
+        (
+            "anthropic",
+            ToolKind::Anthropic,
+            "anthropic",
+            vec!["--version"],
+        ),
+        ("claude", ToolKind::Claude, "claude", vec!["--version"]),
+        (
+            "opencode",
+            ToolKind::OpenCode,
+            "opencode",
+            vec!["--version"],
+        ),
+        (
+            "antigravity",
+            ToolKind::Antigravity,
+            "antigravity",
+            vec!["--version"],
+        ),
+        (
+            "antgravity",
+            ToolKind::Antgravity,
+            "antgravity",
+            vec!["--version"],
+        ),
         ("hermes", ToolKind::Hermes, "hermes", vec!["--version"]),
         ("pi-agent", ToolKind::PiAgent, "pi-agent", vec!["--version"]),
         (

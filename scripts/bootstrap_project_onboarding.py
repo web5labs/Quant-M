@@ -14,7 +14,6 @@ from pathlib import Path
 TEMPLATE_FILES = [
     "AGENTS.md",
     "LLM_PROJECT_ONBOARDING.md",
-    ".codex-plugin/plugin.json",
     "docs/README.md",
     "docs/project-definition.md",
     "docs/project-spec.md",
@@ -92,12 +91,6 @@ def copy_support_files(source_root: Path, target: Path, force: bool) -> tuple[in
         result = copy_file(source_root / "scripts" / name, target / "scripts" / name, force)
         created += result == "written"
         skipped += result == "skipped"
-
-    skills_source = source_root / ".agents" / "skills"
-    if skills_source.exists():
-        added, existing = copy_tree(skills_source, target / ".agents" / "skills", force)
-        created += added
-        skipped += existing
 
     return created, skipped
 

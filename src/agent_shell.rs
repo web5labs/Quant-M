@@ -6,19 +6,28 @@ use crate::sessions::{self, SessionId, SessionReplay, SessionSummary};
 use crate::shared_state::{self, SharedStateKey, SharedStateRecord};
 use crate::state_sql;
 use crate::workflow_registry::{self, WorkflowId};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MOCK_RESEARCH_WORKFLOW: &str = "workflow:mock-research-brief";
 const RECENT_SESSION_LIMIT: usize = 5;
 const RECENT_STATE_LIMIT: usize = 5;
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_DIM: &str = "\x1b[2m";
+const ANSI_BLUE: &str = "\x1b[38;2;80;160;255m";
+const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
+const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
+const ANSI_RED: &str = "\x1b[38;2;255;95;95m";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AgentShellCommand {
     Help,
+    Ask(String),
     Doctor,
     RunDemo,
     RunWorkflow(String),
@@ -30,6 +39,8 @@ enum AgentShellCommand {
     SessionShow(String),
     SessionReplay(String),
     ConfigShow,
+    Settings,
+    Hint(String),
     Exit,
 }
 
@@ -56,7 +67,7 @@ pub fn run(cfg: &Config, config_path: &Path) -> Result<()> {
 
     let stdin = io::stdin();
     loop {
-        print!("quant-m> ");
+        print!("{}{}quant-m>{} ", ANSI_BOLD, ANSI_CYAN, ANSI_RESET);
         io::stdout().flush().context("failed to flush prompt")?;
 
         let mut line = String::new();
@@ -76,7 +87,7 @@ pub fn run(cfg: &Config, config_path: &Path) -> Result<()> {
         let command = match parse_command(trimmed) {
             Ok(command) => command,
             Err(err) => {
-                println!("error: {err}");
+                println!("{}error:{} {err}", ANSI_RED, ANSI_RESET);
                 continue;
             }
         };
@@ -91,7 +102,7 @@ pub fn run(cfg: &Config, config_path: &Path) -> Result<()> {
                 }
             }
             Err(err) => {
-                println!("error: {err}");
+                println!("{}error:{} {err}", ANSI_RED, ANSI_RESET);
             }
         }
     }
@@ -106,7 +117,16 @@ fn startup_summary(cfg: &Config) -> Result<String> {
     let shared_state_count = shared_state::list_state(cfg, None)?.len();
 
     Ok(format!(
-        "Quant-M Agent Shell v{APP_VERSION}\nmode: operator_shell\nworkspace: {}\nruntime_profile: {}\nnetwork: {}\npreferred_local_model: {}\npreferred_openrouter_model: {}\ndomains: {} | workflows: {} | sessions: {} | shared_state: {}\nhint: type help",
+        "{ANSI_BOLD}{ANSI_BLUE}Quant-M Agent Shell{ANSI_RESET} v{APP_VERSION}
+{ANSI_DIM}mode:{ANSI_RESET} codex_harness
+{ANSI_DIM}workspace:{ANSI_RESET} {}
+{ANSI_DIM}runtime_profile:{ANSI_RESET} {}
+{ANSI_DIM}network:{ANSI_RESET} {}
+{ANSI_DIM}preferred_local_model:{ANSI_RESET} {}
+{ANSI_DIM}preferred_openrouter_model:{ANSI_RESET} {}
+{ANSI_DIM}domains:{ANSI_RESET} {} | {ANSI_DIM}workflows:{ANSI_RESET} {} | {ANSI_DIM}sessions:{ANSI_RESET} {} | {ANSI_DIM}shared_state:{ANSI_RESET} {}
+
+{ANSI_GREEN}Type a question to chat through Codex, or type help for commands.{ANSI_RESET}",
         cfg.workspace_dir.display(),
         format!("{:?}", cfg.runtime.profile).to_lowercase(),
         if cfg.runtime.external_network_enabled {
@@ -131,8 +151,12 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
     let parts = trimmed.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         ["help"] => Ok(AgentShellCommand::Help),
+        ["ask", rest @ ..] if !rest.is_empty() => Ok(AgentShellCommand::Ask(rest.join(" "))),
         ["doctor"] => Ok(AgentShellCommand::Doctor),
-        ["run", "demo"] | ["run", "mock-research"] => Ok(AgentShellCommand::RunDemo),
+        ["demo"] | ["run", "mock-research"] => Ok(AgentShellCommand::RunDemo),
+        ["run", "demo"] => Ok(AgentShellCommand::Hint(
+            "Did you mean demo? Try: demo".to_string(),
+        )),
         ["run", "workflow", workflow_id] => {
             Ok(AgentShellCommand::RunWorkflow((*workflow_id).to_string()))
         }
@@ -140,7 +164,7 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
         ["state", "list"] => Ok(AgentShellCommand::StateList { json: false }),
         ["state", "list", "--json"] => Ok(AgentShellCommand::StateList { json: true }),
         ["state", "show", key] => Ok(AgentShellCommand::StateShow((*key).to_string())),
-        ["session", "recent"] => Ok(AgentShellCommand::SessionRecent),
+        ["sessions"] | ["session", "recent"] => Ok(AgentShellCommand::SessionRecent),
         ["session", "list"] => Ok(AgentShellCommand::SessionList { json: false }),
         ["session", "list", "--json"] => Ok(AgentShellCommand::SessionList { json: true }),
         ["session", "show", session_id] => {
@@ -150,11 +174,12 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
             Ok(AgentShellCommand::SessionReplay((*session_id).to_string()))
         }
         ["config", "show"] => Ok(AgentShellCommand::ConfigShow),
-        ["exit"] | ["quit"] => Ok(AgentShellCommand::Exit),
-        _ => Err(anyhow!(
-            "unknown command '{}'. type help for supported commands",
-            trimmed
+        ["settings"] | ["/settings"] => Ok(AgentShellCommand::Settings),
+        ["cli"] => Ok(AgentShellCommand::Hint(
+            "Did you mean shell? Try: quant-m shell".to_string(),
         )),
+        ["exit"] | ["quit"] | ["bye"] => Ok(AgentShellCommand::Exit),
+        _ => Ok(AgentShellCommand::Ask(trimmed.to_string())),
     }
 }
 
@@ -163,6 +188,7 @@ pub fn parse_command_for_fuzz(input: &str) -> Result<&'static str> {
     let command = parse_command(input)?;
     let label = match command {
         AgentShellCommand::Help => "help",
+        AgentShellCommand::Ask(_) => "ask",
         AgentShellCommand::Doctor => "doctor",
         AgentShellCommand::RunDemo => "run_demo",
         AgentShellCommand::RunWorkflow(_) => "run_workflow",
@@ -176,6 +202,8 @@ pub fn parse_command_for_fuzz(input: &str) -> Result<&'static str> {
         AgentShellCommand::SessionShow(_) => "session_show",
         AgentShellCommand::SessionReplay(_) => "session_replay",
         AgentShellCommand::ConfigShow => "config_show",
+        AgentShellCommand::Settings => "settings",
+        AgentShellCommand::Hint(_) => "hint",
         AgentShellCommand::Exit => "exit",
     };
     Ok(label)
@@ -189,6 +217,10 @@ fn execute_command(
     match command {
         AgentShellCommand::Help => Ok(AgentShellResponse {
             output: help_text().to_string(),
+            should_exit: false,
+        }),
+        AgentShellCommand::Ask(prompt) => Ok(AgentShellResponse {
+            output: run_codex_chat(cfg, &prompt)?,
             should_exit: false,
         }),
         AgentShellCommand::Doctor => {
@@ -283,8 +315,16 @@ fn execute_command(
                 should_exit: false,
             })
         }
+        AgentShellCommand::Settings => Ok(AgentShellResponse {
+            output: format_shell_settings(cfg),
+            should_exit: false,
+        }),
+        AgentShellCommand::Hint(message) => Ok(AgentShellResponse {
+            output: message,
+            should_exit: false,
+        }),
         AgentShellCommand::Exit => Ok(AgentShellResponse {
-            output: "bye".to_string(),
+            output: "bye\n\nOutside the shell, use:\n  ./target/release/quant-m demo\n  ./target/release/quant-m agent\n  ./target/release/quant-m run workflow workflow:mock-research-brief".to_string(),
             should_exit: true,
         }),
     }
@@ -293,15 +333,25 @@ fn execute_command(
 fn help_text() -> &'static str {
     "Quant-M Agent Shell Commands
 
+Chat:
+  <any question>        send a prompt through local Codex CLI
+  ask <question>        explicit Codex prompt
+
 Overview:
   help
   doctor
+  settings
+  /settings
   config show
 
 Run:
-  run demo
+  demo
   run mock-research
   run workflow workflow:mock-research-brief
+
+Outside this shell:
+  ./target/release/quant-m demo
+  ./target/release/quant-m agent
 
 State:
   state summary
@@ -310,6 +360,7 @@ State:
   state show shared.research.summary
 
 Sessions:
+  sessions
   session recent
   session list
   session list --json
@@ -319,6 +370,125 @@ Sessions:
 Exit:
   quit
   exit"
+}
+
+fn format_shell_settings(cfg: &Config) -> String {
+    let enabled_tools = cfg
+        .tools
+        .iter()
+        .filter(|(_id, tool)| tool.enabled)
+        .map(|(id, _tool)| id.as_str())
+        .collect::<Vec<_>>();
+    let enabled_tools = if enabled_tools.is_empty() {
+        "none".to_string()
+    } else {
+        enabled_tools.join(", ")
+    };
+    format!(
+        "{ANSI_BOLD}{ANSI_BLUE}Settings{ANSI_RESET}
+multi_model_enabled: {}
+search_enabled: {}
+browser_harness_enabled: {}
+external_network_enabled: {}
+enabled_tools: {}
+
+Tune more outside the shell:
+  quant-m settings
+  quant-m tool scan
+  quant-m onboard --advanced",
+        enabled_label(cfg.runtime.multi_model_enabled),
+        enabled_label(cfg.runtime.search_enabled),
+        enabled_label(cfg.runtime.browser_harness_enabled),
+        enabled_label(cfg.runtime.external_network_enabled),
+        enabled_tools,
+    )
+}
+
+fn enabled_label(value: bool) -> &'static str {
+    if value { "enabled" } else { "disabled" }
+}
+
+fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
+    if !command_present("codex") {
+        return Ok(format!(
+            "{ANSI_RED}Codex CLI is not on PATH.{ANSI_RESET}\nRun `codex login`, then retry from this shell."
+        ));
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| cfg.workspace_dir.clone());
+    let harness_prompt = format!(
+        "You are Codex running through the Quant-M local agent harness.\n\
+         Keep the answer concise and practical.\n\
+         Quant-M workspace: {}\n\n\
+         User prompt:\n{}",
+        cfg.workspace_dir.display(),
+        prompt
+    );
+    let mut child = Command::new("codex")
+        .arg("exec")
+        .arg("--color")
+        .arg("always")
+        .arg("--sandbox")
+        .arg("read-only")
+        .arg("--skip-git-repo-check")
+        .arg("--cd")
+        .arg(cwd)
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to run codex exec")?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(harness_prompt.as_bytes())
+            .context("failed to send prompt to codex exec")?;
+    }
+    let output = child
+        .wait_with_output()
+        .context("failed to wait for codex exec")?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() {
+        let mut lines = vec![format!("{ANSI_BOLD}{ANSI_GREEN}Codex{ANSI_RESET}")];
+        if !stderr.is_empty() {
+            lines.push(format!("{ANSI_DIM}{stderr}{ANSI_RESET}"));
+        }
+        if stdout.is_empty() {
+            lines.push("Codex completed without text output.".to_string());
+        } else {
+            lines.push(stdout);
+        }
+        Ok(lines.join("\n"))
+    } else {
+        let hint = if stderr.contains("readonly database")
+            || stderr.contains("Operation not permitted")
+        {
+            "\n\nhint: Codex was blocked from writing its local state. Run this from your normal Terminal session, or check permissions under ~/.codex."
+        } else {
+            ""
+        };
+        Ok(format!(
+            "{ANSI_RED}Codex exec failed.{ANSI_RESET}\nstatus: {}\n{}{}{}",
+            output.status,
+            if stderr.is_empty() { "" } else { "stderr: " },
+            stderr,
+            hint
+        ))
+    }
+}
+
+fn command_present(command: &str) -> bool {
+    let command = command.trim();
+    if command.is_empty() {
+        return false;
+    }
+    if command.contains(std::path::MAIN_SEPARATOR) {
+        return std::path::Path::new(command).is_file();
+    }
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(command).is_file())
 }
 
 fn run_doctor(cfg: &Config, config_path: &Path) -> Result<AgentDoctorReport> {
@@ -387,7 +557,7 @@ Artifacts:
 
 fn format_run_result(result: &WorkflowRunResult, demo_alias: bool) -> String {
     let alias_note = if demo_alias {
-        "alias: run demo -> workflow:mock-research-brief\n".to_string()
+        "command: demo -> workflow:mock-research-brief\n".to_string()
     } else {
         String::new()
     };
@@ -571,12 +741,24 @@ mod tests {
             AgentShellCommand::Help
         );
         assert_eq!(
+            parse_command("ask what is Quant-M?").expect("ask"),
+            AgentShellCommand::Ask("what is Quant-M?".to_string())
+        );
+        assert_eq!(
+            parse_command("what is Quant-M?").expect("free text"),
+            AgentShellCommand::Ask("what is Quant-M?".to_string())
+        );
+        assert_eq!(
             parse_command("run mock-research").expect("mock"),
             AgentShellCommand::RunDemo
         );
         assert_eq!(
-            parse_command("run demo").expect("demo"),
+            parse_command("demo").expect("demo alias"),
             AgentShellCommand::RunDemo
+        );
+        assert_eq!(
+            parse_command("run demo").expect("demo"),
+            AgentShellCommand::Hint("Did you mean demo? Try: demo".to_string())
         );
         assert_eq!(
             parse_command("run workflow workflow:mock-research-brief").expect("workflow"),
@@ -595,6 +777,10 @@ mod tests {
             AgentShellCommand::SessionRecent
         );
         assert_eq!(
+            parse_command("sessions").expect("sessions alias"),
+            AgentShellCommand::SessionRecent
+        );
+        assert_eq!(
             parse_command("session show session-1").expect("show"),
             AgentShellCommand::SessionShow("session-1".to_string())
         );
@@ -606,6 +792,19 @@ mod tests {
             parse_command("quit").expect("quit"),
             AgentShellCommand::Exit
         );
+        assert_eq!(parse_command("bye").expect("bye"), AgentShellCommand::Exit);
+        assert_eq!(
+            parse_command("settings").expect("settings"),
+            AgentShellCommand::Settings
+        );
+        assert_eq!(
+            parse_command("/settings").expect("settings"),
+            AgentShellCommand::Settings
+        );
+        assert_eq!(
+            parse_command("cli").expect("cli hint"),
+            AgentShellCommand::Hint("Did you mean shell? Try: quant-m shell".to_string())
+        );
     }
 
     #[test]
@@ -616,6 +815,21 @@ mod tests {
         assert!(response.output.contains("Overview:"));
         assert!(response.output.contains("Run:"));
         assert!(response.output.contains("Sessions:"));
+        assert!(response.output.contains("/settings"));
+        assert!(!response.should_exit);
+    }
+
+    #[test]
+    fn settings_output_lists_default_off_features() {
+        let (_temp, config_path, cfg) = temp_cfg();
+        let response =
+            execute_command(&cfg, &config_path, AgentShellCommand::Settings).expect("settings");
+        assert!(response.output.contains("multi_model_enabled: disabled"));
+        assert!(
+            response
+                .output
+                .contains("browser_harness_enabled: disabled")
+        );
         assert!(!response.should_exit);
     }
 
@@ -710,10 +924,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_commands_remain_readable() {
-        let err = parse_command("launch everything").expect_err("unknown command");
-        assert!(err.to_string().contains("unknown command"));
-        assert!(err.to_string().contains("type help"));
+    fn free_text_routes_to_codex_prompt() {
+        let command = parse_command("launch everything").expect("free text");
+        assert_eq!(
+            command,
+            AgentShellCommand::Ask("launch everything".to_string())
+        );
     }
 
     #[test]
@@ -721,7 +937,8 @@ mod tests {
         let (_temp, config_path, cfg) = temp_cfg();
         let response =
             execute_command(&cfg, &config_path, AgentShellCommand::Exit).expect("exit response");
-        assert_eq!(response.output, "bye");
+        assert!(response.output.contains("bye"));
+        assert!(response.output.contains("./target/release/quant-m demo"));
         assert!(response.should_exit);
     }
 
