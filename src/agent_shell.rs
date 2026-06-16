@@ -149,6 +149,23 @@ fn startup_summary(cfg: &Config) -> Result<String> {
 fn parse_command(input: &str) -> Result<AgentShellCommand> {
     let trimmed = input.trim();
     let parts = trimmed.split_whitespace().collect::<Vec<_>>();
+    if let Some(inner) = strip_launcher_prefix(&parts) {
+        let inner = inner.trim();
+        if inner.is_empty() || matches!(inner, "start" | "agent" | "shell") {
+            return Ok(AgentShellCommand::Hint(
+                "You are already inside the Quant-M shell. Type help, demo, doctor, or exit."
+                    .to_string(),
+            ));
+        }
+        let command = parse_command(inner)?;
+        if matches!(command, AgentShellCommand::Ask(_)) {
+            return Ok(AgentShellCommand::Hint(format!(
+                "You are already inside the Quant-M shell. Type exit first to run `{trimmed}` from your terminal, or type help for shell commands."
+            )));
+        }
+        return Ok(command);
+    }
+
     match parts.as_slice() {
         ["help"] => Ok(AgentShellCommand::Help),
         ["ask", rest @ ..] if !rest.is_empty() => Ok(AgentShellCommand::Ask(rest.join(" "))),
@@ -180,6 +197,19 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
         )),
         ["exit"] | ["quit"] | ["bye"] => Ok(AgentShellCommand::Exit),
         _ => Ok(AgentShellCommand::Ask(trimmed.to_string())),
+    }
+}
+
+fn strip_launcher_prefix(parts: &[&str]) -> Option<String> {
+    match parts {
+        ["./quantm", rest @ ..]
+        | ["quantm", rest @ ..]
+        | ["quant-m", rest @ ..]
+        | ["./target/release/quant-m", rest @ ..] => Some(rest.join(" ")),
+        ["cargo", "run", "--release", "--", rest @ ..] | ["cargo", "run", "--", rest @ ..] => {
+            Some(rest.join(" "))
+        }
+        _ => None,
     }
 }
 
@@ -804,6 +834,32 @@ mod tests {
         assert_eq!(
             parse_command("cli").expect("cli hint"),
             AgentShellCommand::Hint("Did you mean shell? Try: quant-m shell".to_string())
+        );
+        assert_eq!(
+            parse_command("./quantm doctor").expect("launcher doctor"),
+            AgentShellCommand::Doctor
+        );
+        assert_eq!(
+            parse_command("./quantm demo").expect("launcher demo"),
+            AgentShellCommand::RunDemo
+        );
+        assert_eq!(
+            parse_command("cargo run --release -- demo").expect("cargo demo"),
+            AgentShellCommand::RunDemo
+        );
+        assert_eq!(
+            parse_command("./quantm").expect("launcher shell"),
+            AgentShellCommand::Hint(
+                "You are already inside the Quant-M shell. Type help, demo, doctor, or exit."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_command("./quantm context guard --json").expect("outside command hint"),
+            AgentShellCommand::Hint(
+                "You are already inside the Quant-M shell. Type exit first to run `./quantm context guard --json` from your terminal, or type help for shell commands."
+                    .to_string()
+            )
         );
     }
 
