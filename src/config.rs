@@ -428,6 +428,7 @@ impl Default for ChannelPreference {
 }
 
 impl Config {
+    #[allow(dead_code)]
     pub fn load_existing(config_path: &Path) -> Result<Self> {
         if !config_path.exists() {
             anyhow::bail!("config not found at {}", config_path.display());

@@ -2979,25 +2979,13 @@ async fn run_doctor(
     include_providers: bool,
     live: bool,
 ) -> Result<DoctorReport> {
-    let config_exists = config_path.exists();
-    if !config_exists {
-        return Ok(DoctorReport {
-            config_exists,
-            workspace_exists: false,
-            state_path_exists: false,
-            session_path_exists: false,
-            workflow_run_ok: false,
-            shared_state_list_ok: false,
-            session_list_ok: false,
-            checked_binary: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quant-m")),
-            generated_session_id: None,
-            provider_diagnostics: Vec::new(),
-        });
-    }
-
-    let mut cfg = Config::load_existing(config_path)
+    let mut cfg = Config::load_or_create(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
     cfg.ensure_onboarding_registries();
+    cfg.save(config_path)?;
+    bootstrap::ensure_workspace(&cfg)?;
+
+    let config_exists = config_path.exists();
     let workspace_exists = cfg.workspace_dir.exists();
     let state_path_exists = cfg
         .state_sql
@@ -3969,6 +3957,29 @@ mod tests {
         let report = rt
             .block_on(run_doctor(&config_path, false, false))
             .expect("doctor");
+        assert!(report.workflow_run_ok);
+        assert!(report.shared_state_list_ok);
+        assert!(report.session_list_ok);
+    }
+
+    #[test]
+    fn doctor_bootstraps_missing_local_config() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let report = rt
+            .block_on(run_doctor(&config_path, false, false))
+            .expect("doctor");
+
+        assert!(config_path.exists());
+        assert!(report.config_exists);
+        assert!(report.workspace_exists);
+        assert!(report.state_path_exists);
+        assert!(report.session_path_exists);
         assert!(report.workflow_run_ok);
         assert!(report.shared_state_list_ok);
         assert!(report.session_list_ok);

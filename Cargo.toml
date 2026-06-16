@@ -2,8 +2,41 @@
 name = "quant-m"
 version = "0.1.0"
 edition = "2024"
-description = "Quant-M: lightweight local-first worker runtime inspired by OpenClaw patterns"
+description = "Local-first flight recorder and control plane for AI-assisted work"
 license = "MIT"
+repository = "https://github.com/web5labs/Quant-M"
+homepage = "https://github.com/web5labs/Quant-M"
+documentation = "https://github.com/web5labs/Quant-M/tree/main/docs"
+readme = "README.md"
+keywords = ["agent", "cli", "replay", "governance", "local-first"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "/target/",
+    "/workspace/*",
+    "!/workspace/.gitkeep",
+    "/fuzz/",
+    "/desks/",
+    "/strategist/",
+    "/tmp/",
+    "/temp/",
+    "/scratch/",
+    "/cache/",
+    "/.cache/",
+    "/.codex/",
+    "/.cursor/",
+    "/.vscode/",
+    "/.DS_Store",
+    "*.log",
+    "*.local.toml",
+    "*.secret",
+    "*.secrets",
+    "*.pem",
+    "*.key",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.db",
+    "*.db-*",
+]
 
 [features]
 default = []
