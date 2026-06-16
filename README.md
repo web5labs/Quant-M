@@ -88,6 +88,8 @@ help
 exit
 ```
 
+If you paste outer-terminal commands while inside `quant-m>`, Quant-M will still run the local ones it recognizes. For example, `doctor`, `quant-m doctor`, and `./quantm doctor` all run the local doctor check.
+
 The first run is intentionally local. No broker. No live model call. No browser harness. No hosted service. No API key.
 
 ## Try The Proof Loop
