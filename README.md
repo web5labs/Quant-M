@@ -92,6 +92,142 @@ If you paste outer-terminal commands while inside `quant-m>`, Quant-M will still
 
 The first run is intentionally local. No broker. No live model call. No browser harness. No hosted service. No API key.
 
+## Onboarding Preview
+
+Run the guided setup when you want the first-run questions instead of jumping straight into the shell:
+
+```bash
+./quantm onboard
+```
+
+For a throwaway demo config that will not touch your local setup:
+
+```bash
+./quantm --config /tmp/quant-m-demo.toml onboard
+```
+
+The flow is deliberately short: workspace, device type, network posture, model provider, developer tools, operator channel, continuity guard, and final review.
+
+<details>
+<summary><strong>HTML-style terminal preview</strong></summary>
+
+<br>
+
+<pre>
+<strong>🧠 Welcome to Quant-M</strong>
+
+<strong>Quant-M is a local-first Rust runtime for governed agent work.</strong>
+It stores memory, sessions, shared state, and replay evidence on this device.
+This device can run as a Quant-M Agent Node.
+
+────────────────────────────────────────
+<strong>Step 1: Workspace</strong>
+Choose where local memory and sessions live.
+
+<strong>Where should Quant-M store its local memory, state, sessions, and queues?</strong> [./workspace]:
+
+────────────────────────────────────────
+<strong>Step 2: Device</strong>
+Pick the closest runtime profile.
+
+<strong>Choose this device type.</strong>
+
+   1   💻 Laptop or desktop
+   2   📱 Phone / Termux / edge device
+   3   🏢 Staff-OS worker node
+   4   🖥️ VPS / server
+
+<strong>Select</strong> [1]:
+
+────────────────────────────────────────
+<strong>Step 3: Network</strong>
+Keep first-run safe unless you opt in.
+
+<strong>Should Quant-M use the internet?</strong>
+
+   1   🔒 No, local only
+   2   ✋ Ask me before network use
+   3   🌐 Yes, allow provider checks
+
+<strong>Select</strong> [1]:
+
+────────────────────────────────────────
+<strong>Step 4: Models</strong>
+Codex can work locally without OpenRouter.
+
+<strong>Do you want to connect a model provider now?</strong>
+
+   1   ⏭️ Skip for now
+   2   🔑 Use OPENROUTER_API_KEY from my environment
+   3   💾 Paste and save OpenRouter key locally
+   4   📋 Show me the export command
+
+<strong>Select</strong> [1]:
+
+────────────────────────────────────────
+<strong>Step 5: Developer tools</strong>
+Detect Codex, Gemini, Claude, OpenCode, and Antigravity-style CLIs already on PATH.
+
+<strong>Scan for supported developer tools?</strong>
+
+   1   🔎 Yes, scan PATH
+   2   ⏭️ Skip for now
+
+<strong>Select</strong> [1]:
+
+────────────────────────────────────────
+<strong>Step 6: Operator channel</strong>
+Choose the default way Quant-M talks to you.
+
+<strong>How should Quant-M talk to you?</strong>
+
+   1   ⌨️ Terminal
+   2   🔗 Webhook later
+   3   ✈️ Telegram later
+
+<strong>Select</strong> [1]:
+
+────────────────────────────────────────
+<strong>Step 7: Continuity</strong>
+Keep long sessions recoverable with local handoff packets.
+
+<strong>Start context guardian automatically when the Quant-M daemon runs?</strong>
+
+   1   🛡️ Yes, keep continuity handoffs ready
+   2   ⏭️ No, I will run context guard manually
+
+<strong>Select</strong> [1]:
+
+╭─ Onboarding review ─────────────────────╮
+│ workspace       ./workspace
+│ device_type     laptop
+│ network         local only / ask before live checks
+│ model_provider  none
+│ tools           codex
+│ channel         none
+│ guardian        enabled
+│ config          /tmp/quant-m-demo.toml
+╰─────────────────────────────────────────╯
+
+<strong>Ready to save this onboarding profile?</strong>
+
+   1   ✅ Save and continue
+   2   🔁 Start over
+
+<strong>Select</strong> [1]:
+
+✓ Setup complete.
+
+Next:
+  ./quantm agent
+  ./quantm doctor
+  ./quantm demo
+</pre>
+
+For the fuller colored HTML version, open [`docs/onboarding-mockup.html`](docs/onboarding-mockup.html).
+
+</details>
+
 ## Try The Proof Loop
 
 In a few commands, you can see the core idea: create evidence, replay it, compact it, prepare a handoff, and inspect cost.
