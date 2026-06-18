@@ -1,5 +1,7 @@
 # Product State Machines
 
+This document is a human-readable summary. Runtime FSM authority lives in Rust, currently in `src/fsm_core.rs`, `src/fsm_authority.rs`, and the wired runtime modules. Use `quant-m fsm authority` for the current wired/partial/modeled status.
+
 This file records the product/runtime state machines that matter for Quant-M implementation slices. It complements `docs/fsm/project-execution-fsm.md`, which controls agent project work.
 
 ## Purpose
@@ -19,20 +21,9 @@ This file records the product/runtime state machines that matter for Quant-M imp
 
 ## Worker Job FSM
 
-Known states:
+Runtime authority: `WorkerJobFsm` in Rust.
 
-- `queued`
-- `executing`
-- `succeeded`
-- `failed`
-- `dead_lettered`
-
-Known transitions:
-
-- `queued -> executing`: worker starts a queued job.
-- `executing -> succeeded`: job completes and records durable evidence.
-- `executing -> failed`: job fails or a policy gate denies execution.
-- `failed -> dead_lettered`: retry budget is exhausted and the job is moved out of the active queue.
+The worker job FSM protects queue execution, retry/dead-letter behavior, and worker transition evidence. Detailed transition rules live in `src/fsm_core.rs`; this document keeps the human safety contract only.
 
 Exit criteria for a safe worker slice:
 
@@ -70,6 +61,19 @@ Exit criteria for a safe session slice:
 - Resume plans are analysis-only until explicitly approved.
 - Operator approval is stored as evidence, not treated as automatic execution.
 
+## Skill Execution FSM
+
+Runtime authority: `SkillExecutionFsm` and `PolicyApprovalFsm` in Rust.
+
+The skill FSM makes local skill execution explicit: declaration and discovery are not permission, policy approval must be reached before shell-backed execution, and blocked shell skills are safety outcomes. Detailed transition rules live in `src/fsm_core.rs`.
+
+Exit criteria for a safe skill slice:
+
+- Skill declaration is not execution permission.
+- Shell-backed skills require `skills.allow_shell_commands=true`.
+- Policy approval state must reach execution allowed before a command starts.
+- Blocked shell skills are safety outcomes, not runtime failures.
+
 ## Question To Proposal FSM
 
 Known states:
@@ -95,6 +99,19 @@ Exit criteria for the current validated slice:
 - Proposal writes require explicit `--write-proposals`.
 - Written proposals remain pending and non-authoritative.
 - Staff-OS handoff and harness execution remain separate milestones.
+
+## Context Guardian FSM
+
+Runtime authority: `ContextGuardianFsm` in Rust.
+
+The Context Guardian FSM turns continuation state into typed action: observe, continue, compact, refresh compact, create handoff, request operator review, or block continuation. Green/yellow/red remains a display-level status, not machine authority. Detailed transition rules live in `src/fsm_core.rs`.
+
+Exit criteria for a safe context slice:
+
+- Green/yellow/red remains a display label, not the only runtime state.
+- Context commands expose typed state, triggering event, recommended action, transition record, block flag, and review flag.
+- New sessions can compact, refresh, hand off, or block from current project evidence without assuming a persistent terminal installation.
+- Boil and loop dry-run treat typed `continue` as the only execution-ready context action.
 
 ## Shared State FSM
 

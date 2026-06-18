@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::context_status::{self, ContextStatusReport};
+use crate::fsm_core::{ContextGuardianState, ContextRecommendedAction};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -131,6 +132,10 @@ pub struct ContextPacketReceipt {
     pub validation_commands: Vec<String>,
     pub stop_condition: String,
     pub context_state: String,
+    pub guardian_state: ContextGuardianState,
+    pub recommended_action: ContextRecommendedAction,
+    pub blocked: bool,
+    pub operator_review_required: bool,
     pub recommended_next_action: String,
 }
 
@@ -176,6 +181,10 @@ pub fn generate_context_packet(
         validation_commands,
         stop_condition: "Stop after producing the requested output and recording validation evidence; do not widen context or mutate canonical truth.".to_string(),
         context_state: format!("{:?}", status.context_state).to_ascii_lowercase(),
+        guardian_state: status.guardian_state,
+        recommended_action: status.recommended_action,
+        blocked: status.blocked,
+        operator_review_required: status.operator_review_required,
         recommended_next_action: status.recommended_next_action.clone(),
     };
 
@@ -318,6 +327,9 @@ fn render_packet(
          - current_fsm_state: {}\n\
          - packet_size: {}\n\
          - context_state: {}\n\
+         - guardian_state: {}\n\
+         - recommended_action: {}\n\
+         - blocked: {}\n\
          - latest_session_id: {}\n\
          - recommended_next_action: {}\n\n\
          ## Task\n\n{}\n\n\
@@ -330,6 +342,9 @@ fn render_packet(
         receipt.current_fsm_state,
         receipt.packet_size,
         receipt.context_state,
+        receipt.guardian_state,
+        receipt.recommended_action,
+        receipt.blocked,
         status.latest_session_id.as_deref().unwrap_or("none"),
         receipt.recommended_next_action,
         task.unwrap_or(
@@ -418,6 +433,15 @@ mod tests {
         assert!(result.packet_path.exists());
         assert!(result.receipt_path.exists());
         assert_eq!(result.receipt.packet_size, PacketSize::Small);
+        assert_eq!(
+            result.receipt.guardian_state,
+            ContextGuardianState::NoSession
+        );
+        assert_eq!(
+            result.receipt.recommended_action,
+            ContextRecommendedAction::Observe
+        );
+        assert!(!result.receipt.blocked);
         assert!(result.receipt.estimated_token_size > 0);
         assert!(
             result

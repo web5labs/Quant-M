@@ -1,4 +1,8 @@
 use crate::config::Config;
+use crate::fsm_core::{
+    PolicyApprovalEvent, PolicyApprovalFsm, PolicyApprovalState, SkillExecutionEvent,
+    SkillExecutionFsm, SkillExecutionState, StateMachine,
+};
 use crate::sessions::{self, SessionEvent};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -115,29 +119,6 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
             detail: Some(name.to_string()),
         },
     );
-    if !cfg.skills.allow_shell_commands {
-        record_session_event(
-            cfg,
-            &session,
-            SessionEvent::PolicyDecision {
-                policy: "skills.allow_shell_commands".to_string(),
-                allowed: false,
-                reason: "skill shell execution is disabled".to_string(),
-            },
-        );
-        record_session_event(
-            cfg,
-            &session,
-            SessionEvent::Error {
-                code: Some("skills_shell_disabled".to_string()),
-                message: "skill shell execution is disabled (skills.allow_shell_commands=false)"
-                    .to_string(),
-            },
-        );
-        return Err(anyhow!(
-            "skill shell execution is disabled (skills.allow_shell_commands=false)"
-        ));
-    }
 
     let info = list_skills(cfg)?
         .into_iter()
@@ -150,6 +131,110 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
         .run
         .ok_or_else(|| anyhow!("skill '{}' has no [run] command", name))?;
     let command = run.command.replace("{{input}}", input);
+    let side_effect_level = "external_action";
+    let shell_required = true;
+    let shell_allowed = cfg.skills.allow_shell_commands;
+
+    record_skill_transition(
+        cfg,
+        &session,
+        SkillExecutionState::Declared,
+        SkillExecutionEvent::Load,
+        &format!(
+            "skill_id={name} runnable={} shell_required=true",
+            info.runnable
+        ),
+    );
+    record_skill_transition(
+        cfg,
+        &session,
+        SkillExecutionState::Loaded,
+        SkillExecutionEvent::CheckPolicy,
+        &format!(
+            "skill_id={name} side_effect_level={side_effect_level} shell_required={shell_required}"
+        ),
+    );
+    record_policy_transition(
+        cfg,
+        &session,
+        PolicyApprovalState::Requested,
+        PolicyApprovalEvent::Request,
+        &format!("skill_id={name} requested shell-backed execution"),
+    );
+
+    if !shell_allowed {
+        record_session_event(
+            cfg,
+            &session,
+            SessionEvent::PolicyDecision {
+                policy: "skills.allow_shell_commands".to_string(),
+                allowed: false,
+                reason: "skill shell execution is disabled".to_string(),
+            },
+        );
+        record_policy_transition(
+            cfg,
+            &session,
+            PolicyApprovalState::EvaluatingPolicy,
+            PolicyApprovalEvent::PolicyBlocks,
+            &format!(
+                "skill_id={name} shell_required={shell_required} shell_allowed={shell_allowed}"
+            ),
+        );
+        record_skill_transition(
+            cfg,
+            &session,
+            SkillExecutionState::PolicyChecked,
+            SkillExecutionEvent::PolicyBlocks,
+            &format!(
+                "skill_id={name} blocked shell_required={shell_required} shell_allowed={shell_allowed}"
+            ),
+        );
+        record_session_event(
+            cfg,
+            &session,
+            SessionEvent::SkillCall {
+                skill_name: name.to_string(),
+                input_preview: truncate_for_session(input),
+                command_preview: Some(truncate_for_session(&command)),
+                status: "blocked".to_string(),
+            },
+        );
+        return Err(anyhow!(
+            "skill shell execution is disabled (skills.allow_shell_commands=false)"
+        ));
+    }
+
+    record_policy_transition(
+        cfg,
+        &session,
+        PolicyApprovalState::EvaluatingPolicy,
+        PolicyApprovalEvent::PolicyAllows,
+        &format!("skill_id={name} shell_required={shell_required} shell_allowed={shell_allowed}"),
+    );
+    record_skill_transition(
+        cfg,
+        &session,
+        SkillExecutionState::PolicyChecked,
+        SkillExecutionEvent::PolicyAllows,
+        &format!(
+            "skill_id={name} ready side_effect_level={side_effect_level} shell_allowed={shell_allowed}"
+        ),
+    );
+    record_skill_transition(
+        cfg,
+        &session,
+        SkillExecutionState::Ready,
+        SkillExecutionEvent::Start,
+        &format!("skill_id={name} starting shell-backed command"),
+    );
+    record_policy_transition(
+        cfg,
+        &session,
+        PolicyApprovalState::ExecutionAllowed,
+        PolicyApprovalEvent::Execute,
+        &format!("skill_id={name} entering command execution"),
+    );
     record_session_event(
         cfg,
         &session,
@@ -183,6 +268,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
                         message: err.to_string(),
                     },
                 );
+                record_skill_transition(
+                    cfg,
+                    &session,
+                    SkillExecutionState::Running,
+                    SkillExecutionEvent::Fail,
+                    &format!("skill_id={name} command spawn failed"),
+                );
                 return Err(err);
             }
         },
@@ -194,6 +286,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
                     code: Some("skills_timeout".to_string()),
                     message: err.to_string(),
                 },
+            );
+            record_skill_transition(
+                cfg,
+                &session,
+                SkillExecutionState::Running,
+                SkillExecutionEvent::Fail,
+                &format!("skill_id={name} command timed out"),
             );
             return Err(err);
         }
@@ -220,6 +319,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
                 message: message.clone(),
             },
         );
+        record_skill_transition(
+            cfg,
+            &session,
+            SkillExecutionState::Running,
+            SkillExecutionEvent::Fail,
+            &format!("skill_id={name} command exited unsuccessfully"),
+        );
         return Err(anyhow!("{}", message));
     }
 
@@ -236,6 +342,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
             summary: truncate_for_session(&final_output),
             job_id: None,
         },
+    );
+    record_skill_transition(
+        cfg,
+        &session,
+        SkillExecutionState::Running,
+        SkillExecutionEvent::Complete,
+        &format!("skill_id={name} command completed successfully"),
     );
     Ok(final_output)
 }
@@ -278,11 +391,258 @@ fn record_session_event(cfg: &Config, session: &sessions::SessionContext, event:
     }
 }
 
+fn record_skill_transition(
+    cfg: &Config,
+    session: &sessions::SessionContext,
+    from_state: SkillExecutionState,
+    event: SkillExecutionEvent,
+    reason: &str,
+) {
+    record_transition(
+        cfg,
+        session,
+        &SkillExecutionFsm,
+        from_state,
+        event,
+        reason,
+        "skill_execution_invalid_fsm_transition",
+    );
+}
+
+fn record_policy_transition(
+    cfg: &Config,
+    session: &sessions::SessionContext,
+    from_state: PolicyApprovalState,
+    event: PolicyApprovalEvent,
+    reason: &str,
+) {
+    record_transition(
+        cfg,
+        session,
+        &PolicyApprovalFsm,
+        from_state,
+        event,
+        reason,
+        "policy_approval_invalid_fsm_transition",
+    );
+}
+
+fn record_transition<M>(
+    cfg: &Config,
+    session: &sessions::SessionContext,
+    fsm: &M,
+    from_state: M::State,
+    event: M::Event,
+    reason: &str,
+    error_code: &str,
+) where
+    M: StateMachine,
+{
+    match fsm.transition(&from_state, &event) {
+        Ok(to_state) => record_session_event(
+            cfg,
+            session,
+            SessionEvent::FsmTransition {
+                machine: fsm.machine_id().to_string(),
+                from_state: Some(from_state.to_string()),
+                to_state: to_state.to_string(),
+                reason: reason.to_string(),
+            },
+        ),
+        Err(err) => record_session_event(
+            cfg,
+            session,
+            SessionEvent::Error {
+                code: Some(error_code.to_string()),
+                message: err.to_string(),
+            },
+        ),
+    }
+}
+
 fn truncate_for_session(value: &str) -> String {
     const MAX: usize = 512;
     if value.len() <= MAX {
         value.to_string()
     } else {
         format!("{}...[truncated]", &value[..MAX])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, LoggingConfig, SkillsConfig};
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn test_config(tmp: &TempDir, allow_shell_commands: bool) -> Config {
+        let workspace = tmp.path().join("workspace");
+        let mut cfg = Config {
+            workspace_dir: workspace.clone(),
+            skills: SkillsConfig {
+                dir: workspace.join("skills"),
+                allow_shell_commands,
+            },
+            logging: LoggingConfig {
+                file: workspace.join("logs/quant-m.log"),
+                max_bytes: 1_048_576,
+                keep_files: 3,
+            },
+            ..Config::default()
+        };
+        cfg.runtime.session_dir = workspace.join("state/sessions");
+        cfg
+    }
+
+    fn write_shell_skill(cfg: &Config, name: &str, command: &str) {
+        let dir = cfg.skills.dir.join(name);
+        fs::create_dir_all(&dir).expect("skill dir");
+        fs::write(dir.join("SKILL.md"), format!("# {name}\n\nTest skill.")).expect("skill md");
+        fs::write(
+            dir.join("SKILL.toml"),
+            format!(
+                "[skill]\nname = \"{name}\"\ndescription = \"Test skill\"\n\n[run]\ncommand = \"{}\"\n",
+                command.replace('\\', "\\\\").replace('"', "\\\"")
+            ),
+        )
+        .expect("skill toml");
+    }
+
+    fn only_session_detail(cfg: &Config) -> sessions::SessionDetail {
+        let listed = sessions::list_sessions(cfg).expect("sessions");
+        assert_eq!(listed.len(), 1);
+        sessions::show_session(cfg, &listed[0].session_id).expect("detail")
+    }
+
+    fn has_transition(
+        detail: &sessions::SessionDetail,
+        machine_name: &str,
+        from: &str,
+        to: &str,
+    ) -> bool {
+        detail.events.iter().any(|entry| {
+            matches!(
+                &entry.event,
+                SessionEvent::FsmTransition {
+                    machine,
+                    from_state: Some(from_state),
+                    to_state,
+                    ..
+                } if machine == machine_name && from_state == from && to_state == to
+            )
+        })
+    }
+
+    #[tokio::test]
+    async fn shell_skill_disabled_blocks_not_fails_and_does_not_execute() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp, false);
+        let marker = tmp.path().join("skill-marker");
+        write_shell_skill(&cfg, "blocked", &format!("touch {}", marker.display()));
+
+        let err = run_skill(&cfg, "blocked", "input")
+            .await
+            .expect_err("blocked");
+        assert!(
+            err.to_string()
+                .contains("skills.allow_shell_commands=false")
+        );
+        assert!(!marker.exists());
+
+        let detail = only_session_detail(&cfg);
+        let replay = sessions::replay_session(&cfg, &detail.summary.session_id).expect("replay");
+        assert_eq!(replay.state.current_fsm_state.as_deref(), Some("blocked"));
+        assert_eq!(replay.state.errors, 0);
+
+        assert!(has_transition(
+            &detail,
+            "skill_execution",
+            "policy_checked",
+            "blocked"
+        ));
+        assert!(detail.events.iter().any(|entry| {
+            matches!(
+                &entry.event,
+                SessionEvent::SkillCall { status, .. } if status == "blocked"
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn shell_skill_runs_only_after_policy_allows_and_records_success() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp, true);
+        write_shell_skill(&cfg, "echoer", "printf '%s' '{{input}}'");
+
+        let output = run_skill(&cfg, "echoer", "hello skill").await.expect("run");
+        assert_eq!(output, "hello skill");
+
+        let detail = only_session_detail(&cfg);
+        assert!(has_transition(
+            &detail,
+            "policy_approval",
+            "evaluating_policy",
+            "execution_allowed"
+        ));
+        assert!(has_transition(
+            &detail,
+            "skill_execution",
+            "running",
+            "succeeded"
+        ));
+    }
+
+    #[tokio::test]
+    async fn failing_shell_skill_records_failed_lifecycle() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp, true);
+        write_shell_skill(&cfg, "fails", "exit 7");
+
+        run_skill(&cfg, "fails", "input")
+            .await
+            .expect_err("command fails");
+
+        assert!(has_transition(
+            &only_session_detail(&cfg),
+            "skill_execution",
+            "running",
+            "failed"
+        ));
+    }
+
+    #[test]
+    fn skill_list_and_show_still_work_without_execution() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp, false);
+        write_shell_skill(&cfg, "listed", "printf listed");
+
+        let listed = list_skills(&cfg).expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "listed");
+        assert!(listed[0].runnable);
+
+        let detail = show_skill(&cfg, "listed").expect("show");
+        assert_eq!(detail.info.name, "listed");
+        assert!(detail.markdown.contains("Test skill"));
+    }
+
+    #[tokio::test]
+    async fn missing_skill_is_not_recorded_as_policy_failure() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp, false);
+
+        let err = run_skill(&cfg, "missing", "input")
+            .await
+            .expect_err("missing");
+        assert!(err.to_string().contains("skill 'missing' not found"));
+
+        let detail = only_session_detail(&cfg);
+        assert!(
+            !detail
+                .events
+                .iter()
+                .any(|entry| matches!(&entry.event, SessionEvent::PolicyDecision { .. }))
+        );
     }
 }

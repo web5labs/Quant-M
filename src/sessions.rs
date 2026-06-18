@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::fsm_core::SessionLifecycleState;
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -150,6 +151,7 @@ pub struct SessionSummary {
     pub error_count: usize,
     pub retry_count: usize,
     pub final_status: String,
+    pub typed_final_state: SessionLifecycleState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +163,7 @@ pub struct SessionDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionReplayState {
     pub current_fsm_state: Option<String>,
+    pub typed_final_state: SessionLifecycleState,
     pub observations: usize,
     pub skill_calls: usize,
     pub policy_decisions: usize,
@@ -385,6 +388,7 @@ fn build_summary(events: &[SessionLogEntry]) -> Result<SessionSummary> {
         error_count: state.errors,
         retry_count: state.retries,
         final_status: state.final_status,
+        typed_final_state: state.typed_final_state,
     })
 }
 
@@ -415,6 +419,7 @@ fn build_resume_plan(events: &[SessionLogEntry]) -> Result<ResumePlan> {
 fn replay_entries(events: &[SessionLogEntry]) -> SessionReplayState {
     let mut state = SessionReplayState {
         current_fsm_state: None,
+        typed_final_state: SessionLifecycleState::Created,
         observations: 0,
         skill_calls: 0,
         policy_decisions: 0,
@@ -484,7 +489,34 @@ fn replay_entries(events: &[SessionLogEntry]) -> SessionReplayState {
         }
     }
 
+    state.typed_final_state = typed_session_state_from_replay(&state);
     state
+}
+
+fn typed_session_state_from_replay(state: &SessionReplayState) -> SessionLifecycleState {
+    if let Some(current) = &state.current_fsm_state
+        && let Ok(parsed) = current.parse::<SessionLifecycleState>()
+    {
+        return parsed;
+    }
+    if state.policy_denials > 0 && state.errors == 0 {
+        return SessionLifecycleState::WaitingForApproval;
+    }
+    if state.errors > 0 {
+        return SessionLifecycleState::Failed;
+    }
+    if state.final_status.to_ascii_lowercase().contains("replay")
+        || state
+            .last_output
+            .as_deref()
+            .is_some_and(|value| value.to_ascii_lowercase().contains("dry-run"))
+    {
+        return SessionLifecycleState::ReplayOnly;
+    }
+    state
+        .final_status
+        .parse::<SessionLifecycleState>()
+        .unwrap_or(SessionLifecycleState::Recording)
 }
 
 #[cfg(feature = "fuzzing_hooks")]
@@ -1591,6 +1623,55 @@ mod tests {
         assert_eq!(
             replay_a.state.last_operator_decision,
             Some(OperatorDecision::NeedsMoreInfo)
+        );
+    }
+
+    #[test]
+    fn replay_computes_typed_completed_state_from_legacy_completed_transition() {
+        let (_tmp, cfg) = temp_cfg();
+        let context = runtime_context("node-o", "worker");
+        append_event(
+            &cfg,
+            &context,
+            SessionEvent::FsmTransition {
+                machine: "worker_job".to_string(),
+                from_state: Some("executing".to_string()),
+                to_state: "completed".to_string(),
+                reason: "legacy artifact".to_string(),
+            },
+        )
+        .expect("append transition");
+
+        let replay = replay_session(&cfg, &context.session_id).expect("replay");
+        assert_eq!(
+            replay.state.typed_final_state,
+            SessionLifecycleState::Completed
+        );
+        assert_eq!(
+            replay.summary.typed_final_state,
+            SessionLifecycleState::Completed
+        );
+    }
+
+    #[test]
+    fn policy_block_replays_as_waiting_for_approval() {
+        let (_tmp, cfg) = temp_cfg();
+        let context = runtime_context("node-p", "worker");
+        append_event(
+            &cfg,
+            &context,
+            SessionEvent::PolicyDecision {
+                policy: "worker.allow_shell_commands".to_string(),
+                allowed: false,
+                reason: "shell disabled".to_string(),
+            },
+        )
+        .expect("append policy");
+
+        let replay = replay_session(&cfg, &context.session_id).expect("replay");
+        assert_eq!(
+            replay.state.typed_final_state,
+            SessionLifecycleState::WaitingForApproval
         );
     }
 }

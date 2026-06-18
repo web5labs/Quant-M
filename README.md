@@ -23,6 +23,38 @@ It helps answer:
 
 [Quick Start](#quick-start) | [How It Works](#how-it-works) | [Continuity Story](#continuity-story) | [Features](#features) | [Where It Fits](#where-quant-m-fits) | [Release Notes](docs/release/v0.1.0-beta.md)
 
+## Current Capability Status
+
+Quant-M uses explicit capability maturity labels. The Rust inventory is the source of truth:
+
+```bash
+./quantm capabilities
+./quantm capabilities --json
+./quantm capabilities show <capability_id>
+./quantm capabilities audit-docs
+```
+
+Status labels include `shipped`, `guarded`, `dry_run`, `mock`, `experimental`, `design_only`, `external_required`, `unavailable`, and `deprecated`.
+
+Safety rules: Quant-M is local-first; workers propose and the core decides; channels are not execution authority; live trading is denied; provider, network, shell, webhook, and Telegram paths stay gated; detection does not equal permission.
+
+## Runtime State Authority
+
+Markdown explains why. Rust decides state. Replay proves.
+
+Typed FSMs in `src/fsm_core.rs` currently cover worker jobs, session/replay compatibility, policy approval, skill execution, worker proposal review, and Context Guardian continuity state. Shell-backed skills remain blocked unless config and policy allow them; a blocked skill is a safety outcome, not a runtime failure. Context commands still show green/yellow/red for readability, but JSON also includes typed `context_state`, `context_event`, `recommended_action`, `fsm_transition`, `blocked`, and `operator_review_required` fields so new sessions can make repeatable compact, handoff, or review decisions.
+
+Proof commands:
+
+```bash
+quant-m fsm authority
+quant-m fsm authority --json
+cargo test fsm_core
+cargo test skills
+cargo test typed
+cargo test proposal
+```
+
 ## Why This Exists
 
 Quant-M is Git-like history for AI work.
@@ -153,16 +185,18 @@ Keep first-run safe unless you opt in.
 
 ────────────────────────────────────────
 <strong>Step 4: Models</strong>
-Codex can work locally without OpenRouter.
+Quant-M can run with no model selected. Remote and local models are optional.
 
-<strong>Do you want to connect a model provider now?</strong>
+<strong>Do you have an OpenRouter API key?</strong>
 
-   1   ⏭️ Skip for now
-   2   🔑 Use OPENROUTER_API_KEY from my environment
-   3   💾 Paste and save OpenRouter key locally
-   4   📋 Show me the export command
+   1   ⏭️ No, none for now
+   2   🔑 Yes, use OPENROUTER_API_KEY from my environment
+   3   💾 Yes, paste and save a key locally
+   4   📋 Not yet, show me the export command
 
 <strong>Select</strong> [1]:
+
+<strong>Do you have local model(s) available?</strong> [y/N]:
 
 ────────────────────────────────────────
 <strong>Step 5: Developer tools</strong>

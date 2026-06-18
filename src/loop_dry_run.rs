@@ -2,7 +2,8 @@ use crate::config::Config;
 use crate::context_decay::{
     ContextDecayScore, ContextItem, MemoryClass, is_canonical_truth_file, score_context_item,
 };
-use crate::context_status::{self, ContextState, ContextStatusReport};
+use crate::context_status::{self, ContextStatusReport};
+use crate::fsm_core::ContextRecommendedAction;
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -127,7 +128,10 @@ pub fn run_loop_dry_run(cfg: &Config, request: LoopDryRunRequest) -> Result<Loop
     candidates.truncate(request.max_candidates);
     let evidence_index = build_evidence_index(cfg, request.scope)?;
     let context_decay = build_context_decay(cfg, request.scope)?;
-    let execution_readiness = if context_status.context_state == ContextState::Green {
+    let execution_readiness = if context_status.recommended_action
+        == ContextRecommendedAction::Continue
+        && !context_status.blocked
+    {
         ExecutionReadiness::Ready
     } else {
         ExecutionReadiness::Blocked
@@ -610,6 +614,7 @@ mod tests {
     use crate::compaction;
     use crate::config::Config;
     use crate::context_decay::DecayAction;
+    use crate::context_status::ContextState;
     use crate::sessions::{SessionEvent, append_event, runtime_context};
     use crate::truth_files;
     use tempfile::TempDir;

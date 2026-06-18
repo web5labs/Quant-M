@@ -1,5 +1,6 @@
 use crate::adapters::AdapterHub;
 use crate::config::Config;
+use crate::fsm_core::{StateMachine, WorkerJobEvent, WorkerJobFsm, WorkerJobState};
 use crate::logutil;
 use crate::sessions::{self, SessionContext, SessionEvent};
 use crate::shutdown;
@@ -241,6 +242,13 @@ pub async fn run_loop_with_shutdown(
 
                 if retryable && job.retries < cfg.worker.max_retries {
                     job.retries = job.retries.saturating_add(1);
+                    record_worker_transition(
+                        &cfg,
+                        &session,
+                        WorkerJobState::Failed,
+                        WorkerJobEvent::Retry,
+                        &format!("retrying job after {}", failure_code),
+                    );
                     record_session_event(
                         &cfg,
                         &session,
@@ -267,6 +275,13 @@ pub async fn run_loop_with_shutdown(
                         &raw_job,
                         failure_reason,
                     )?;
+                    record_worker_transition(
+                        &cfg,
+                        &session,
+                        WorkerJobState::Failed,
+                        WorkerJobEvent::DeadLetter,
+                        &format!("dead-lettered job after {}", failure_code),
+                    );
                 }
                 logutil::append_log(
                     &cfg.logging,
@@ -434,15 +449,12 @@ async fn execute_job_with_session(
             )),
         },
     );
-    record_session_event(
+    record_worker_transition(
         cfg,
         session,
-        SessionEvent::FsmTransition {
-            machine: "worker_job".to_string(),
-            from_state: Some("queued".to_string()),
-            to_state: "executing".to_string(),
-            reason: format!("starting {}", job_kind_name(&job.kind)),
-        },
+        WorkerJobState::Queued,
+        WorkerJobEvent::Start,
+        &format!("starting {}", job_kind_name(&job.kind)),
     );
 
     let computed = match &job.kind {
@@ -662,15 +674,12 @@ async fn execute_job_with_session(
                     job_id: Some(job.id.clone()),
                 },
             );
-            record_session_event(
+            record_worker_transition(
                 cfg,
                 session,
-                SessionEvent::FsmTransition {
-                    machine: "worker_job".to_string(),
-                    from_state: Some("executing".to_string()),
-                    to_state: "completed".to_string(),
-                    reason: "job completed successfully".to_string(),
-                },
+                WorkerJobState::Executing,
+                WorkerJobEvent::Complete,
+                "job completed successfully",
             );
             WorkerResult {
                 id: job.id.clone(),
@@ -692,15 +701,12 @@ async fn execute_job_with_session(
                     message: message.clone(),
                 },
             );
-            record_session_event(
+            record_worker_transition(
                 cfg,
                 session,
-                SessionEvent::FsmTransition {
-                    machine: "worker_job".to_string(),
-                    from_state: Some("executing".to_string()),
-                    to_state: "failed".to_string(),
-                    reason: "job execution failed".to_string(),
-                },
+                WorkerJobState::Executing,
+                WorkerJobEvent::Fail,
+                "job execution failed",
             );
             WorkerResult {
                 id: job.id.clone(),
@@ -906,6 +912,36 @@ fn record_session_event(cfg: &Config, session: &SessionContext, event: SessionEv
     }
 }
 
+fn record_worker_transition(
+    cfg: &Config,
+    session: &SessionContext,
+    from_state: WorkerJobState,
+    event: WorkerJobEvent,
+    reason: &str,
+) {
+    let fsm = WorkerJobFsm;
+    match fsm.transition(&from_state, &event) {
+        Ok(to_state) => record_session_event(
+            cfg,
+            session,
+            SessionEvent::FsmTransition {
+                machine: fsm.machine_id().to_string(),
+                from_state: Some(from_state.to_string()),
+                to_state: to_state.to_string(),
+                reason: reason.to_string(),
+            },
+        ),
+        Err(err) => record_session_event(
+            cfg,
+            session,
+            SessionEvent::Error {
+                code: Some("worker_job_invalid_fsm_transition".to_string()),
+                message: err.to_string(),
+            },
+        ),
+    }
+}
+
 fn session_error_result(
     cfg: &Config,
     session: &SessionContext,
@@ -924,15 +960,12 @@ fn session_error_result(
             message: message.clone(),
         },
     );
-    record_session_event(
+    record_worker_transition(
         cfg,
         session,
-        SessionEvent::FsmTransition {
-            machine: "worker_job".to_string(),
-            from_state: Some("executing".to_string()),
-            to_state: "failed".to_string(),
-            reason: "job execution failed".to_string(),
-        },
+        WorkerJobState::Executing,
+        WorkerJobEvent::Fail,
+        "job execution failed",
     );
     WorkerResult {
         id: job.id.clone(),
@@ -1183,7 +1216,7 @@ mod tests {
 
     fn test_config(tmp: &TempDir) -> Config {
         let workspace = tmp.path().join("workspace");
-        Config {
+        let mut cfg = Config {
             node_id: "test-node".to_string(),
             worker: crate::config::WorkerConfig {
                 inbox_path: workspace.join("queue/inbox.ndjson"),
@@ -1208,7 +1241,10 @@ mod tests {
                 keep_files: 3,
             },
             ..Config::default()
-        }
+        };
+        cfg.workspace_dir = workspace.clone();
+        cfg.runtime.session_dir = workspace.join("state/sessions");
+        cfg
     }
 
     #[test]
@@ -1226,6 +1262,31 @@ mod tests {
         let result = execute_task_spec("echo:hello worker", &cfg).await;
         assert_eq!(result.status, "ok");
         assert!(result.output.contains("hello worker"));
+    }
+
+    #[tokio::test]
+    async fn worker_execution_emits_typed_succeeded_transition() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp);
+        let result = execute_task_spec("echo:typed fsm", &cfg).await;
+        assert_eq!(result.status, "ok");
+
+        let sessions = sessions::list_sessions(&cfg).expect("sessions");
+        assert_eq!(sessions.len(), 1);
+        let detail = sessions::show_session(&cfg, &sessions[0].session_id).expect("detail");
+        assert!(detail.events.iter().any(|entry| {
+            matches!(
+                &entry.event,
+                SessionEvent::FsmTransition {
+                    machine,
+                    from_state: Some(from_state),
+                    to_state,
+                    ..
+                } if machine == "worker_job"
+                    && from_state == "executing"
+                    && to_state == "succeeded"
+            )
+        }));
     }
 
     #[tokio::test]

@@ -7,6 +7,24 @@ Quant-M has two useful layers:
 
 The repeatable skill pattern is to turn every important code capability into a small markdown counterpart that explains intent, inputs, outputs, guardrails, evidence, and the next safe action. The markdown base should not replace the code. It should make the code legible to future agents and operators.
 
+## Capability Maturity
+
+Skill docs must not overclaim runtime behavior. Use the same maturity labels as `quant-m capabilities`. `SKILL.md` discovery is separate from runnable shell behavior: `skills run` is `guarded` unless `skills.allow_shell_commands=true`, and detection does not equal permission.
+
+## Runtime Skill FSM
+
+Markdown explains skill authoring. Rust controls skill execution lifecycle.
+
+Runnable local skills pass through `declared -> loaded -> policy_checked -> ready|blocked -> running -> succeeded|failed`. Shell-backed skills also pass through `policy_approval` before a command can start. If shell execution is disabled, Quant-M records `blocked`, not `failed`.
+
+Compatibility note: typed `skill_execution` and `policy_approval` transition evidence is machine authority. `SessionEvent::SkillCall.status` remains for display and older artifact compatibility.
+
+Proof command:
+
+```bash
+cargo test skills
+```
+
 ## Markdown Base Map
 
 | Code or runtime area | Markdown counterpart | Purpose |

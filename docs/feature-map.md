@@ -1,5 +1,53 @@
 # Quant-M Feature Map (Diagram -> Implementation)
 
+## Feature Truth Map
+
+This file is a truth map, not a marketing page. The machine-readable inventory lives in Rust and is available through:
+
+```bash
+quant-m capabilities
+quant-m capabilities --json
+quant-m capabilities show <capability_id>
+quant-m capabilities audit-docs
+```
+
+Capability status labels are exact enum-like strings:
+
+- `shipped`: implemented, documented, tested, and usable locally without hidden provider/network assumptions
+- `guarded`: implemented but blocked unless explicit config, policy, or operator approval enables it
+- `dry_run`: implemented as a non-side-effecting or simulated path only
+- `mock`: intentionally fake/demo behavior for proof, tests, examples, or registry shape
+- `experimental`: present but not stable enough to promise as a public contract
+- `design_only`: described as a pattern or future direction, not a usable runtime feature
+- `external_required`: depends on local external tools or provider setup
+- `unavailable`: not available in this repo/machine/config posture
+- `deprecated`: retained but no longer recommended
+
+Runtime state authority follows the same rule: Markdown explains intent and examples; Rust decides allowed states, transitions, denial behavior, and replay-compatible evidence. The current authority summary is inspectable with `quant-m fsm authority` or `quant-m fsm authority --json`.
+
+Current major capability truth:
+
+| Feature group | status | command surface | created artifacts | proof command | safety notes | current limitations |
+| --- | --- | --- | --- | --- | --- | --- |
+| Onboarding/setup | `shipped` | `quant-m onboard`, `setup`, `init`, `settings` | `quant-m.toml`, `workspace/` | `quant-m settings` | project-local config; provider setup is not permission | does not install providers or local models |
+| Local shell/demo/status | `shipped` plus `experimental` TUI | `agent`, `shell`, `demo`, `doctor`, `status`, `tui` | sessions, compact/context/cost artifacts for demo | `quant-m demo` | local proof path avoids provider calls | TUI remains experimental |
+| Memory | `shipped` | `memory add/search/list` | `workspace/MEMORY.md`, `workspace/memory/brain.db` | `cargo test memory` | local hashed signal; no embedding provider | markdown memory remains human-authored |
+| Sessions/replay | `shipped` | `session *`, `replay` | `workspace/state/sessions/` | `quant-m session list` after demo | replay is side-effect free and computes typed final lifecycle state | legacy final-status strings remain for compatibility |
+| Compact/context/boil/loop | `shipped`, `experimental`, `dry_run` | `compact`, `context-status`, `context guard`, `boil`, `loop --dry-run` | compact packets, guardian handoffs, loop reports, typed context FSM transition evidence | `quant-m context guard --json` | does not call providers or execute commands; typed guardian actions separate continue, compact, refresh, review, handoff, and block outcomes | boil is experimental; loop is dry-run only |
+| Cost ledger | `shipped` | `cost summary` | cost ledger records | `quant-m cost summary` | local accounting only | no live billing reconciliation |
+| Consensus/strategist/question | `dry_run` / `experimental` | `consensus --dry-run`, `strategist --dry-run`, `question ask` | sessions, shared state, proposals, reports | `cargo test consensus strategist question` | dry-run paths are not live execution | question utility is still experimental |
+| Worker runtime | `guarded` | `worker submit/once/run` | queue, outbox, dead-letter, worker state, typed session transition evidence | `cargo test worker` | shell/HTTP lanes gated by config; invalid worker FSM transitions fail | mutating worker execution remains single-workspace |
+| Worker proposals/cluster boundary | `shipped` | `worker proposal submit/list` | proposal JSON and index | `cargo test worker_proposals cluster_boundary` | workers propose; core decides; invalid proposal review jumps fail | proposal acceptance workflow is intentionally narrow |
+| Adapters/channels | `shipped`, `guarded`, `unavailable` | `adapter send`, `channel list`, `telegram run` | logs/session events | `quant-m channel list --json` | channels are not execution authority | Telegram/webhook require config/secrets |
+| LLM/providers/tools | `external_required` / `guarded` / `unavailable` | `provider list/validate`, `tool list/scan/validate`, `llm ask` | config and diagnostics only | `quant-m provider list --json` | detection does not equal permission | no provider/network calls during capability detection |
+| Local filesystem skills | `guarded` | `skills list/show/run` | `workspace/skills/`, typed lifecycle session events | `cargo test skills` | shell-backed skills require typed policy approval and `skills.allow_shell_commands=true`; blocked shell skills are safety outcomes | declaration/detection is not execution permission |
+| Registry-backed governance | `shipped` | `domain`, `skill`, `policy`, `workflow`, `fsm`, `scheduler`, `desk` | registry JSON output and FSM authority summary | `quant-m fsm authority --json` | metadata-first; policy evaluated before unsafe paths | built-ins are mock/minimal; workflow cursor is not a typed runtime FSM |
+| Shared/domain state | `guarded` | `state *` | SQLite/redb state, handoffs, paper records | `quant-m state init && quant-m state summary` | paper/state modeling only; no live trading | domain-specific payloads require typed normalization |
+| Cockpit planning | `experimental` | `cockpit plan` | JSON plan only | `cargo test terminal_cockpit` | previews only; does not launch terminal panes | no live cockpit adapter |
+| Truth/project files | `shipped` | `init-truth` | local truth files | `quant-m init-truth --json` | creates doctrine files only | should stay small and generated where possible |
+| Mock research/trading packs | `mock` | `domain show`, `run workflow`, `policy evaluate-skill` | sessions/shared state for mock workflows | `quant-m policy evaluate-skill mock-trading.prepare-paper-review` | mock trading is paper-only; live trading denied | no broker/exchange integration |
+| Repeatable project skills | `design_only` | docs only unless installed as local skills | markdown guidance | none | pattern guidance, not runtime authority | convert to local skills only when needed |
+
 This maps the "What makes OpenClaw powerful" diagram to the Quant-M minimal implementation.
 
 ## 1) Memory System

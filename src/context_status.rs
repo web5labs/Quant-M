@@ -1,5 +1,9 @@
 use crate::compaction::CompactPacket;
 use crate::config::Config;
+use crate::fsm_core::{
+    ContextGuardianEvent, ContextGuardianFsm, ContextGuardianState, ContextRecommendedAction,
+    TransitionRecord, transition_record,
+};
 use crate::sessions::{self, SessionEvent, SessionId};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -23,7 +27,14 @@ pub enum ContextState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextStatusReport {
     pub context_state: ContextState,
+    pub guardian_state: ContextGuardianState,
+    pub context_event: Option<ContextGuardianEvent>,
+    pub recommended_action: ContextRecommendedAction,
+    pub fsm_transition: Option<TransitionRecord>,
+    pub blocked: bool,
+    pub operator_review_required: bool,
     pub latest_session_id: Option<String>,
+    pub latest_event_count: usize,
     pub latest_compact_packet_path: Option<PathBuf>,
     pub compact_packet_present: bool,
     pub compact_packet_stale: bool,
@@ -44,7 +55,14 @@ pub fn context_status(cfg: &Config) -> Result<ContextStatusReport> {
     let Some(session_summary) = latest_session else {
         return Ok(ContextStatusReport {
             context_state: ContextState::Red,
+            guardian_state: ContextGuardianState::NoSession,
+            context_event: None,
+            recommended_action: ContextRecommendedAction::Observe,
+            fsm_transition: None,
+            blocked: false,
+            operator_review_required: false,
             latest_session_id: None,
+            latest_event_count: 0,
             latest_compact_packet_path: None,
             compact_packet_present: false,
             compact_packet_stale: false,
@@ -66,20 +84,42 @@ pub fn context_status(cfg: &Config) -> Result<ContextStatusReport> {
     if !compact_path.exists() {
         let session_detail = sessions::show_session(cfg, &session_id)?;
         let execution_session = is_execution_session(&session_detail.events);
+        let policy_block_present = has_policy_block_event(&session_detail.events);
+        let validation_evidence_present = has_validation_event(&session_detail.events);
+        let changed_file_evidence_present = has_changed_file_event(&session_detail.events);
+        let shippable_definition_present = has_shippable_event(&session_detail.events);
         let mut missing = vec!["No compact packet found.".to_string()];
-        if execution_session && !has_policy_block_event(&session_detail.events) {
+        if execution_session && !policy_block_present {
             missing.push("No policy block evidence found for execution session.".to_string());
         }
+        let context_eval = evaluate_context_guardian(ContextGuardianEvaluationInput {
+            display_state: &ContextState::Red,
+            event_count: session_summary.event_count,
+            compact_present: false,
+            compact_stale: false,
+            policy_block_present,
+            validation_evidence_present,
+            changed_file_evidence_present,
+            shippable_definition_present,
+            evidence_ref: compact_path.to_string_lossy().to_string(),
+        });
         return Ok(ContextStatusReport {
             context_state: ContextState::Red,
+            guardian_state: context_eval.state,
+            context_event: Some(context_eval.event),
+            recommended_action: context_eval.action,
+            fsm_transition: Some(context_eval.transition),
+            blocked: context_eval.blocked,
+            operator_review_required: context_eval.operator_review_required,
             latest_session_id,
+            latest_event_count: session_summary.event_count,
             latest_compact_packet_path: None,
             compact_packet_present: false,
             compact_packet_stale: false,
-            policy_block_present: has_policy_block_event(&session_detail.events),
-            validation_evidence_present: has_validation_event(&session_detail.events),
-            changed_file_evidence_present: has_changed_file_event(&session_detail.events),
-            shippable_definition_present: has_shippable_event(&session_detail.events),
+            policy_block_present,
+            validation_evidence_present,
+            changed_file_evidence_present,
+            shippable_definition_present,
             missing_required_context: with_project_file_missing(cfg, missing),
             recommended_next_action: format!("Run quant-m compact {}", session_id),
         });
@@ -135,10 +175,28 @@ pub fn context_status(cfg: &Config) -> Result<ContextStatusReport> {
         validation_evidence_present,
         shippable_definition_present,
     );
+    let context_eval = evaluate_context_guardian(ContextGuardianEvaluationInput {
+        display_state: &context_state,
+        event_count: session_summary.event_count,
+        compact_present: true,
+        compact_stale: stale,
+        policy_block_present,
+        validation_evidence_present,
+        changed_file_evidence_present,
+        shippable_definition_present,
+        evidence_ref: compact_path.to_string_lossy().to_string(),
+    });
 
     Ok(ContextStatusReport {
         context_state,
+        guardian_state: context_eval.state,
+        context_event: Some(context_eval.event),
+        recommended_action: context_eval.action,
+        fsm_transition: Some(context_eval.transition),
+        blocked: context_eval.blocked,
+        operator_review_required: context_eval.operator_review_required,
         latest_session_id,
+        latest_event_count: session_summary.event_count,
         latest_compact_packet_path: Some(compact_path),
         compact_packet_present: true,
         compact_packet_stale: stale,
@@ -151,11 +209,115 @@ pub fn context_status(cfg: &Config) -> Result<ContextStatusReport> {
     })
 }
 
+struct ContextGuardianEvaluation {
+    state: ContextGuardianState,
+    event: ContextGuardianEvent,
+    action: ContextRecommendedAction,
+    transition: TransitionRecord,
+    blocked: bool,
+    operator_review_required: bool,
+}
+
+struct ContextGuardianEvaluationInput<'a> {
+    display_state: &'a ContextState,
+    event_count: usize,
+    compact_present: bool,
+    compact_stale: bool,
+    policy_block_present: bool,
+    validation_evidence_present: bool,
+    changed_file_evidence_present: bool,
+    shippable_definition_present: bool,
+    evidence_ref: String,
+}
+
+fn evaluate_context_guardian(
+    input: ContextGuardianEvaluationInput<'_>,
+) -> ContextGuardianEvaluation {
+    let (event, action) = if !input.compact_present {
+        (
+            ContextGuardianEvent::ContextMeasured,
+            ContextRecommendedAction::Compact,
+        )
+    } else if input.compact_stale {
+        (
+            ContextGuardianEvent::CompactExpired,
+            ContextRecommendedAction::RefreshCompact,
+        )
+    } else if matches!(input.display_state, ContextState::Red) {
+        (
+            ContextGuardianEvent::Block,
+            ContextRecommendedAction::BlockContinuation,
+        )
+    } else if !input.policy_block_present
+        || !input.validation_evidence_present
+        || !input.changed_file_evidence_present
+        || !input.shippable_definition_present
+    {
+        (
+            ContextGuardianEvent::ReviewRequested,
+            ContextRecommendedAction::RequestOperatorReview,
+        )
+    } else if input.event_count >= 40 {
+        (
+            ContextGuardianEvent::NearBudgetLimit,
+            ContextRecommendedAction::Compact,
+        )
+    } else {
+        (
+            ContextGuardianEvent::CompactCreated,
+            ContextRecommendedAction::Continue,
+        )
+    };
+
+    let from_state = match event {
+        ContextGuardianEvent::CompactExpired => ContextGuardianState::CompactFresh,
+        _ => ContextGuardianState::Observing,
+    };
+    let transition = transition_record(
+        &ContextGuardianFsm,
+        &from_state,
+        &event,
+        Utc::now().to_rfc3339(),
+        Some(input.evidence_ref),
+    );
+    let state = transition
+        .next_state
+        .as_deref()
+        .and_then(|value| match value {
+            "healthy" => Some(ContextGuardianState::Healthy),
+            "near_limit" => Some(ContextGuardianState::NearLimit),
+            "needs_compact" => Some(ContextGuardianState::NeedsCompact),
+            "compact_fresh" => Some(ContextGuardianState::CompactFresh),
+            "compact_stale" => Some(ContextGuardianState::CompactStale),
+            "handoff_ready" => Some(ContextGuardianState::HandoffReady),
+            "operator_review_required" => Some(ContextGuardianState::OperatorReviewRequired),
+            "blocked" => Some(ContextGuardianState::Blocked),
+            _ => None,
+        })
+        .unwrap_or(ContextGuardianState::Blocked);
+
+    ContextGuardianEvaluation {
+        state,
+        event,
+        action,
+        transition,
+        blocked: state == ContextGuardianState::Blocked
+            || action == ContextRecommendedAction::BlockContinuation,
+        operator_review_required: state == ContextGuardianState::OperatorReviewRequired
+            || action == ContextRecommendedAction::RequestOperatorReview,
+    }
+}
+
 pub fn render_context_status(report: &ContextStatusReport) -> String {
     format!(
-        "context_state: {}\nlatest_session_id: {}\ncompact_packet_present: {}\ncompact_packet_stale: {}\npolicy_block_present: {}\nvalidation_evidence_present: {}\nchanged_file_evidence_present: {}\nshippable_definition_present: {}\nrecommended_next_action: {}\nmissing_required_context:\n{}\n",
+        "context_state: {}\nguardian_state: {}\nrecommended_action: {}\nblocked: {}\noperator_review_required: {}\nlatest_session_id: {}\nlatest_event_count: {}\ncompact_packet_present: {}\ncompact_packet_stale: {}\npolicy_block_present: {}\nvalidation_evidence_present: {}\nchanged_file_evidence_present: {}\nshippable_definition_present: {}\nrecommended_next_action: {}\nmissing_required_context:\n{}\n",
         context_state_label(&report.context_state),
+        report.guardian_state,
+        report.recommended_action,
+        report.blocked,
+        report.operator_review_required,
         report.latest_session_id.as_deref().unwrap_or("none"),
+        report.latest_event_count,
         report.compact_packet_present,
         report.compact_packet_stale,
         report.policy_block_present,
@@ -474,6 +636,12 @@ mod tests {
         let report = context_status(&cfg).expect("status");
 
         assert_eq!(report.context_state, ContextState::Green);
+        assert_eq!(report.guardian_state, ContextGuardianState::CompactFresh);
+        assert_eq!(
+            report.recommended_action,
+            ContextRecommendedAction::Continue
+        );
+        assert!(!report.blocked);
         assert!(report.compact_packet_present);
         assert!(report.policy_block_present);
         assert!(report.validation_evidence_present);
@@ -491,6 +659,15 @@ mod tests {
         let report = context_status(&cfg).expect("status");
 
         assert_eq!(report.context_state, ContextState::Yellow);
+        assert_eq!(
+            report.guardian_state,
+            ContextGuardianState::OperatorReviewRequired
+        );
+        assert_eq!(
+            report.recommended_action,
+            ContextRecommendedAction::RequestOperatorReview
+        );
+        assert!(report.operator_review_required);
         assert!(report.compact_packet_present);
         assert!(!report.validation_evidence_present);
     }
@@ -505,6 +682,8 @@ mod tests {
         let report = context_status(&cfg).expect("status");
 
         assert_eq!(report.context_state, ContextState::Red);
+        assert_eq!(report.guardian_state, ContextGuardianState::NeedsCompact);
+        assert_eq!(report.recommended_action, ContextRecommendedAction::Compact);
         assert!(!report.compact_packet_present);
         assert!(report.recommended_next_action.contains("quant-m compact"));
     }
@@ -541,6 +720,12 @@ mod tests {
         let report = context_status(&cfg).expect("status");
 
         assert_eq!(report.context_state, ContextState::Red);
+        assert_eq!(report.guardian_state, ContextGuardianState::Blocked);
+        assert_eq!(
+            report.recommended_action,
+            ContextRecommendedAction::BlockContinuation
+        );
+        assert!(report.blocked);
         assert!(!report.policy_block_present);
     }
 
@@ -551,6 +736,8 @@ mod tests {
         let report = context_status(&cfg).expect("status");
 
         assert_eq!(report.context_state, ContextState::Red);
+        assert_eq!(report.guardian_state, ContextGuardianState::NoSession);
+        assert_eq!(report.recommended_action, ContextRecommendedAction::Observe);
         assert!(report.latest_session_id.is_none());
         assert!(!report.compact_packet_present);
     }
@@ -596,6 +783,32 @@ mod tests {
         let rendered = render_context_status(&report);
 
         assert!(rendered.contains("context_state"));
+        assert!(rendered.contains("guardian_state"));
+        assert!(rendered.contains("recommended_action"));
         assert!(rendered.contains("recommended_next_action"));
+    }
+
+    #[test]
+    fn stale_compact_maps_to_refresh_compact_action() {
+        let (_tmp, cfg) = temp_cfg();
+        write_truth_files(&cfg);
+        let context = session_with_all_evidence(&cfg);
+        compaction::compact_session(&cfg, &context.session_id).expect("compact");
+        append_event(
+            &cfg,
+            &context,
+            SessionEvent::AuditNote {
+                note: "new post-compact context".to_string(),
+            },
+        )
+        .expect("append stale marker");
+
+        let report = context_status(&cfg).expect("status");
+
+        assert_eq!(report.guardian_state, ContextGuardianState::CompactStale);
+        assert_eq!(
+            report.recommended_action,
+            ContextRecommendedAction::RefreshCompact
+        );
     }
 }

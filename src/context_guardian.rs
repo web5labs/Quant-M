@@ -1,6 +1,10 @@
 use crate::compaction;
 use crate::config::Config;
 use crate::context_status::{self, ContextState};
+use crate::fsm_core::{
+    ContextGuardianEvent, ContextGuardianFsm, ContextGuardianState, ContextRecommendedAction,
+    TransitionRecord, transition_record,
+};
 use crate::{logutil, sessions};
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -30,6 +34,12 @@ pub struct ContextGuardianReport {
     pub enabled: bool,
     pub checked_at: String,
     pub context_state: Option<ContextState>,
+    pub guardian_state: Option<ContextGuardianState>,
+    pub context_event: Option<ContextGuardianEvent>,
+    pub recommended_action: Option<ContextRecommendedAction>,
+    pub fsm_transition: Option<TransitionRecord>,
+    pub blocked: bool,
+    pub operator_review_required: bool,
     pub latest_session_id: Option<String>,
     pub latest_event_count: usize,
     pub risk_score: u8,
@@ -113,6 +123,12 @@ pub fn tick_with_options(
             enabled: false,
             checked_at: Utc::now().to_rfc3339(),
             context_state: None,
+            guardian_state: None,
+            context_event: None,
+            recommended_action: None,
+            fsm_transition: None,
+            blocked: false,
+            operator_review_required: false,
             latest_session_id: None,
             latest_event_count: 0,
             risk_score: 0,
@@ -133,6 +149,12 @@ pub fn tick_with_options(
             enabled: true,
             checked_at: Utc::now().to_rfc3339(),
             context_state: Some(status.context_state),
+            guardian_state: Some(status.guardian_state),
+            context_event: status.context_event,
+            recommended_action: Some(status.recommended_action),
+            fsm_transition: status.fsm_transition,
+            blocked: status.blocked,
+            operator_review_required: status.operator_review_required,
             latest_session_id: None,
             latest_event_count: 0,
             risk_score: 10,
@@ -229,11 +251,36 @@ pub fn tick_with_options(
     } else {
         status.recommended_next_action.clone()
     };
+    let (guardian_state, recommended_action, fsm_transition) = if let Some(path) = &handoff_path {
+        (
+            ContextGuardianState::HandoffReady,
+            ContextRecommendedAction::CreateHandoff,
+            Some(transition_record(
+                &ContextGuardianFsm,
+                &ContextGuardianState::CompactFresh,
+                &ContextGuardianEvent::HandoffCreated,
+                Utc::now().to_rfc3339(),
+                Some(path.display().to_string()),
+            )),
+        )
+    } else {
+        (
+            status.guardian_state,
+            status.recommended_action,
+            status.fsm_transition,
+        )
+    };
 
     Ok(ContextGuardianReport {
         enabled: true,
         checked_at: Utc::now().to_rfc3339(),
         context_state: Some(status.context_state),
+        guardian_state: Some(guardian_state),
+        context_event: status.context_event,
+        recommended_action: Some(recommended_action),
+        fsm_transition,
+        blocked: status.blocked,
+        operator_review_required: status.operator_review_required,
         latest_session_id: Some(summary.session_id.to_string()),
         latest_event_count: summary.event_count,
         risk_score,
@@ -249,7 +296,7 @@ pub fn tick_with_options(
 
 pub fn render_guardian_report(report: &ContextGuardianReport) -> String {
     format!(
-        "context_guardian: {}\nchecked_at: {}\ncontext_state: {}\nlatest_session_id: {}\nlatest_event_count: {}\nrisk_score: {}\naction: {:?}\ncompacted: {}\ncompact_packet_path: {}\nmetadata_path: {}\nguardian_action_id: {}\nhandoff_path: {}\nrecommended_next_action: {}\n",
+        "context_guardian: {}\nchecked_at: {}\ncontext_state: {}\nguardian_state: {}\nrecommended_action: {}\nblocked: {}\noperator_review_required: {}\nlatest_session_id: {}\nlatest_event_count: {}\nrisk_score: {}\naction: {:?}\ncompacted: {}\ncompact_packet_path: {}\nmetadata_path: {}\nguardian_action_id: {}\nhandoff_path: {}\nrecommended_next_action: {}\n",
         if report.enabled {
             "enabled"
         } else {
@@ -261,6 +308,16 @@ pub fn render_guardian_report(report: &ContextGuardianReport) -> String {
             .as_ref()
             .map(context_state_label)
             .unwrap_or("unknown"),
+        report
+            .guardian_state
+            .map(|state| state.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        report
+            .recommended_action
+            .map(|action| action.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        report.blocked,
+        report.operator_review_required,
         report.latest_session_id.as_deref().unwrap_or("none"),
         report.latest_event_count,
         report.risk_score,
@@ -449,6 +506,9 @@ Continue from this Quant-M continuity handoff. Trust the session evidence and co
 - session_id: {session_id}\n\
 - event_count: {event_count}\n\
 - context_state: {}\n\
+- guardian_state: {}\n\
+- recommended_action: {}\n\
+- blocked: {}\n\
 - risk_score: {risk_score}\n\
 - compact_packet: {compact_path}\n\n\
 ## Missing Or Risky Context\n\n{missing}\n\n\
@@ -457,6 +517,9 @@ Continue from this Quant-M continuity handoff. Trust the session evidence and co
 - Do not branch again from this handoff until new session evidence is added.\n\
 - Do not claim validation success unless the compact packet lists validation evidence.\n",
         context_state_label(&status.context_state),
+        status.guardian_state,
+        status.recommended_action,
+        status.blocked,
         status.recommended_next_action,
     );
     fs::write(&path, body).with_context(|| format!("failed to write {}", path.display()))?;
@@ -561,6 +624,21 @@ mod tests {
 
         assert!(report.compacted);
         assert_eq!(report.action, GuardianAction::HandoffReady);
+        assert_eq!(
+            report.guardian_state,
+            Some(ContextGuardianState::HandoffReady)
+        );
+        assert_eq!(
+            report.recommended_action,
+            Some(ContextRecommendedAction::CreateHandoff)
+        );
+        assert_eq!(
+            report
+                .fsm_transition
+                .as_ref()
+                .and_then(|transition| transition.next_state.as_deref()),
+            Some("handoff_ready")
+        );
         assert!(report.handoff_path.as_ref().expect("handoff").exists());
         assert!(report.metadata_path.as_ref().expect("metadata").exists());
         assert!(report.guardian_action_id.is_some());

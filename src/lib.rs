@@ -1,6 +1,8 @@
 pub mod adapters;
 pub mod agent_shell;
+pub mod boil;
 pub mod bootstrap;
+pub mod capabilities;
 pub mod channels;
 pub mod cluster_boundary;
 pub mod compaction;
@@ -17,6 +19,8 @@ pub mod desk_registry;
 pub mod domain;
 pub mod execution_runtime;
 pub mod forex;
+pub mod fsm_authority;
+pub mod fsm_core;
 pub mod fsm_registry;
 pub mod heartbeat;
 pub mod llm;

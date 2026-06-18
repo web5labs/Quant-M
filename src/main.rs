@@ -1,6 +1,8 @@
 mod adapters;
 mod agent_shell;
+mod boil;
 mod bootstrap;
+mod capabilities;
 mod channels;
 mod cluster_boundary;
 mod compaction;
@@ -17,6 +19,8 @@ mod desk_registry;
 mod domain;
 mod execution_runtime;
 mod forex;
+mod fsm_authority;
+mod fsm_core;
 mod fsm_registry;
 mod heartbeat;
 mod llm;
@@ -72,6 +76,7 @@ const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
 const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
 const ANSI_YELLOW: &str = "\x1b[38;2;245;200;95m";
 const ANSI_MAGENTA: &str = "\x1b[38;2;210;140;255m";
+const ANSI_RED: &str = "\x1b[38;2;255;95;95m";
 
 #[derive(Parser, Debug)]
 #[command(name = "quant-m")]
@@ -166,6 +171,16 @@ enum Commands {
     Settings {
         #[arg(long)]
         json: bool,
+    },
+    Capabilities {
+        #[command(subcommand)]
+        command: Option<CapabilitiesCommand>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
     },
     #[command(visible_alias = "shell")]
     Agent,
@@ -294,6 +309,17 @@ enum Commands {
         #[command(subcommand)]
         command: CostCommand,
     },
+    /// Measure raw-vs-boiled continuation context cost for a session.
+    Boil {
+        #[arg(required = true, num_args = 1..)]
+        args: Vec<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = "rough-default")]
+        pricing_profile: String,
+    },
     InitTruth {
         #[arg(long)]
         force: bool,
@@ -409,6 +435,9 @@ enum ConfigCommand {
         provider: String,
         model: String,
     },
+    ClearModel {
+        provider: Option<String>,
+    },
     SetChannel {
         channel: String,
         value: String,
@@ -443,6 +472,19 @@ enum ToolCommand {
     },
     Validate {
         tool: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CapabilitiesCommand {
+    Show {
+        capability_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    AuditDocs {
         #[arg(long)]
         json: bool,
     },
@@ -525,6 +567,10 @@ enum WorkflowCommand {
 
 #[derive(Subcommand, Debug)]
 enum FsmCommand {
+    Authority {
+        #[arg(long)]
+        json: bool,
+    },
     List {
         #[arg(long)]
         domain: Option<String>,
@@ -777,11 +823,18 @@ struct ToolListItem {
 
 #[derive(Debug, Clone, Serialize)]
 struct SettingsReport {
+    config: PathBuf,
+    workspace: PathBuf,
+    session_dir: PathBuf,
     multi_model_enabled: bool,
     search_enabled: bool,
     browser_harness_enabled: bool,
     external_network_enabled: bool,
     context_guardian_enabled: bool,
+    preferred_local_model: Option<config::ModelPreference>,
+    preferred_remote_model: Option<config::ModelPreference>,
+    preferred_openrouter_model: Option<String>,
+    providers: Vec<ProviderListItem>,
     enabled_tools: Vec<String>,
     detected_tools: Vec<String>,
 }
@@ -844,6 +897,12 @@ async fn main() -> Result<()> {
         | Commands::Provider { .. }
         | Commands::Tool { .. }
         | Commands::Settings { .. } => unreachable!("onboarding commands are handled earlier"),
+        Commands::Capabilities {
+            command,
+            json,
+            category,
+            status,
+        } => handle_capabilities_command(&cfg, command, json, category, status)?,
         Commands::Agent => {
             agent_shell::run(&cfg, &config_path)?;
         }
@@ -1109,24 +1168,31 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Fsm { command } => {
-            let registry = fsm_registry::builtin_registry()?;
-            match command {
-                FsmCommand::List { domain } => {
-                    let domain = domain
-                        .as_deref()
-                        .map(str::parse::<sessions::DomainId>)
-                        .transpose()?;
-                    let listed = registry.list(domain.as_ref());
-                    println!("{}", serde_json::to_string_pretty(&listed)?);
-                }
-                FsmCommand::Show { fsm_id } => {
-                    let fsm_id = fsm_id.parse::<fsm_registry::FsmId>()?;
-                    let detail = registry.show(&fsm_id)?;
-                    println!("{}", serde_json::to_string_pretty(&detail)?);
+        Commands::Fsm { command } => match command {
+            FsmCommand::Authority { json } => {
+                let records = fsm_authority::authority_records();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&records)?);
+                } else {
+                    print!("{}", fsm_authority::render_authority_records(&records));
                 }
             }
-        }
+            FsmCommand::List { domain } => {
+                let domain = domain
+                    .as_deref()
+                    .map(str::parse::<sessions::DomainId>)
+                    .transpose()?;
+                let registry = fsm_registry::builtin_registry()?;
+                let listed = registry.list(domain.as_ref());
+                println!("{}", serde_json::to_string_pretty(&listed)?);
+            }
+            FsmCommand::Show { fsm_id } => {
+                let fsm_id = fsm_id.parse::<fsm_registry::FsmId>()?;
+                let registry = fsm_registry::builtin_registry()?;
+                let detail = registry.show(&fsm_id)?;
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            }
+        },
         Commands::Scheduler { command } => {
             let registry = scheduler_registry::builtin_registry()?;
             match command {
@@ -1408,6 +1474,12 @@ async fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Boil {
+            args,
+            json,
+            dry_run,
+            pricing_profile,
+        } => run_boil_cli(&cfg, args, json, dry_run, pricing_profile)?,
         Commands::InitTruth { force, json } => {
             let report = truth_files::init_truth_files(&cfg, force)?;
             if json {
@@ -2013,14 +2085,18 @@ fn run_interactive_setup(
         }
     }
 
-    print_onboarding_section("4", "Models", "Codex can work locally without OpenRouter.");
+    print_onboarding_section(
+        "4",
+        "Models",
+        "Quant-M can run with no model selected. Remote and local models are optional.",
+    );
     let model_provider = prompt_numbered_choice(
-        "Do you want to connect a model provider now?",
+        "Do you have an OpenRouter API key?",
         &[
-            ("⏭️ Skip for now", "skip"),
-            ("🔑 Use OPENROUTER_API_KEY from my environment", "env"),
-            ("💾 Paste and save OpenRouter key locally", "save"),
-            ("📋 Show me the export command", "export"),
+            ("⏭️ No, none for now", "skip"),
+            ("🔑 Yes, use OPENROUTER_API_KEY from my environment", "env"),
+            ("💾 Yes, paste and save a key locally", "save"),
+            ("📋 Not yet, show me the export command", "export"),
         ],
         1,
     )?;
@@ -2045,6 +2121,30 @@ fn run_interactive_setup(
         _ => unreachable!("choice is constrained"),
     }
 
+    let has_local_models = prompt_yes_no("Do you have local model(s) available?", false)?;
+    if has_local_models {
+        println!(
+            "{}Local models stay on this machine. Quant-M records the provider/model names only; it does not start a model server.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+        let local_provider = prompt_choice(
+            "Local model provider [ollama/lmstudio]",
+            "ollama",
+            &["ollama", "lmstudio"],
+        )?;
+        let local_models = prompt_local_models(&local_provider)?;
+        if let Some(first) = local_models.first() {
+            args.local_model_provider = Some(local_provider);
+            args.local_model = Some(first.clone());
+            args.local_models = local_models;
+        }
+    } else {
+        println!(
+            "{}No local model selected. You can add one later with `quant-m setup --local-model-provider ollama --local-model <name>` or clear stale choices with `quant-m config clear-model`.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+    }
+
     if args.advanced {
         println!();
         println!(
@@ -2053,20 +2153,6 @@ fn run_interactive_setup(
         );
         if !matches!(model_provider.as_str(), "skip") && args.openrouter_models.is_empty() {
             args.openrouter_models = prompt_openrouter_models()?;
-        }
-        let has_local_models = prompt_yes_no("Do you have local model(s) available?", false)?;
-        if has_local_models {
-            let local_provider = prompt_choice(
-                "Local model provider [ollama/lmstudio]",
-                "ollama",
-                &["ollama", "lmstudio"],
-            )?;
-            let local_models = prompt_local_models(&local_provider)?;
-            if let Some(first) = local_models.first() {
-                args.local_model_provider = Some(local_provider);
-                args.local_model = Some(first.clone());
-                args.local_models = local_models;
-            }
         }
         let validation = prompt_choice(
             "Provider validation posture [local/live/none]",
@@ -2168,7 +2254,7 @@ fn run_interactive_setup(
             "Keep long sessions recoverable with local handoff packets.",
         );
         let guardian = prompt_numbered_choice(
-            "Start context guardian automatically when the Quant-M daemon runs?",
+            "Enable context guardian?",
             &[
                 ("🛡️ Yes, keep continuity handoffs ready", "enabled"),
                 ("⏭️ No, I will run context guard manually", "disabled"),
@@ -2250,15 +2336,23 @@ fn prompt_workspace_path(label: &str, default: &str) -> Result<String> {
 
 fn print_onboarding_section(step: &str, title: &str, hint: &str) {
     println!();
+    let border = onboarding_step_border(step);
+    println!("{}{}{}", ANSI_DIM, border, ANSI_RESET);
     println!(
-        "{}────────────────────────────────────────{}",
-        ANSI_DIM, ANSI_RESET
-    );
-    println!(
-        "{}{}Step {step}: {}{}",
-        ANSI_BOLD, ANSI_CYAN, title, ANSI_RESET
+        "{}{}Step {step}{}  {}{}{}",
+        ANSI_BOLD, ANSI_CYAN, ANSI_RESET, ANSI_BOLD, title, ANSI_RESET
     );
     println!("{}{}{}", ANSI_DIM, hint, ANSI_RESET);
+    println!("{}{}{}", ANSI_DIM, border, ANSI_RESET);
+}
+
+fn onboarding_step_border(step: &str) -> &'static str {
+    match step.parse::<usize>() {
+        Ok(number) if number % 2 == 0 => {
+            "------------------------------------------------------------"
+        }
+        _ => "============================================================",
+    }
 }
 
 fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
@@ -2612,7 +2706,15 @@ fn prompt_numbered_choice(
     default_index: usize,
 ) -> Result<String> {
     println!();
-    println!("{}{}{}{}", ANSI_BOLD, ANSI_CYAN, label, ANSI_RESET);
+    println!("{}{}┌─ Question{}", ANSI_DIM, ANSI_CYAN, ANSI_RESET);
+    println!(
+        "{}{}│{} {}{}{}",
+        ANSI_CYAN, ANSI_BOLD, ANSI_RESET, ANSI_BOLD, label, ANSI_RESET
+    );
+    println!(
+        "{}{}└────────────────────────────────────────{}",
+        ANSI_DIM, ANSI_CYAN, ANSI_RESET
+    );
     println!();
     for (index, (display, _value)) in options.iter().enumerate() {
         println!(
@@ -2622,13 +2724,17 @@ fn prompt_numbered_choice(
             ANSI_RESET,
             display
         );
+        if index + 1 != options.len() {
+            println!();
+        }
     }
     println!();
     let default = default_index.to_string();
     loop {
         let value = prompt_default("Select", &default)?;
         if let Ok(index) = value.parse::<usize>()
-            && let Some((_display, selected)) = options.get(index.saturating_sub(1))
+            && index > 0
+            && let Some((_display, selected)) = options.get(index - 1)
         {
             return Ok((*selected).to_string());
         }
@@ -2644,14 +2750,46 @@ fn prompt_numbered_choice(
             );
             continue;
         }
-        let valid = options
-            .iter()
-            .enumerate()
-            .map(|(index, (display, value))| format!("{} ({}) or {}", index + 1, display, value))
-            .collect::<Vec<_>>()
-            .join(", ");
-        println!("Choose one of: {valid}");
+        print_numbered_choice_help(options, default_index);
     }
+}
+
+fn print_numbered_choice_help(options: &[(&str, &str)], default_index: usize) {
+    println!();
+    println!(
+        "{}{}╭─ I did not recognize that answer ─────────────╮{}",
+        ANSI_RED, ANSI_BOLD, ANSI_RESET
+    );
+    println!(
+        "{}│{} Choose a number, or type the short name shown below.",
+        ANSI_RED, ANSI_RESET
+    );
+    println!("{}│{}", ANSI_RED, ANSI_RESET);
+    for (index, (display, value)) in options.iter().enumerate() {
+        println!(
+            "{}│{}   {}{:>2}{}  {}",
+            ANSI_RED,
+            ANSI_RESET,
+            ANSI_CYAN,
+            index + 1,
+            ANSI_RESET,
+            display
+        );
+        println!(
+            "{}│{}       {}type: {}{}",
+            ANSI_RED, ANSI_RESET, ANSI_DIM, value, ANSI_RESET
+        );
+    }
+    println!("{}│{}", ANSI_RED, ANSI_RESET);
+    println!(
+        "{}│{} Press Enter to use the default: {}{}{}",
+        ANSI_RED, ANSI_RESET, ANSI_BOLD, default_index, ANSI_RESET
+    );
+    println!(
+        "{}╰───────────────────────────────────────────────╯{}",
+        ANSI_RED, ANSI_RESET
+    );
+    println!();
 }
 
 fn prompt_choice(label: &str, default: &str, allowed: &[&str]) -> Result<String> {
@@ -2771,6 +2909,16 @@ fn handle_config_command(config_path: &std::path::Path, command: ConfigCommand) 
                 provider.trim(),
                 model.trim()
             );
+            Ok(())
+        }
+        ConfigCommand::ClearModel { provider } => {
+            let mut cfg = Config::load_or_create(config_path)
+                .with_context(|| format!("failed loading config {}", config_path.display()))?;
+            let cleared = clear_model_preference(&mut cfg, provider.as_deref())?;
+            let cfg = cfg.sanitize();
+            cfg.validate()?;
+            cfg.save(config_path)?;
+            println!("cleared model preference: {cleared}");
             Ok(())
         }
         ConfigCommand::SetChannel { channel, value } => {
@@ -2928,17 +3076,125 @@ fn handle_settings_command(config_path: &std::path::Path, json: bool) -> Result<
     let cfg = cfg.sanitize();
     cfg.validate()?;
     cfg.save(config_path)?;
-    let report = settings_report(&cfg);
+    let report = settings_report(&cfg, config_path);
     print_serialized_or_text(&report, json, &format_settings_report(&report))
 }
 
-fn settings_report(cfg: &Config) -> SettingsReport {
+fn handle_capabilities_command(
+    cfg: &Config,
+    command: Option<CapabilitiesCommand>,
+    json: bool,
+    category: Option<String>,
+    status: Option<String>,
+) -> Result<()> {
+    match command {
+        Some(CapabilitiesCommand::Show {
+            capability_id,
+            json,
+        }) => {
+            let record = capabilities::show_capability(cfg, &capability_id)?;
+            print_serialized_or_text(&record, json, &format_capability_detail(&record))
+        }
+        Some(CapabilitiesCommand::AuditDocs { json }) => {
+            let report = capabilities::audit_docs(cfg)?;
+            print_serialized_or_text(
+                &report,
+                json,
+                &format!(
+                    "capability_docs_audit: {}\nchecked_docs: {}\ncapability_count: {}\nmissing_markers:\n{}",
+                    report.status,
+                    report.checked_docs.join(", "),
+                    report.capability_count,
+                    if report.missing_markers.is_empty() {
+                        "  none".to_string()
+                    } else {
+                        report
+                            .missing_markers
+                            .iter()
+                            .map(|marker| format!("  - {marker}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }
+                ),
+            )
+        }
+        None => {
+            let category = category
+                .as_deref()
+                .map(str::parse::<capabilities::CapabilityCategory>)
+                .transpose()?;
+            let status = status
+                .as_deref()
+                .map(str::parse::<capabilities::CapabilityStatus>)
+                .transpose()?;
+            let records = capabilities::filtered_inventory(
+                cfg,
+                capabilities::CapabilityFilter { category, status },
+            )?;
+            print_serialized_or_text(&records, json, &format_capability_list(&records))
+        }
+    }
+}
+
+fn format_capability_list(records: &[capabilities::CapabilityRecord]) -> String {
+    let mut lines = vec!["Capabilities".to_string()];
+    for record in records {
+        lines.push(format!(
+            "{} [{}] {} - {}",
+            record.id, record.status, record.category, record.summary
+        ));
+    }
+    lines.push(
+        "\nUse `quant-m capabilities show <capability_id>` for proof paths and gates.".to_string(),
+    );
+    lines.join("\n")
+}
+
+fn format_capability_detail(record: &capabilities::CapabilityRecord) -> String {
+    format!(
+        "Capability\nid: {}\nname: {}\ncategory: {}\nstatus: {}\nsummary: {}\ncommands:\n{}\nconfig_gates:\n{}\npolicy_gates:\n{}\nartifacts_created:\n{}\nproof_commands:\n{}\nvalidation_commands:\n{}\ndocs:\n{}\nrisks:\n{}\nnotes:\n{}",
+        record.id,
+        record.name,
+        record.category,
+        record.status,
+        record.summary,
+        format_string_list(&record.commands),
+        format_string_list(&record.config_gates),
+        format_string_list(&record.policy_gates),
+        format_string_list(&record.artifacts_created),
+        format_string_list(&record.proof_commands),
+        format_string_list(&record.validation_commands),
+        format_string_list(&record.docs),
+        format_string_list(&record.risks),
+        format_string_list(&record.notes),
+    )
+}
+
+fn format_string_list(values: &[String]) -> String {
+    if values.is_empty() {
+        return "  none".to_string();
+    }
+    values
+        .iter()
+        .map(|value| format!("  - {value}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn settings_report(cfg: &Config, config_path: &std::path::Path) -> SettingsReport {
     SettingsReport {
+        config: config_path.to_path_buf(),
+        workspace: cfg.workspace_dir.clone(),
+        session_dir: cfg.runtime.session_dir.clone(),
         multi_model_enabled: cfg.runtime.multi_model_enabled,
         search_enabled: cfg.runtime.search_enabled,
         browser_harness_enabled: cfg.runtime.browser_harness_enabled,
         external_network_enabled: cfg.runtime.external_network_enabled,
         context_guardian_enabled: cfg.context_guardian.enabled,
+        preferred_local_model: cfg.preferences.preferred_local_model.clone(),
+        preferred_remote_model: cfg.preferences.preferred_remote_model.clone(),
+        preferred_openrouter_model: cfg.preferences.preferred_openrouter_model.clone(),
+        providers: list_providers(cfg),
         enabled_tools: enabled_tool_ids(cfg),
         detected_tools: scan_supported_developer_tools(cfg)
             .into_iter()
@@ -2962,8 +3218,39 @@ fn format_settings_report(report: &SettingsReport) -> String {
     } else {
         report.detected_tools.join(", ")
     };
+    let providers = if report.providers.is_empty() {
+        "none".to_string()
+    } else {
+        report
+            .providers
+            .iter()
+            .map(|provider| {
+                format!(
+                    "{}:{}:{}",
+                    provider.id,
+                    enabled_label(provider.enabled),
+                    if provider.preferred_models.is_empty() {
+                        "models=unset".to_string()
+                    } else {
+                        format!("models={}", provider.preferred_models.join(","))
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
     format!(
-        "Settings\nmulti_model_enabled: {}\nsearch_enabled: {}\nbrowser_harness_enabled: {}\nexternal_network_enabled: {}\ncontext_guardian_enabled: {}\nenabled_tools: {}\ndetected_tools: {}\n\nOptional next steps:\n  quant-m context guard\n  quant-m tool scan\n  quant-m tool validate codex\n  quant-m onboard --advanced",
+        "Settings\nconfig: {}\nworkspace: {}\nsession_dir: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nproviders: {}\nmulti_model_enabled: {}\nsearch_enabled: {}\nbrowser_harness_enabled: {}\nexternal_network_enabled: {}\ncontext_guardian_enabled: {}\nenabled_tools: {}\ndetected_tools: {}\n\nChange model settings:\n  quant-m onboard\n  quant-m setup --local-model-provider ollama --local-model <name>\n  quant-m config set-model openrouter <model-id>\n  quant-m config clear-model [local|remote|openrouter|all]\n\nOther next steps:\n  quant-m provider list\n  quant-m tool scan\n  quant-m context guard",
+        report.config.display(),
+        report.workspace.display(),
+        report.session_dir.display(),
+        format_model_pref(report.preferred_local_model.as_ref()),
+        format_model_pref(report.preferred_remote_model.as_ref()),
+        report
+            .preferred_openrouter_model
+            .as_deref()
+            .unwrap_or("unset"),
+        providers,
         enabled_label(report.multi_model_enabled),
         enabled_label(report.search_enabled),
         enabled_label(report.browser_harness_enabled),
@@ -2971,6 +3258,52 @@ fn format_settings_report(report: &SettingsReport) -> String {
         enabled_label(report.context_guardian_enabled),
         tools,
         detected,
+    )
+}
+
+fn clear_model_preference(cfg: &mut Config, provider: Option<&str>) -> Result<&'static str> {
+    match provider.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("all") => {
+            cfg.preferences.preferred_local_model = None;
+            cfg.preferences.preferred_remote_model = None;
+            cfg.preferences.preferred_openrouter_model = None;
+            Ok("all")
+        }
+        Some("local") => {
+            cfg.preferences.preferred_local_model = None;
+            Ok("local")
+        }
+        Some("remote") => {
+            cfg.preferences.preferred_remote_model = None;
+            cfg.preferences.preferred_openrouter_model = None;
+            Ok("remote")
+        }
+        Some("openrouter") => {
+            cfg.preferences.preferred_openrouter_model = None;
+            if cfg
+                .preferences
+                .preferred_remote_model
+                .as_ref()
+                .is_some_and(|preference| preference.provider.eq_ignore_ascii_case("openrouter"))
+            {
+                cfg.preferences.preferred_remote_model = None;
+            }
+            Ok("openrouter")
+        }
+        Some(other) if is_local_model_provider_id(other) => {
+            cfg.preferences.preferred_local_model = None;
+            Ok("local")
+        }
+        Some(other) => anyhow::bail!(
+            "unknown model preference scope '{other}'; use local, remote, openrouter, or all"
+        ),
+    }
+}
+
+fn is_local_model_provider_id(provider: &str) -> bool {
+    matches!(
+        normalize_registry_id(provider).as_str(),
+        "ollama" | "lmstudio" | "lm-studio"
     )
 }
 
@@ -3399,6 +3732,49 @@ fn operator_identity(cfg: &Config) -> String {
         .unwrap_or_else(|_| format!("operator:{}", cfg.node_id))
 }
 
+fn run_boil_cli(
+    cfg: &Config,
+    args: Vec<String>,
+    json: bool,
+    dry_run: bool,
+    pricing_profile: String,
+) -> Result<()> {
+    match args.as_slice() {
+        [command, session_id, evidence_id] if command == "evidence" => {
+            if dry_run {
+                anyhow::bail!("--dry-run is not supported with boil evidence");
+            }
+            let lookup = boil::lookup_evidence(cfg, &session_id.parse()?, evidence_id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&lookup)?);
+            } else {
+                print!("{}", boil::render_evidence_lookup(&lookup));
+            }
+            Ok(())
+        }
+        [session_id] => {
+            let report = boil::run_boil(
+                cfg,
+                boil::BoilRequest {
+                    session_id: session_id.parse()?,
+                    dry_run,
+                    pricing_profile,
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", boil::render_boil_report(&report));
+            }
+            Ok(())
+        }
+        [command, ..] if command == "evidence" => {
+            anyhow::bail!("usage: quant-m boil evidence <session_id> <evidence_id>")
+        }
+        _ => anyhow::bail!("usage: quant-m boil <session_id>"),
+    }
+}
+
 fn storage_mode_for_command(command: &Commands) -> StorageMode {
     match command {
         Commands::Start
@@ -3426,6 +3802,14 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         | Commands::Replay { .. }
         | Commands::Cost { .. }
         | Commands::InitTruth { .. } => StorageMode::Inspect,
+        Commands::Capabilities { .. } => StorageMode::Inspect,
+        Commands::Boil { args, dry_run, .. } => {
+            if args.first().is_some_and(|value| value == "evidence") || *dry_run {
+                StorageMode::Inspect
+            } else {
+                StorageMode::SessionWrite
+            }
+        }
         Commands::Context { .. } => StorageMode::SessionWrite,
         Commands::Question { command } => match command {
             QuestionCommand::Ask {
@@ -3915,6 +4299,96 @@ mod tests {
     }
 
     #[test]
+    fn config_clear_model_removes_stale_preferences() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+
+        handle_config_command(
+            &config_path,
+            ConfigCommand::SetModel {
+                provider: "openrouter".to_string(),
+                model: "qwen/qwen3-coder".to_string(),
+            },
+        )
+        .expect("set remote model");
+        handle_config_command(
+            &config_path,
+            ConfigCommand::SetModel {
+                provider: "ollama".to_string(),
+                model: "qwen3-coder:7b".to_string(),
+            },
+        )
+        .expect("set local model");
+
+        handle_config_command(
+            &config_path,
+            ConfigCommand::ClearModel {
+                provider: Some("openrouter".to_string()),
+            },
+        )
+        .expect("clear openrouter");
+
+        let cfg = Config::load_existing(&config_path).expect("load");
+        assert!(cfg.preferences.preferred_openrouter_model.is_none());
+        assert!(cfg.preferences.preferred_remote_model.is_none());
+        assert_eq!(
+            cfg.preferences
+                .preferred_local_model
+                .as_ref()
+                .map(|preference| preference.model.as_str()),
+            Some("qwen3-coder:7b")
+        );
+
+        handle_config_command(&config_path, ConfigCommand::ClearModel { provider: None })
+            .expect("clear all");
+
+        let cfg = Config::load_existing(&config_path).expect("load");
+        assert!(cfg.preferences.preferred_openrouter_model.is_none());
+        assert!(cfg.preferences.preferred_remote_model.is_none());
+        assert!(cfg.preferences.preferred_local_model.is_none());
+    }
+
+    #[test]
+    fn settings_report_shows_project_paths_and_model_choices() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_setup_flow(
+            &config_path,
+            SetupArgs {
+                non_interactive: true,
+                force_interactive: false,
+                advanced: false,
+                local_model_provider: Some("ollama".to_string()),
+                local_model: Some("qwen3-coder:7b".to_string()),
+                local_models: vec!["qwen3-coder:7b".to_string()],
+                remote_model_provider: None,
+                remote_model: None,
+                openrouter_models: Vec::new(),
+                openrouter_api_key: None,
+                enable_openrouter: false,
+                channel: None,
+                channel_value: None,
+                runtime_profile: None,
+                workspace_path: Some(tmp.path().join("project-workspace")),
+                state_path: None,
+                session_path: None,
+                external_network: None,
+                context_guardian: None,
+                selected_tools: Vec::new(),
+            },
+        )
+        .expect("setup");
+
+        let cfg = Config::load_existing(&config_path).expect("load");
+        let rendered = format_settings_report(&settings_report(&cfg, &config_path));
+
+        assert!(rendered.contains(&format!("config: {}", config_path.display())));
+        assert!(rendered.contains("local_model: ollama qwen3-coder:7b"));
+        assert!(rendered.contains("quant-m config clear-model [local|remote|openrouter|all]"));
+    }
+
+    #[test]
     fn config_set_channel_updates_typed_config() {
         let tmp = TempDir::new().expect("tempdir");
         let config_path = config_path_for(&tmp);
@@ -4123,6 +4597,12 @@ mod tests {
     fn fsm_commands_use_inspect_mode() {
         assert_eq!(
             storage_mode_for_command(&Commands::Fsm {
+                command: FsmCommand::Authority { json: false }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Fsm {
                 command: FsmCommand::List { domain: None }
             }),
             StorageMode::Inspect
@@ -4135,6 +4615,27 @@ mod tests {
             }),
             StorageMode::Inspect
         );
+    }
+
+    #[test]
+    fn fsm_authority_command_parses_and_uses_inspect_mode() {
+        let cli =
+            Cli::try_parse_from(["quant-m", "fsm", "authority"]).expect("parse fsm authority");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Fsm {
+                command: FsmCommand::Authority { json: false }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "fsm", "authority", "--json"])
+            .expect("parse fsm authority json");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Fsm {
+                command: FsmCommand::Authority { json: true }
+            })
+        ));
     }
 
     #[test]
@@ -4537,6 +5038,156 @@ mod tests {
             },
             other => panic!("unexpected command: {other:?}"),
         }
+    }
+
+    #[test]
+    fn boil_command_parses_and_uses_expected_storage_modes() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "boil",
+            "session-1",
+            "--json",
+            "--pricing-profile",
+            "manual-config",
+        ])
+        .expect("parse boil");
+        match cli.command {
+            Some(Commands::Boil {
+                args,
+                json,
+                dry_run,
+                pricing_profile,
+            }) => {
+                assert_eq!(args, vec!["session-1"]);
+                assert!(json);
+                assert!(!dry_run);
+                assert_eq!(pricing_profile, "manual-config");
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Boil {
+                        args,
+                        json,
+                        dry_run,
+                        pricing_profile,
+                    }),
+                    StorageMode::SessionWrite
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["quant-m", "boil", "session-1", "--dry-run"])
+            .expect("parse boil dry-run");
+        match cli.command {
+            Some(Commands::Boil {
+                args,
+                json,
+                dry_run,
+                pricing_profile,
+            }) => {
+                assert_eq!(args, vec!["session-1"]);
+                assert!(!json);
+                assert!(dry_run);
+                assert_eq!(pricing_profile, "rough-default");
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Boil {
+                        args,
+                        json,
+                        dry_run,
+                        pricing_profile,
+                    }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["quant-m", "boil", "evidence", "session-1", "step-000001"])
+            .expect("parse boil evidence");
+        match cli.command {
+            Some(Commands::Boil {
+                args,
+                json,
+                dry_run,
+                pricing_profile,
+            }) => {
+                assert_eq!(args, vec!["evidence", "session-1", "step-000001"]);
+                assert!(!json);
+                assert!(!dry_run);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Boil {
+                        args,
+                        json,
+                        dry_run,
+                        pricing_profile,
+                    }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn capabilities_command_parses_and_uses_inspect_mode() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "capabilities",
+            "--json",
+            "--category",
+            "provider",
+            "--status",
+            "external_required",
+        ])
+        .expect("parse capabilities");
+        match cli.command {
+            Some(Commands::Capabilities {
+                command,
+                json,
+                category,
+                status,
+            }) => {
+                assert!(command.is_none());
+                assert!(json);
+                assert_eq!(category.as_deref(), Some("provider"));
+                assert_eq!(status.as_deref(), Some("external_required"));
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Capabilities {
+                        command,
+                        json,
+                        category,
+                        status,
+                    }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "capabilities",
+            "show",
+            "providers.openrouter",
+            "--json",
+        ])
+        .expect("parse capability show");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Capabilities {
+                command: Some(CapabilitiesCommand::Show { .. }),
+                ..
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "capabilities", "audit-docs"])
+            .expect("parse capability docs audit");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Capabilities {
+                command: Some(CapabilitiesCommand::AuditDocs { .. }),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -5031,6 +5682,24 @@ mod tests {
             .expect("show fsm");
         assert_eq!(fsm.transitions.len(), 2);
         assert!(!marker.exists());
+    }
+
+    #[test]
+    fn fsm_authority_inspection_does_not_mutate_workspace() {
+        let (_tmp, cfg) = temp_cfg();
+        assert!(!cfg.workspace_dir.exists());
+
+        prepare_storage_for_command(
+            &cfg,
+            &Commands::Fsm {
+                command: FsmCommand::Authority { json: true },
+            },
+        )
+        .expect("fsm authority mode");
+        let records = fsm_authority::authority_records();
+
+        assert!(!cfg.workspace_dir.exists());
+        assert!(records.iter().any(|record| record.fsm_id == "worker_job"));
     }
 
     #[test]

@@ -71,6 +71,8 @@ pub enum WorkerProposalStatus {
     Reviewed,
     Rejected,
     AcceptedAsEvidence,
+    NeedsInfo,
+    Superseded,
 }
 
 impl WorkerProposalStatus {
@@ -80,6 +82,8 @@ impl WorkerProposalStatus {
             WorkerProposalStatus::Reviewed => "reviewed",
             WorkerProposalStatus::Rejected => "rejected",
             WorkerProposalStatus::AcceptedAsEvidence => "accepted_as_evidence",
+            WorkerProposalStatus::NeedsInfo => "needs_info",
+            WorkerProposalStatus::Superseded => "superseded",
         }
     }
 }
@@ -99,10 +103,69 @@ impl FromStr for WorkerProposalStatus {
             "reviewed" => Ok(Self::Reviewed),
             "rejected" => Ok(Self::Rejected),
             "accepted_as_evidence" | "accepted-as-evidence" => Ok(Self::AcceptedAsEvidence),
+            "needs_info" | "needs-info" | "needs_more_info" | "needs-more-info" => {
+                Ok(Self::NeedsInfo)
+            }
+            "superseded" => Ok(Self::Superseded),
             other => Err(anyhow!(
-                "unsupported worker proposal status '{other}'; expected pending_review, reviewed, rejected, or accepted_as_evidence"
+                "unsupported worker proposal status '{other}'; expected pending_review, reviewed, rejected, accepted_as_evidence, needs_info, or superseded"
             )),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+pub enum WorkerProposalEvent {
+    MarkReviewed,
+    Reject,
+    RequestInfo,
+    AcceptAsEvidence,
+    Supersede,
+}
+
+impl fmt::Display for WorkerProposalEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            WorkerProposalEvent::MarkReviewed => "mark_reviewed",
+            WorkerProposalEvent::Reject => "reject",
+            WorkerProposalEvent::RequestInfo => "request_info",
+            WorkerProposalEvent::AcceptAsEvidence => "accept_as_evidence",
+            WorkerProposalEvent::Supersede => "supersede",
+        };
+        f.write_str(label)
+    }
+}
+
+#[allow(dead_code)]
+pub fn transition_worker_proposal_status(
+    current: WorkerProposalStatus,
+    event: WorkerProposalEvent,
+) -> Result<WorkerProposalStatus> {
+    use WorkerProposalEvent::*;
+    use WorkerProposalStatus::*;
+    match (current, event) {
+        (PendingReview, MarkReviewed) => Ok(Reviewed),
+        (PendingReview, Reject) => Ok(Rejected),
+        (PendingReview, RequestInfo) => Ok(NeedsInfo),
+        (PendingReview, Supersede)
+        | (Reviewed, Supersede)
+        | (NeedsInfo, Supersede)
+        | (Rejected, Supersede) => Ok(Superseded),
+        (Reviewed, AcceptAsEvidence) => Ok(AcceptedAsEvidence),
+        (Reviewed, Reject) => Ok(Rejected),
+        (NeedsInfo, MarkReviewed) => Ok(Reviewed),
+        (AcceptedAsEvidence, _) | (Superseded, _) => Err(anyhow!(
+            "worker proposal status '{}' is terminal and rejects event '{}'",
+            current,
+            event
+        )),
+        _ => Err(anyhow!(
+            "worker proposal event '{}' is not allowed from status '{}'",
+            event,
+            current
+        )),
     }
 }
 
@@ -218,6 +281,8 @@ pub struct WorkerProposalListSummary {
     pub reviewed_count: usize,
     pub rejected_count: usize,
     pub accepted_as_evidence_count: usize,
+    pub needs_info_count: usize,
+    pub superseded_count: usize,
     pub next_recommended_command: String,
 }
 
@@ -300,6 +365,14 @@ pub fn list_worker_proposals(
         .iter()
         .filter(|proposal| proposal.status == WorkerProposalStatus::AcceptedAsEvidence)
         .count();
+    let needs_info_count = proposals
+        .iter()
+        .filter(|proposal| proposal.status == WorkerProposalStatus::NeedsInfo)
+        .count();
+    let superseded_count = proposals
+        .iter()
+        .filter(|proposal| proposal.status == WorkerProposalStatus::Superseded)
+        .count();
 
     Ok(WorkerProposalListSummary {
         total_count: proposals.len(),
@@ -308,6 +381,8 @@ pub fn list_worker_proposals(
         reviewed_count,
         rejected_count,
         accepted_as_evidence_count,
+        needs_info_count,
+        superseded_count,
         next_recommended_command: "quant-m worker proposal list --status pending_review"
             .to_string(),
     })
@@ -330,18 +405,20 @@ pub fn render_submit_summary(summary: &WorkerProposalSubmitSummary) -> String {
 pub fn render_list_summary(summary: &WorkerProposalListSummary) -> String {
     if summary.proposals.is_empty() {
         return format!(
-            "Worker proposals\nrecords: 0\npending_review: 0\nreviewed: 0\nrejected: 0\naccepted_as_evidence: 0\nnext: {}\n",
+            "Worker proposals\nrecords: 0\npending_review: 0\nreviewed: 0\nrejected: 0\naccepted_as_evidence: 0\nneeds_info: 0\nsuperseded: 0\nnext: {}\n",
             summary.next_recommended_command
         );
     }
 
     let mut out = format!(
-        "Worker proposals\nrecords: {}\npending_review: {}\nreviewed: {}\nrejected: {}\naccepted_as_evidence: {}\n",
+        "Worker proposals\nrecords: {}\npending_review: {}\nreviewed: {}\nrejected: {}\naccepted_as_evidence: {}\nneeds_info: {}\nsuperseded: {}\n",
         summary.total_count,
         summary.pending_review_count,
         summary.reviewed_count,
         summary.rejected_count,
-        summary.accepted_as_evidence_count
+        summary.accepted_as_evidence_count,
+        summary.needs_info_count,
+        summary.superseded_count
     );
     for proposal in &summary.proposals {
         let linked = match (&proposal.session_id, &proposal.workflow_id) {
@@ -830,6 +907,61 @@ mod tests {
             WorkerSurfaceKind::CmuxLane
         );
         assert_eq!(pending.total_count, 2);
+    }
+
+    #[test]
+    fn proposal_status_transitions_accept_safe_review_path() {
+        let reviewed = transition_worker_proposal_status(
+            WorkerProposalStatus::PendingReview,
+            WorkerProposalEvent::MarkReviewed,
+        )
+        .expect("reviewed");
+        assert_eq!(reviewed, WorkerProposalStatus::Reviewed);
+
+        let accepted =
+            transition_worker_proposal_status(reviewed, WorkerProposalEvent::AcceptAsEvidence)
+                .expect("accepted as evidence");
+        assert_eq!(accepted, WorkerProposalStatus::AcceptedAsEvidence);
+    }
+
+    #[test]
+    fn rejected_proposal_cannot_be_accepted_without_new_safe_path() {
+        let rejected = transition_worker_proposal_status(
+            WorkerProposalStatus::PendingReview,
+            WorkerProposalEvent::Reject,
+        )
+        .expect("rejected");
+        assert_eq!(rejected, WorkerProposalStatus::Rejected);
+
+        let err =
+            transition_worker_proposal_status(rejected, WorkerProposalEvent::AcceptAsEvidence)
+                .expect_err("invalid jump");
+        assert!(err.to_string().contains("not allowed"));
+    }
+
+    #[test]
+    fn pending_proposal_can_request_more_info_and_invalid_jumps_fail() {
+        let needs_info = transition_worker_proposal_status(
+            WorkerProposalStatus::PendingReview,
+            WorkerProposalEvent::RequestInfo,
+        )
+        .expect("needs info");
+        assert_eq!(needs_info, WorkerProposalStatus::NeedsInfo);
+
+        assert!(
+            transition_worker_proposal_status(
+                WorkerProposalStatus::PendingReview,
+                WorkerProposalEvent::AcceptAsEvidence,
+            )
+            .is_err()
+        );
+        assert!(
+            transition_worker_proposal_status(
+                WorkerProposalStatus::AcceptedAsEvidence,
+                WorkerProposalEvent::Reject,
+            )
+            .is_err()
+        );
     }
 
     #[test]
