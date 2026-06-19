@@ -1,7 +1,11 @@
 # Quant-M
 
 <p align="center">
-  <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="420">
+  <img src="assets/quant-m-banner.png" alt="Quant-M blue pixel-style banner logo" width="760">
+</p>
+
+<p align="center">
+  <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="300">
 </p>
 
 <p align="center">
