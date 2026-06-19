@@ -197,15 +197,16 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
         FsmAuthorityRecord {
             fsm_id: "workflow_cursor",
             human_name: "Workflow Runtime Cursor",
-            authority_status: FsmAuthorityStatus::DesignOnly,
-            wired_command_surfaces: vec!["workflow list", "workflow show", "run workflow"],
-            source_module: "src/workflow_registry.rs; src/execution_runtime.rs",
-            docs_reference: "docs/fsm/product-state-machines.md",
+            authority_status: FsmAuthorityStatus::PartiallyWired,
+            wired_command_surfaces: vec!["run workflow"],
+            source_module: "src/fsm_core.rs; src/workflow_registry.rs; src/execution_runtime.rs",
+            docs_reference: "docs/fsm/workflow-cursor-fsm-audit.md",
             emits_session_evidence: true,
             gates_side_effects: false,
             known_limitations: vec![
-                "workflow descriptors validate metadata",
-                "runtime step cursor is not enforced as a typed FSM",
+                "run workflow validates cursor order through WorkflowCursorFsm",
+                "workflow list/show remain descriptor inspection only",
+                "only existing local workflow execution is covered; no new workflow capability is added",
             ],
         },
     ]
@@ -270,7 +271,7 @@ mod tests {
         );
         assert_ne!(
             record("workflow_cursor").authority_status,
-            FsmAuthorityStatus::Wired
+            FsmAuthorityStatus::DesignOnly
         );
     }
 

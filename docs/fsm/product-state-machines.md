@@ -141,3 +141,11 @@ Exit criteria for a safe shared-state slice:
 Any transition that can cause shell execution, HTTP access, LLM/provider calls, Telegram delivery, broker interaction, or live trading must pass through an explicit policy decision event before the side effect occurs.
 
 Policy-blocked sessions are successful safety evidence, not failed onboarding.
+
+## Workflow Cursor FSM
+
+Runtime authority: `WorkflowCursorFsm` in Rust.
+
+The workflow cursor FSM validates ordering for the existing `run workflow` path. Workflow descriptors explain intended steps, but Rust controls cursor transitions during execution. Invalid ordering, such as starting a second step while one is already running or completing a workflow before a step succeeds, is rejected.
+
+This does not add workflow capabilities or side effects. Existing side-effect gates still apply to any side-effecting path reached by workflow execution.

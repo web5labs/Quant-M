@@ -1,6 +1,6 @@
 # Rust FSM Authority Audit
 
-Slice: `RUST_FSM_AUTHORITY_01`, updated by `CONTEXT_GUARDIAN_FSM_01`
+Slice: `RUST_FSM_AUTHORITY_01`, updated by `CONTEXT_GUARDIAN_FSM_01` and `WORKFLOW_CURSOR_FSM_01`
 
 This audit records what is wired today. Markdown explains intent and examples; Rust is the authority for repeatable runtime state transitions. The machine-readable summary is available with `quant-m fsm authority --json`.
 
@@ -11,7 +11,7 @@ This audit records what is wired today. Markdown explains intent and examples; R
 | Worker jobs | `WorkerJob`, `WorkerResult`, `WorkerJobState`, `WorkerJobEvent`, `WorkerJobFsm` | Result status remains `ok`/`error`; legacy transition `completed` parses as `succeeded` | Product FSM docs describe worker safety | `worker run-once`, `worker loop`, heartbeat task execution | queue inbox/outbox, inflight, dead-letter, session logs | Typed start/complete/fail/retry/dead-letter transitions | Typed FSM rejects invalid events and terminal-state events | Worker execution emits `SessionEvent::FsmTransition` from typed FSM | Replay reads transition evidence and maps to typed session state | wired |
 | Sessions/replay | `SessionEvent`, `SessionReplayState`, `SessionLifecycleState` | Legacy `final_status` remains for compatibility | Compaction and product FSM docs describe lifecycle intent | `session list`, `session show`, `replay`, `resume-plan`, `compact` | session NDJSON, compact packets | Compatibility layer computes typed final state from events | New typed FSM rejects invalid transitions; old logs remain readable | All lifecycle evidence remains in session NDJSON | Replay computes `typed_final_state` and never repeats side effects | partial |
 | Worker proposals | `WorkerProposalStatus`, `WorkerProposalEvent`, `transition_worker_proposal_status` | Stored status enum serializes as strings | Worker proposal doctrine appears in feature docs | `worker proposal submit/list`, question/strategist proposal paths | proposal JSON artifacts and index | Review/accept/reject/needs-info/supersede transitions are validated | Invalid jumps, including rejected-to-accepted, fail | Proposal-producing flows create session/proposal evidence indirectly | Proposal records are replay-friendly JSON but not canonical truth | wired |
-| Workflow execution | `WorkflowDescriptor`, `WorkflowStepDescriptor`, `FsmDescriptor` metadata | Step ids and descriptor states are string ids | Product FSM docs describe future cursor | `workflow list/show`, mock domain workflows | workflow/session/domain artifacts | Descriptor validation only | Unknown descriptor refs rejected; runtime step cursor not yet enforced | Some workflows emit session evidence | Replay can inspect emitted events, not a typed workflow cursor | partial |
+| Workflow execution | `WorkflowDescriptor`, `WorkflowStepDescriptor`, `FsmDescriptor` metadata, `WorkflowCursorState`, `WorkflowCursorEvent`, `WorkflowCursorFsm` | Step ids and descriptor states are string ids | Product FSM docs summarize cursor safety | `workflow list/show`, `run workflow`, mock domain workflows | workflow/session/domain artifacts | `run workflow` validates cursor order; descriptor validation remains separate | Unknown descriptor refs and invalid cursor transitions are rejected | Workflow runs emit `workflow_cursor` transition evidence | Replay can inspect emitted cursor events and does not repeat side effects | partial |
 | Policy/approval | `PolicyDescriptor`, `PolicyDecision`, `PolicyApprovalState`, `PolicyApprovalEvent`, `PolicyApprovalFsm` | Policy decisions serialize as enum/string values | Governance docs describe approval boundary | `policy list/show/evaluate-skill`, operator decision commands | session policy events, operator decisions | Typed approval FSM exists and is tested | Blocked, denied, and approval-pending states cannot execute | Policy decisions and operator decisions are session events | Replay treats approval as evidence, not execution | partial |
 | Context Guardian | `ContextGuardianState`, `ContextGuardianEvent`, `ContextRecommendedAction`, `ContextGuardianFsm`, `ContextStatusReport`, `ContextGuardianReport` | User-facing green/yellow/red status remains a display field | Context docs describe intended lifecycle | `context-status`, `context guard`, `compact`, `context packet`, `boil`, `loop --dry-run` | compact packets, context reports, packet receipts, handoffs, boil reports | Typed context transitions validate compact, stale, review, handoff, and blocked states | Invalid guardian events are rejected; blocked context is terminal | Status/guardian reports include typed transition records derived from session and compact evidence | Reconstructs from latest session and compact packet without side effects | guarded/wired |
 | Shared state review | `SharedStateRecord`, `StateReviewReport`, hybrid store types | Review/staleness concepts remain field/string based | Shared-state docs describe review intent | `state`, `state-review`, `state snapshot` | shared-state DB/JSON snapshots | Store validation exists; no typed fact lifecycle FSM yet | Invalid storage inputs fail; lifecycle jumps not centralized | Some state changes can be cited in sessions | Snapshots/reports are inspectable but not a typed FSM replay | partial |
@@ -28,6 +28,7 @@ This audit records what is wired today. Markdown explains intent and examples; R
 - Policy/approval FSM exists as a typed safety model and test target.
 - Worker proposal review transitions are validated with an explicit Rust transition function.
 - Context Guardian now emits typed state, event, recommended action, transition evidence, block flag, and operator-review flag while preserving green/yellow/red display labels.
+- Workflow runtime cursor transitions are validated with `WorkflowCursorFsm` for the existing `run workflow` path.
 
 ## Compatibility Decisions
 
@@ -42,6 +43,6 @@ This audit records what is wired today. Markdown explains intent and examples; R
 
 ## Not Yet Wired
 
-- Workflow execution does not yet have a typed runtime cursor.
+- Workflow descriptor inspection remains metadata-only; only the existing `run workflow` runtime path is cursor-wired.
 - Shared-state fact lifecycle is not centralized in a typed FSM yet.
 - Provider/tool onboarding has typed capability truth but not a dedicated onboarding FSM.

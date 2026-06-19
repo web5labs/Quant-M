@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::domain::{self, DomainRegistry};
+use crate::fsm_core::{StateMachine, WorkflowCursorEvent, WorkflowCursorFsm, WorkflowCursorState};
 use crate::fsm_registry::{self, FsmDescriptor, FsmTransitionDescriptor};
 use crate::scheduler_registry::{self, SchedulerId};
 use crate::sessions::{self, AgentId, DomainId, SessionContext, SessionEvent, SessionId};
@@ -33,6 +34,21 @@ pub struct WorkflowRunResult {
     pub shared_state_writes: Vec<String>,
     pub related_schedulers: Vec<String>,
     pub final_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowCursorRecord {
+    pub workflow_id: WorkflowId,
+    pub session_id: SessionId,
+    pub current_state: WorkflowCursorState,
+    pub previous_state: Option<WorkflowCursorState>,
+    pub last_event: Option<WorkflowCursorEvent>,
+    pub current_step_index: Option<usize>,
+    pub current_step_id: Option<String>,
+    pub completed_steps: usize,
+    pub blocked: bool,
+    pub terminal: bool,
+    pub reason: String,
 }
 
 #[derive(Debug)]
@@ -90,6 +106,16 @@ fn run_workflow_with_registries(
     );
     let state_store = HybridSharedStateStore::from_config(cfg);
     let related_schedulers = schedulers_for_workflow(registries, &workflow);
+    let mut cursor = WorkflowCursorRecord::new(&workflow, &session);
+    advance_workflow_cursor(
+        cfg,
+        &session,
+        &mut cursor,
+        WorkflowCursorEvent::Prepare,
+        None,
+        None,
+        "workflow runtime prepared",
+    )?;
 
     record_event(
         cfg,
@@ -134,7 +160,16 @@ fn run_workflow_with_registries(
     let mut all_writes = Vec::new();
     let mut completed_steps = 0usize;
 
-    for step in &workflow.steps {
+    for (step_index, step) in workflow.steps.iter().enumerate() {
+        advance_workflow_cursor(
+            cfg,
+            &session,
+            &mut cursor,
+            WorkflowCursorEvent::StartStep,
+            Some(step_index),
+            Some(&step.step_id),
+            "workflow step started",
+        )?;
         let skill_id = step
             .skill_id
             .as_deref()
@@ -157,6 +192,24 @@ fn run_workflow_with_registries(
         let outcome = match execute_local_skill(cfg, &session, &workflow, step, &descriptor) {
             Ok(outcome) => outcome,
             Err(err) => {
+                advance_workflow_cursor(
+                    cfg,
+                    &session,
+                    &mut cursor,
+                    WorkflowCursorEvent::FailStep,
+                    Some(step_index),
+                    Some(&step.step_id),
+                    "workflow step failed",
+                )?;
+                advance_workflow_cursor(
+                    cfg,
+                    &session,
+                    &mut cursor,
+                    WorkflowCursorEvent::Block,
+                    Some(step_index),
+                    Some(&step.step_id),
+                    "workflow blocked after step failure",
+                )?;
                 record_event(
                     cfg,
                     &session,
@@ -179,6 +232,15 @@ fn run_workflow_with_registries(
             }
         };
 
+        advance_workflow_cursor(
+            cfg,
+            &session,
+            &mut cursor,
+            WorkflowCursorEvent::CompleteStep,
+            Some(step_index),
+            Some(&step.step_id),
+            "workflow step completed",
+        )?;
         record_event(
             cfg,
             &session,
@@ -234,6 +296,15 @@ fn run_workflow_with_registries(
         completed_steps = completed_steps.saturating_add(1);
     }
 
+    advance_workflow_cursor(
+        cfg,
+        &session,
+        &mut cursor,
+        WorkflowCursorEvent::CompleteWorkflow,
+        None,
+        None,
+        "workflow completed",
+    )?;
     let final_summary = format!(
         "workflow={} status=ok steps_completed={} shared_state_writes={}",
         workflow.workflow_id,
@@ -272,6 +343,95 @@ fn run_workflow_with_registries(
             .collect(),
         final_summary,
     })
+}
+
+impl WorkflowCursorRecord {
+    fn new(workflow: &WorkflowDescriptor, session: &SessionContext) -> Self {
+        Self {
+            workflow_id: workflow.workflow_id.clone(),
+            session_id: session.session_id.clone(),
+            current_state: WorkflowCursorState::Declared,
+            previous_state: None,
+            last_event: None,
+            current_step_index: None,
+            current_step_id: None,
+            completed_steps: 0,
+            blocked: false,
+            terminal: false,
+            reason: "workflow cursor declared".to_string(),
+        }
+    }
+}
+
+fn advance_workflow_cursor(
+    cfg: &Config,
+    session: &SessionContext,
+    cursor: &mut WorkflowCursorRecord,
+    event: WorkflowCursorEvent,
+    step_index: Option<usize>,
+    step_id: Option<&str>,
+    reason: &str,
+) -> Result<()> {
+    let fsm = WorkflowCursorFsm;
+    let previous_state = cursor.current_state;
+    let next_state = match fsm.transition(&previous_state, &event) {
+        Ok(next_state) => next_state,
+        Err(err) => {
+            record_event(
+                cfg,
+                session,
+                SessionEvent::Error {
+                    code: Some("workflow_cursor_invalid_transition".to_string()),
+                    message: format!(
+                        "workflow_id={} session_id={} step_index={} step_id={} event={} accepted=false reason={}",
+                        cursor.workflow_id,
+                        session.session_id,
+                        step_index
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "none".to_string()),
+                        step_id.unwrap_or("none"),
+                        event,
+                        err
+                    ),
+                },
+            )?;
+            return Err(err);
+        }
+    };
+
+    cursor.previous_state = Some(previous_state);
+    cursor.current_state = next_state;
+    cursor.last_event = Some(event);
+    cursor.current_step_index = step_index;
+    cursor.current_step_id = step_id.map(ToString::to_string);
+    if event == WorkflowCursorEvent::CompleteStep {
+        cursor.completed_steps = cursor.completed_steps.saturating_add(1);
+    }
+    cursor.blocked = next_state == WorkflowCursorState::Blocked;
+    cursor.terminal = fsm.is_terminal(&next_state);
+    cursor.reason = reason.to_string();
+
+    record_event(
+        cfg,
+        session,
+        SessionEvent::FsmTransition {
+            machine: fsm.machine_id().to_string(),
+            from_state: Some(previous_state.to_string()),
+            to_state: next_state.to_string(),
+            reason: format!(
+                "workflow_id={} session_id={} step_index={} step_id={} event={} accepted=true terminal={} reason={}",
+                cursor.workflow_id,
+                session.session_id,
+                step_index
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                step_id.unwrap_or("none"),
+                event,
+                cursor.terminal,
+                reason
+            ),
+        },
+    )
 }
 
 fn execute_local_skill(
@@ -530,6 +690,12 @@ mod tests {
                 .iter()
                 .any(|entry| matches!(entry.event, SessionEvent::Observation { ref message, .. } if message == "shared_state_written"))
         );
+        assert!(detail.events.iter().any(|entry| {
+            matches!(&entry.event, SessionEvent::FsmTransition { machine, reason, .. }
+                    if machine == "workflow_cursor"
+                        && reason.contains("workflow_id=workflow:mock-research-brief")
+                        && reason.contains("accepted=true"))
+        }));
         let replay = sessions::replay_session(&cfg, &result.session_id).expect("replay");
         assert_eq!(replay.summary.final_status, "ok");
         assert!(!replay.state.side_effects_replayed);
@@ -574,6 +740,12 @@ mod tests {
                 .iter()
                 .any(|entry| matches!(entry.event, SessionEvent::Error { .. }))
         );
+        assert!(detail.events.iter().any(|entry| {
+            matches!(&entry.event, SessionEvent::FsmTransition { machine, to_state, reason, .. }
+                    if machine == "workflow_cursor"
+                        && to_state == "blocked"
+                        && reason.contains("event=block"))
+        }));
     }
 
     #[test]
@@ -584,5 +756,58 @@ mod tests {
         let replay = sessions::replay_session(&cfg, &result.session_id).expect("replay");
         assert!(!replay.state.side_effects_replayed);
         assert_eq!(replay.state.policy_denials, 0);
+    }
+
+    #[test]
+    fn workflow_cursor_runtime_rejects_invalid_step_order() {
+        let (_tmp, cfg) = temp_cfg();
+        let workflow = workflow_registry::builtin_registry()
+            .expect("registry")
+            .show(&WorkflowId::new("workflow:mock-research-brief"))
+            .expect("workflow");
+        let session = SessionContext::new(
+            AgentId::new("agent:test:runtime"),
+            DomainId::new("domain:mock-research"),
+        );
+        let mut cursor = WorkflowCursorRecord::new(&workflow, &session);
+
+        advance_workflow_cursor(
+            &cfg,
+            &session,
+            &mut cursor,
+            WorkflowCursorEvent::Prepare,
+            None,
+            None,
+            "prepare",
+        )
+        .expect("prepare");
+        advance_workflow_cursor(
+            &cfg,
+            &session,
+            &mut cursor,
+            WorkflowCursorEvent::StartStep,
+            Some(0),
+            Some("capture-brief"),
+            "start",
+        )
+        .expect("start");
+        let err = advance_workflow_cursor(
+            &cfg,
+            &session,
+            &mut cursor,
+            WorkflowCursorEvent::StartStep,
+            Some(1),
+            Some("second-step"),
+            "invalid second start",
+        )
+        .expect_err("second start should fail");
+
+        assert!(err.to_string().contains("workflow_cursor"));
+        let detail = sessions::show_session(&cfg, &session.session_id).expect("show session");
+        assert!(detail.events.iter().any(|entry| {
+            matches!(&entry.event, SessionEvent::Error { code, message }
+                if code.as_deref() == Some("workflow_cursor_invalid_transition")
+                    && message.contains("accepted=false"))
+        }));
     }
 }

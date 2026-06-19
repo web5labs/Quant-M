@@ -212,6 +212,111 @@ impl StateMachine for WorkerJobFsm {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum WorkflowCursorState {
+    Declared,
+    Ready,
+    StepRunning,
+    StepSucceeded,
+    StepFailed,
+    Blocked,
+    Completed,
+    ReplaySkipped,
+}
+
+display_snake!(WorkflowCursorState, {
+    WorkflowCursorState::Declared => "declared",
+    WorkflowCursorState::Ready => "ready",
+    WorkflowCursorState::StepRunning => "step_running",
+    WorkflowCursorState::StepSucceeded => "step_succeeded",
+    WorkflowCursorState::StepFailed => "step_failed",
+    WorkflowCursorState::Blocked => "blocked",
+    WorkflowCursorState::Completed => "completed",
+    WorkflowCursorState::ReplaySkipped => "replay_skipped",
+});
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowCursorEvent {
+    Prepare,
+    StartStep,
+    CompleteStep,
+    FailStep,
+    Block,
+    CompleteWorkflow,
+    SkipReplaySideEffect,
+}
+
+display_snake!(WorkflowCursorEvent, {
+    WorkflowCursorEvent::Prepare => "prepare",
+    WorkflowCursorEvent::StartStep => "start_step",
+    WorkflowCursorEvent::CompleteStep => "complete_step",
+    WorkflowCursorEvent::FailStep => "fail_step",
+    WorkflowCursorEvent::Block => "block",
+    WorkflowCursorEvent::CompleteWorkflow => "complete_workflow",
+    WorkflowCursorEvent::SkipReplaySideEffect => "skip_replay_side_effect",
+});
+
+pub struct WorkflowCursorFsm;
+
+impl StateMachine for WorkflowCursorFsm {
+    type State = WorkflowCursorState;
+    type Event = WorkflowCursorEvent;
+
+    fn machine_id(&self) -> &'static str {
+        "workflow_cursor"
+    }
+
+    fn transition(&self, current: &Self::State, event: &Self::Event) -> Result<Self::State> {
+        use WorkflowCursorEvent::*;
+        use WorkflowCursorState::*;
+        match (current, event) {
+            (Declared, Prepare) => Ok(Ready),
+            (Ready, StartStep) | (StepSucceeded, StartStep) => Ok(StepRunning),
+            (StepRunning, CompleteStep) => Ok(StepSucceeded),
+            (StepRunning, FailStep) => Ok(StepFailed),
+            (Ready, Block) | (StepRunning, Block) | (StepFailed, Block) => Ok(Blocked),
+            (StepSucceeded, CompleteWorkflow) => Ok(Completed),
+            (Ready, SkipReplaySideEffect) => Ok(ReplaySkipped),
+            (Completed, _) | (Blocked, _) | (ReplaySkipped, _) => Err(invalid_transition(
+                self.machine_id(),
+                current,
+                event,
+                "terminal workflow cursor state rejects further events",
+            )),
+            _ => Err(invalid_transition(
+                self.machine_id(),
+                current,
+                event,
+                "event is not allowed from current workflow cursor state",
+            )),
+        }
+    }
+
+    fn allowed_events(&self, current: &Self::State) -> Vec<Self::Event> {
+        use WorkflowCursorEvent::*;
+        use WorkflowCursorState::*;
+        match current {
+            Declared => vec![Prepare],
+            Ready => vec![StartStep, Block, SkipReplaySideEffect],
+            StepRunning => vec![CompleteStep, FailStep, Block],
+            StepSucceeded => vec![StartStep, CompleteWorkflow],
+            StepFailed => vec![Block],
+            Completed | Blocked | ReplaySkipped => vec![],
+        }
+    }
+
+    fn is_terminal(&self, state: &Self::State) -> bool {
+        matches!(
+            state,
+            WorkflowCursorState::Completed
+                | WorkflowCursorState::Blocked
+                | WorkflowCursorState::ReplaySkipped
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionLifecycleState {
     Created,
     Recording,
@@ -798,6 +903,76 @@ mod tests {
             "completed".parse::<WorkerJobState>().expect("parse"),
             WorkerJobState::Succeeded
         );
+    }
+
+    #[test]
+    fn workflow_cursor_fsm_accepts_valid_lifecycle() {
+        let fsm = WorkflowCursorFsm;
+        let ready = fsm
+            .transition(
+                &WorkflowCursorState::Declared,
+                &WorkflowCursorEvent::Prepare,
+            )
+            .expect("prepare");
+        assert_eq!(ready, WorkflowCursorState::Ready);
+        let running = fsm
+            .transition(&ready, &WorkflowCursorEvent::StartStep)
+            .expect("start step");
+        assert_eq!(running, WorkflowCursorState::StepRunning);
+        let succeeded = fsm
+            .transition(&running, &WorkflowCursorEvent::CompleteStep)
+            .expect("complete step");
+        assert_eq!(succeeded, WorkflowCursorState::StepSucceeded);
+        let completed = fsm
+            .transition(&succeeded, &WorkflowCursorEvent::CompleteWorkflow)
+            .expect("complete workflow");
+        assert_eq!(completed, WorkflowCursorState::Completed);
+    }
+
+    #[test]
+    fn workflow_cursor_fsm_rejects_invalid_and_terminal_transitions() {
+        let fsm = WorkflowCursorFsm;
+        assert!(
+            fsm.transition(
+                &WorkflowCursorState::Ready,
+                &WorkflowCursorEvent::CompleteWorkflow,
+            )
+            .is_err()
+        );
+        assert!(
+            fsm.transition(
+                &WorkflowCursorState::StepRunning,
+                &WorkflowCursorEvent::StartStep,
+            )
+            .is_err()
+        );
+        assert!(
+            fsm.transition(
+                &WorkflowCursorState::Completed,
+                &WorkflowCursorEvent::StartStep,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn workflow_cursor_failed_step_must_block_current_run() {
+        let fsm = WorkflowCursorFsm;
+        let failed = fsm
+            .transition(
+                &WorkflowCursorState::StepRunning,
+                &WorkflowCursorEvent::FailStep,
+            )
+            .expect("fail step");
+        assert_eq!(failed, WorkflowCursorState::StepFailed);
+        assert!(
+            fsm.transition(&failed, &WorkflowCursorEvent::StartStep)
+                .is_err()
+        );
+        let blocked = fsm
+            .transition(&failed, &WorkflowCursorEvent::Block)
+            .expect("block");
+        assert_eq!(blocked, WorkflowCursorState::Blocked);
     }
 
     #[test]
