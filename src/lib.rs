@@ -33,6 +33,7 @@ pub mod scheduler_registry;
 pub mod sessions;
 pub mod shared_state;
 pub mod shutdown;
+pub mod side_effect_gate;
 pub mod skill_registry;
 pub mod skills;
 pub mod state_sql;

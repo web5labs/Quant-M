@@ -33,6 +33,7 @@ mod scheduler_registry;
 mod sessions;
 mod shared_state;
 mod shutdown;
+mod side_effect_gate;
 mod skill_registry;
 mod skills;
 mod state_review;

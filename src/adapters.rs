@@ -1,4 +1,5 @@
 use crate::config::{AdapterConfig, Config};
+use crate::side_effect_gate::{SideEffectKind, SideEffectRequest, evaluate_side_effect};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ pub struct AdapterHub {
     cfg: AdapterConfig,
     node_id: String,
     client: reqwest::Client,
+    external_network_enabled: bool,
 }
 
 impl AdapterHub {
@@ -40,6 +42,7 @@ impl AdapterHub {
             cfg: cfg.adapters.clone(),
             node_id: cfg.node_id.clone(),
             client,
+            external_network_enabled: cfg.runtime.external_network_enabled,
         })
     }
 
@@ -62,6 +65,19 @@ impl AdapterHub {
         }
 
         if let Some(url) = &self.cfg.webhook_url {
+            let gate = evaluate_side_effect(
+                SideEffectRequest::new(SideEffectKind::WebhookSend, "adapter.webhook_send")
+                    .config_allowed(self.external_network_enabled)
+                    .policy_allowed(self.external_network_enabled),
+            );
+            if !gate.is_allowed() {
+                anyhow::bail!(
+                    "code=side_effect_gate_blocked action={} decision={} reason={}",
+                    gate.action_label,
+                    gate.decision,
+                    gate.reason
+                );
+            }
             self.client
                 .post(url)
                 .json(&event)

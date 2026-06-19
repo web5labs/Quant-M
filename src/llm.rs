@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::side_effect_gate::{SideEffectKind, SideEffectRequest, evaluate_side_effect};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
@@ -32,8 +33,18 @@ struct AssistantMessage {
 }
 
 pub async fn ask(cfg: &Config, prompt: &str) -> Result<String> {
-    if !cfg.llm.enabled {
-        return Err(anyhow!("LLM is disabled (llm.enabled=false)"));
+    let gate = evaluate_side_effect(
+        SideEffectRequest::new(SideEffectKind::ProviderCall, "llm.ask")
+            .config_allowed(cfg.llm.enabled && cfg.runtime.external_network_enabled)
+            .policy_allowed(cfg.llm.enabled && cfg.runtime.external_network_enabled),
+    );
+    if !gate.is_allowed() {
+        return Err(anyhow!(
+            "code=side_effect_gate_blocked action={} decision={} reason={}",
+            gate.action_label,
+            gate.decision,
+            gate.reason
+        ));
     }
     let api_key = cfg
         .resolve_llm_api_key()

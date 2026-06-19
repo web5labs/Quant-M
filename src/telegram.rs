@@ -1,5 +1,6 @@
 use crate::adapters::AdapterHub;
 use crate::config::{Config, ExternalChannel};
+use crate::side_effect_gate::{SideEffectKind, SideEffectRequest, evaluate_side_effect};
 use crate::{channels, logutil, shutdown};
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
@@ -40,6 +41,19 @@ pub async fn run_loop_with_shutdown(
 ) -> Result<()> {
     if !cfg.telegram.enabled {
         return Ok(());
+    }
+    let loop_gate = evaluate_side_effect(
+        SideEffectRequest::new(SideEffectKind::TelegramSend, "telegram.poll_loop")
+            .config_allowed(cfg.runtime.external_network_enabled)
+            .policy_allowed(cfg.runtime.external_network_enabled),
+    );
+    if !loop_gate.is_allowed() {
+        return Err(anyhow!(
+            "code=side_effect_gate_blocked action={} decision={} reason={}",
+            loop_gate.action_label,
+            loop_gate.decision,
+            loop_gate.reason
+        ));
     }
     let bot_token = cfg
         .resolve_telegram_bot_token()
@@ -133,15 +147,29 @@ async fn handle_message(
         }
     };
 
-    send_message(client, bot_token, message.chat.id, &reply).await
+    send_message(cfg, client, bot_token, message.chat.id, &reply).await
 }
 
 async fn send_message(
+    cfg: &Config,
     client: &reqwest::Client,
     bot_token: &str,
     chat_id: i64,
     text: &str,
 ) -> Result<()> {
+    let gate = evaluate_side_effect(
+        SideEffectRequest::new(SideEffectKind::TelegramSend, "telegram.send_message")
+            .config_allowed(cfg.telegram.enabled && cfg.runtime.external_network_enabled)
+            .policy_allowed(cfg.telegram.enabled && cfg.runtime.external_network_enabled),
+    );
+    if !gate.is_allowed() {
+        return Err(anyhow!(
+            "code=side_effect_gate_blocked action={} decision={} reason={}",
+            gate.action_label,
+            gate.decision,
+            gate.reason
+        ));
+    }
     let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
     let safe_text = truncate_telegram_message(text);
     client

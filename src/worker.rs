@@ -4,6 +4,10 @@ use crate::fsm_core::{StateMachine, WorkerJobEvent, WorkerJobFsm, WorkerJobState
 use crate::logutil;
 use crate::sessions::{self, SessionContext, SessionEvent};
 use crate::shutdown;
+use crate::side_effect_gate::{
+    SideEffectDecision, SideEffectGateResult, SideEffectKind, SideEffectRequest,
+    evaluate_side_effect,
+};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -465,6 +469,15 @@ async fn execute_job_with_session(
             Ok((format!("slept for {}ms", bounded), None))
         }
         JobKind::HttpGet { url } => {
+            let mode = http_lane_mode(&cfg.worker.http_get_mode);
+            let gate = evaluate_side_effect(
+                SideEffectRequest::new(SideEffectKind::NetworkHttp, "worker.http_get")
+                    .config_allowed(cfg.worker.allow_http_get)
+                    .policy_allowed(cfg.worker.allow_http_get)
+                    .dry_run(matches!(mode, HttpLaneMode::DryRun))
+                    .session_id(session.session_id.to_string())
+                    .evidence_ref(job.id.clone()),
+            );
             if !cfg.worker.allow_http_get {
                 record_session_event(
                     cfg,
@@ -475,11 +488,11 @@ async fn execute_job_with_session(
                         reason: "http_get is disabled by config".to_string(),
                     },
                 );
+                record_side_effect_gate_event(cfg, session, &gate);
                 Err(anyhow!(
                     "code=http_get_disabled http_get is disabled by config (worker.allow_http_get=false)"
                 ))
             } else {
-                let mode = http_lane_mode(&cfg.worker.http_get_mode);
                 let attempt = job.retries.saturating_add(1);
                 let validated_url = match validate_outbound_url(url) {
                     Ok(parsed) => parsed,
@@ -544,8 +557,34 @@ async fn execute_job_with_session(
                             ),
                         },
                     );
+                    record_side_effect_gate_event(cfg, session, &gate);
                     Ok((format!("dry-run: would request {}", validated_url), None))
                 } else {
+                    let live_gate = evaluate_side_effect(
+                        SideEffectRequest::new(SideEffectKind::NetworkHttp, "worker.http_get")
+                            .config_allowed(
+                                cfg.worker.allow_http_get && cfg.runtime.external_network_enabled,
+                            )
+                            .policy_allowed(
+                                cfg.worker.allow_http_get && cfg.runtime.external_network_enabled,
+                            )
+                            .session_id(session.session_id.to_string())
+                            .evidence_ref(job.id.clone()),
+                    );
+                    if !live_gate.is_allowed() {
+                        record_side_effect_gate_event(cfg, session, &live_gate);
+                        return session_error_result(
+                            cfg,
+                            session,
+                            job,
+                            started,
+                            started_at,
+                            format!(
+                                "code=side_effect_gate_blocked action={} decision={} reason={}",
+                                live_gate.action_label, live_gate.decision, live_gate.reason
+                            ),
+                        );
+                    }
                     let client = reqwest::Client::builder()
                         .timeout(Duration::from_secs(
                             cfg.worker.command_timeout_seconds.max(1),
@@ -608,6 +647,13 @@ async fn execute_job_with_session(
             }
         }
         JobKind::Shell { command } => {
+            let gate = evaluate_side_effect(
+                SideEffectRequest::new(SideEffectKind::ShellCommand, "worker.shell")
+                    .config_allowed(cfg.worker.allow_shell_commands)
+                    .policy_allowed(cfg.worker.allow_shell_commands)
+                    .session_id(session.session_id.to_string())
+                    .evidence_ref(job.id.clone()),
+            );
             if !cfg.worker.allow_shell_commands {
                 record_session_event(
                     cfg,
@@ -618,10 +664,12 @@ async fn execute_job_with_session(
                         reason: "shell jobs are disabled by config".to_string(),
                     },
                 );
+                record_side_effect_gate_event(cfg, session, &gate);
                 Err(anyhow!(
                     "shell jobs are disabled by config (worker.allow_shell_commands=false)"
                 ))
             } else {
+                record_side_effect_gate_event(cfg, session, &gate);
                 let run = timeout(
                     Duration::from_secs(cfg.worker.command_timeout_seconds.max(1)),
                     Command::new("sh")
@@ -908,6 +956,37 @@ fn record_session_event(cfg: &Config, session: &SessionContext, event: SessionEv
                 "session_event_error session_id={} error={}",
                 session.session_id, err
             ),
+        );
+    }
+}
+
+fn record_side_effect_gate_event(
+    cfg: &Config,
+    session: &SessionContext,
+    gate: &SideEffectGateResult,
+) {
+    record_session_event(
+        cfg,
+        session,
+        SessionEvent::AuditNote {
+            note: gate.audit_note(),
+        },
+    );
+    if matches!(
+        gate.decision,
+        SideEffectDecision::Blocked
+            | SideEffectDecision::Denied
+            | SideEffectDecision::ApprovalPending
+            | SideEffectDecision::Unavailable
+    ) {
+        record_session_event(
+            cfg,
+            session,
+            SessionEvent::PolicyDecision {
+                policy: format!("side_effect_gate.{}", gate.side_effect_kind),
+                allowed: false,
+                reason: gate.reason.clone(),
+            },
         );
     }
 }

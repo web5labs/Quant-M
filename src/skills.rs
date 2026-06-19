@@ -4,6 +4,7 @@ use crate::fsm_core::{
     SkillExecutionFsm, SkillExecutionState, StateMachine,
 };
 use crate::sessions::{self, SessionEvent};
+use crate::side_effect_gate::{SideEffectKind, SideEffectRequest, evaluate_side_effect};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -134,6 +135,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
     let side_effect_level = "external_action";
     let shell_required = true;
     let shell_allowed = cfg.skills.allow_shell_commands;
+    let side_effect_gate = evaluate_side_effect(
+        SideEffectRequest::new(SideEffectKind::ShellCommand, format!("skills.run.{name}"))
+            .config_allowed(shell_allowed)
+            .policy_allowed(shell_allowed)
+            .session_id(session.session_id.to_string())
+            .evidence_ref(name.to_string()),
+    );
 
     record_skill_transition(
         cfg,
@@ -172,6 +180,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
                 reason: "skill shell execution is disabled".to_string(),
             },
         );
+        record_session_event(
+            cfg,
+            &session,
+            SessionEvent::AuditNote {
+                note: side_effect_gate.audit_note(),
+            },
+        );
         record_policy_transition(
             cfg,
             &session,
@@ -205,6 +220,13 @@ pub async fn run_skill(cfg: &Config, name: &str, input: &str) -> Result<String> 
         ));
     }
 
+    record_session_event(
+        cfg,
+        &session,
+        SessionEvent::AuditNote {
+            note: side_effect_gate.audit_note(),
+        },
+    );
     record_policy_transition(
         cfg,
         &session,
