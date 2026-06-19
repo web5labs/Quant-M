@@ -16,17 +16,9 @@
   Evidence · replay · FSM authority · side-effect gates · context continuity · safe local defaults
 </p>
 
-Quant-M turns messy agent work into a local, inspectable record:
+Quant-M turns messy agent work into a local, inspectable record: what happened, what evidence supported it, what was blocked, what it cost, and whether another model or session can safely continue.
 
-- what happened
-- what evidence supported it
-- what was blocked
-- what it cost
-- whether another model or session can safely continue
-
-Quant-M is not a chatbot, broker, hosted agent platform, or trading bot.
-
-It is the local governance layer around AI-assisted work. Use Quant-M when you want coding agents, worker agents, local models, or research workflows to leave behind evidence, policy decisions, replay records, cost records, and safe continuation state.
+Quant-M is not a chatbot, broker, hosted agent platform, or trading bot. It is the local governance layer around AI-assisted work.
 
 > `v0.1.0-alpha`: public developer preview. CLI-first, local-first, intentionally conservative, and not a production trading system.
 
@@ -34,13 +26,9 @@ It is the local governance layer around AI-assisted work. Use Quant-M when you w
 
 ## What Quant-M Is
 
-Quant-M is a local Rust runtime for making AI-assisted work more inspectable, replayable, and governable.
+Quant-M is a local Rust runtime for making AI-assisted work more inspectable, replayable, and governable. It is built for workflows where agent output alone is not enough.
 
-It is built for workflows where agent output alone is not enough.
-
-A model can suggest. A worker can propose. A tool can be detected. A channel can deliver a message. None of those things should automatically become authority.
-
-Quant-M separates proposal from permission.
+A model can suggest, a worker can propose, a tool can be detected, and a channel can deliver a message. None of those things automatically become authority. Quant-M separates proposal from permission.
 
 It helps answer:
 
@@ -54,58 +42,18 @@ It helps answer:
 
 ## How Quant-M Is Different
 
-Most AI tools focus on making agents do more.
+Most AI tools focus on making agents do more. Quant-M focuses on making agent work safer to inspect, stop, replay, and continue.
 
-Quant-M focuses on making agent work safer to inspect, stop, replay, and continue.
+| Compared with | Difference |
+| --- | --- |
+| ChatGPT or Claude | Chat tools answer questions. Quant-M records governed work, evidence, replay state, side-effect decisions, cost records, and continuation handoffs. |
+| Codex, Claude Code, Gemini CLI, OpenCode | Coding agents generate and edit work. Quant-M gives them a local paper trail, policy boundary, replay path, and context continuation layer. |
+| Agent harnesses | Harnesses coordinate tools and workers. Quant-M focuses on authority: evidence, proposals, allowed actions, blocked actions, replay, and safe continuation. |
+| Trading bots | Quant-M came from a quant-risk cluster concept, but trading is not the alpha product. No live trading, broker execution, exchange execution, or auto-approval is enabled. |
+| Logs | Logs tell you what happened. Quant-M aims to show what authority accepted, blocked, replayed, or continued. |
 
-### Different From ChatGPT Or Claude
+Use Quant-M when you want coding agents, worker agents, local models, or research workflows to leave behind evidence instead of terminal scrollback. Do not use it if you want a fully autonomous trading bot, a hosted SaaS agent platform, or unchecked tool execution.
 
-Chat tools answer questions.
-
-Quant-M records governed work. It preserves evidence, side-effect decisions, cost records, replay state, and continuation handoffs.
-
-### Different From Codex, Claude Code, Gemini CLI, Or OpenCode
-
-Coding agents generate and edit work.
-
-Quant-M does not compete with them. It gives them a local paper trail, policy boundary, replay path, and context continuation layer.
-
-### Different From Agent Harnesses
-
-Harnesses coordinate tools and workers.
-
-Quant-M focuses on authority: what is evidence, what is a proposal, what is allowed, what is blocked, what can be replayed, and what another model can safely continue.
-
-### Different From A Trading Bot
-
-Quant-M came from a quant-risk cluster concept, but trading is not the alpha product.
-
-The quant origin matters because high-risk markets forced the runtime to care about evidence, replay, cost, policy, state, and operator approval.
-
-No live trading, broker execution, exchange execution, or auto-approval is enabled.
-
-### Different From Logs
-
-Logs tell you what happened.
-
-Quant-M aims to tell you what happened, what authority accepted it, what evidence supported it, what was blocked, and whether the state can be safely replayed or continued.
-
-## Use Quant-M When
-
-Use Quant-M when you want AI-assisted work to leave behind evidence instead of vibes.
-
-Use it when:
-
-- you run coding agents and want replayable proof
-- you use worker agents and need proposal boundaries
-- you want local-first logs instead of hosted-only state
-- you want side effects gated before they happen
-- you want another model to resume from accepted facts
-- you need to know what was blocked, skipped, or allowed
-- you want cost and capability status visible from the CLI
-- you want conservative defaults before adding autonomy
-
-Do not use Quant-M if you want a fully autonomous trading bot, a hosted SaaS agent platform, or unchecked tool execution.
 
 ## Five-Minute Proof
 
@@ -127,6 +75,8 @@ Or start the shell:
 ```bash
 ./quantm
 ```
+
+On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire before opening the shell.
 
 Inside `quant-m>`, try:
 
@@ -170,17 +120,7 @@ The first run is intentionally safe:
 
 ## Expected Result
 
-After the proof loop, you should be able to inspect:
-
-- a session record
-- an evidence index
-- a replay result
-- a compact continuation packet
-- a Context Guardian output
-- a cost summary
-- an FSM authority snapshot
-
-The point of the demo is not to impress you with model magic. The point is to show that Quant-M can preserve what happened, classify what was allowed, and prepare a safer continuation state for the next session.
+After the proof loop, you should be able to inspect a session record, evidence index, replay result, compact continuation packet, Context Guardian output, cost summary, and FSM authority snapshot. The point is to show that Quant-M can preserve what happened, classify what was allowed, and prepare safer continuation state for the next session.
 
 ## Safety Posture
 
@@ -209,24 +149,6 @@ This release is useful for evaluating the governance model, not for delegating u
 | Side-effect policy gate | Normalizes decisions like `allowed`, `blocked`, `approval_pending`, `denied`, `unavailable`, `dry_run_only`, and `replay_skipped` |
 | Workflow cursor FSM | Keeps workflow progress ordered without pretending descriptor browsing is execution |
 
-## Concrete Example
-
-A coding agent proposes a shell-backed task.
-
-Without Quant-M, that proposal may live only in a chat transcript or a terminal scrollback.
-
-With Quant-M, the proposal can become a local record:
-
-- what was proposed
-- what evidence supported it
-- whether shell execution was allowed
-- whether policy blocked it
-- whether operator approval was required
-- what cost was recorded
-- whether a later session can replay the decision without rerunning the side effect
-
-That is the product.
-
 ## Runtime Model
 
 Markdown explains why. Rust decides state. Replay proves what happened.
@@ -247,23 +169,13 @@ flowchart LR
     I --> J
 ```
 
-Agent or worker output enters Quant-M as a proposal or evidence item. Quant-M normalizes the payload, records evidence, checks policy and FSM authority, then classifies the result:
-
-- `allowed`
-- `blocked`
-- `approval_pending`
-- `denied`
-- `unavailable`
-- `dry_run_only`
-- `replay_skipped`
+Agent or worker output enters Quant-M as a proposal or evidence item. Quant-M normalizes the payload, records evidence, checks policy and FSM authority, then classifies the result as `allowed`, `blocked`, `approval_pending`, `denied`, `unavailable`, `dry_run_only`, or `replay_skipped`.
 
 Accepted state can be replayed. Blocked actions remain visible. Pending actions wait for operator authority. Replay does not repeat side effects.
 
 ## Context Continuity
 
-Long AI sessions degrade.
-
-Quant-M treats context continuity as a first-class runtime problem.
+Long AI sessions degrade. Quant-M treats context continuity as a first-class runtime problem.
 
 ```mermaid
 flowchart TD
@@ -275,9 +187,7 @@ flowchart TD
     H --> N[New agent resumes from accepted facts]
 ```
 
-A long session can produce evidence, replay records, compact packets, Context Guardian output, and a continuation handoff.
-
-That means a future model or session can resume from accepted facts instead of re-reading a giant chat history or guessing what mattered.
+A long session can produce evidence, replay records, compact packets, Context Guardian output, and a continuation handoff. A future model or session can resume from accepted facts instead of re-reading a giant chat history or guessing what mattered.
 
 ## Authority Snapshot
 
@@ -309,13 +219,9 @@ Current alpha snapshot:
 
 ## Where Quant-M Fits
 
-Quant-M sits beside the tools you already use.
+Quant-M sits beside the tools you already use. It does not need to replace your coding agent, local model, browser harness, terminal, or editor.
 
-It does not need to replace your coding agent, local model, browser harness, terminal, or editor.
-
-Use Codex CLI, OpenAI CLI, Claude Code, Gemini, OpenCode, Antigravity-style CLIs, OpenRouter, or local models for generation and review.
-
-Use Quant-M to preserve evidence, replay decisions, normalize payloads, track cost, gate side effects, and prepare safe continuation state.
+Use Codex CLI, OpenAI CLI, Claude Code, Gemini, OpenCode, Antigravity-style CLIs, OpenRouter, or local models for generation and review. Use Quant-M to preserve evidence, replay decisions, normalize payloads, track cost, gate side effects, and prepare safe continuation state.
 
 In plain language:
 
@@ -332,18 +238,11 @@ In plain language:
   <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="300">
 </p>
 
-Quant-M has two namesakes.
+Quant-M has two namesakes. The water bear represents resilience in harsh environments: stale context, failed runs, drift, interrupted sessions, incomplete evidence, tool confusion, unsafe side effects, and handoffs between models.
 
-**The water bear** represents resilience. Tardigrades survive pressure, radiation, dehydration, cold, heat, and space-like environments. Quant-M is built for the harsh parts of AI work: stale context, failed runs, drift, interrupted sessions, incomplete evidence, tool confusion, unsafe side effects, and handoffs between models.
+The quant side represents disciplined decision systems. Quant-M began as a stress test for an AI-assisted quant-risk cluster: cheap edge devices as workers, a stronger Rust core coordinating them, and high-risk actions passing through evidence, policy, cost tracking, and finite state machines.
 
-**The quant** represents disciplined decision systems. Quant-M began as a stress test for an AI-assisted quant-risk cluster:
-
-- cheap edge devices act as workers
-- a stronger Rust core coordinates them
-- workers can research, propose, or monitor
-- high-risk actions must pass through evidence, policy, cost tracking, and finite state machines
-
-Trading is not the alpha product. Trading was the proving ground that forced Quant-M to care about evidence, replay, policy, cost, state, and operator authority.
+Trading is not the alpha product. It was the proving ground that forced Quant-M to care about evidence, replay, policy, cost, state, and operator authority.
 
 Original benchmark desks:
 
@@ -355,13 +254,11 @@ Original benchmark desks:
 | Bitcoin DCA | Long-running accumulation, cost and schedule tracking |
 | Prediction-style markets | Ambiguous signals, sentiment, and operator review |
 
-Those desks are not promises. They explain why Quant-M is strict.
-
-A runtime shaped by high-risk decision environments cannot treat chat text as authority, cannot let workers silently execute, and cannot replay side effects.
+Those desks are not promises. They explain why Quant-M is strict: a runtime shaped by high-risk decision environments cannot treat chat text as authority, let workers silently execute, or replay side effects.
 
 ## Onboarding Preview
 
-Run guided setup when you want first-run questions instead of jumping straight into the shell:
+Run guided setup when you want to review or change first-run answers:
 
 ```bash
 ./quantm onboard
@@ -373,17 +270,7 @@ For a throwaway demo config that will not touch your local setup:
 ./quantm --config /tmp/quant-m-demo.toml onboard
 ```
 
-The onboarding flow covers:
-
-- workspace
-- device type
-- network posture
-- model provider
-- local model availability
-- explicit CLI tool selection
-- operator channel
-- continuity guard
-- final review
+The onboarding flow covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
 
 CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
 

@@ -92,6 +92,7 @@ high_risk_event_count = 40
 branch_packet_path = "workspace/state/context-guardian/continuity-handoff.md"
 
 [preferences]
+onboarding_completed = false
 preferred_openrouter_model = "qwen/qwen3-coder"
 
 [preferences.preferred_remote_model]
@@ -164,7 +165,7 @@ command = "claude"
 validation_args = ["--version"]
 
 [tools.codex]
-enabled = true
+enabled = false
 kind = "codex"
 command = "codex"
 validation_args = ["--version"]

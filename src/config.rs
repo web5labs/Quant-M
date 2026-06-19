@@ -234,6 +234,8 @@ pub struct ContextGuardianConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PreferenceConfig {
     #[serde(default)]
+    pub onboarding_completed: bool,
+    #[serde(default)]
     pub preferred_local_model: Option<ModelPreference>,
     #[serde(default)]
     pub preferred_remote_model: Option<ModelPreference>,

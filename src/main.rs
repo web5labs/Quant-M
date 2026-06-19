@@ -1660,6 +1660,7 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     external_network: None,
                     context_guardian: None,
                     selected_tools: Vec::new(),
+                    replace_tools: false,
                 },
             )?;
             print_setup_report(&report, json)
@@ -1724,6 +1725,7 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     external_network,
                     context_guardian,
                     selected_tools: Vec::new(),
+                    replace_tools: false,
                 },
             )?;
             print_setup_report(&report, json)
@@ -1777,6 +1779,40 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
 }
 
 fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
+    if start_needs_onboarding(config_path)?
+        && io::stdin().is_terminal()
+        && io::stdout().is_terminal()
+    {
+        println!("First-run onboarding has not been completed for this project.");
+        let report = run_setup_flow(
+            config_path,
+            SetupArgs {
+                non_interactive: false,
+                force_interactive: false,
+                advanced: false,
+                local_model_provider: None,
+                local_model: None,
+                local_models: Vec::new(),
+                remote_model_provider: None,
+                remote_model: None,
+                openrouter_models: Vec::new(),
+                openrouter_api_key: None,
+                enable_openrouter: false,
+                channel: None,
+                channel_value: None,
+                runtime_profile: None,
+                workspace_path: None,
+                state_path: None,
+                session_path: None,
+                external_network: None,
+                context_guardian: None,
+                selected_tools: Vec::new(),
+                replace_tools: false,
+            },
+        )?;
+        print_setup_report(&report, false)?;
+    }
+
     let init = run_init_flow(config_path, true)?;
     let cfg = Config::load_or_create(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
@@ -1790,6 +1826,15 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
         init.workspace.display()
     );
     agent_shell::run(&cfg, config_path)
+}
+
+fn start_needs_onboarding(config_path: &std::path::Path) -> Result<bool> {
+    if !config_path.exists() {
+        return Ok(true);
+    }
+    let cfg = Config::load_existing(config_path)
+        .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    Ok(!cfg.preferences.onboarding_completed)
 }
 
 const QUANT_M_ASCII_BANNER: &[&str] = &[
@@ -1911,6 +1956,7 @@ struct SetupArgs {
     external_network: Option<String>,
     context_guardian: Option<String>,
     selected_tools: Vec<String>,
+    replace_tools: bool,
 }
 
 fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
@@ -2074,9 +2120,13 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
         (None, Some(_)) => anyhow::bail!("--channel-value requires --channel"),
         (None, None) => {}
     }
+    if args.replace_tools {
+        disable_all_tools(&mut cfg);
+    }
     for tool in &args.selected_tools {
         enable_tool(&mut cfg, tool);
     }
+    cfg.preferences.onboarding_completed = true;
 
     let cfg = cfg.sanitize();
     cfg.validate()?;
@@ -2282,6 +2332,7 @@ fn run_interactive_setup(
         "Choose optional CLIs Quant-M should recognize. Detection does not grant execution permission.",
     );
     let selected_tools = prompt_developer_tools(cfg)?;
+    args.replace_tools = true;
     if selected_tools.is_empty() {
         let command = quant_m_command_hint();
         println!(
@@ -2530,6 +2581,7 @@ fn restart_interactive_args(args: &SetupArgs) -> SetupArgs {
         external_network: None,
         context_guardian: None,
         selected_tools: Vec::new(),
+        replace_tools: args.replace_tools,
     }
 }
 
@@ -3115,6 +3167,13 @@ fn enable_tool(cfg: &mut Config, id: &str) {
     let id = normalize_registry_id(id);
     if let Some(tool) = cfg.tools.get_mut(&id) {
         tool.enabled = true;
+    }
+}
+
+fn disable_all_tools(cfg: &mut Config) {
+    cfg.ensure_onboarding_registries();
+    for tool in cfg.tools.values_mut() {
+        tool.enabled = false;
     }
 }
 
@@ -4352,6 +4411,7 @@ mod tests {
         assert_eq!(report.status, "ok");
         assert!(config_path.exists());
         assert!(cfg.workspace_dir.exists());
+        assert!(!cfg.preferences.onboarding_completed);
         assert_eq!(
             cfg.runtime.session_dir,
             tmp.path().join("workspace/state/sessions")
@@ -4393,12 +4453,14 @@ mod tests {
                 external_network: Some("disabled".to_string()),
                 context_guardian: Some("disabled".to_string()),
                 selected_tools: Vec::new(),
+                replace_tools: false,
             },
         )
         .expect("setup");
 
         let cfg = Config::load_existing(&config_path).expect("load config");
         assert_eq!(report.status, "ok_non_interactive");
+        assert!(cfg.preferences.onboarding_completed);
         assert_eq!(cfg.runtime.profile, config::RuntimeProfile::Edge);
         assert_eq!(cfg.workspace_dir, tmp.path().join("portable-workspace"));
         assert_eq!(
@@ -4464,6 +4526,22 @@ mod tests {
                 json: true
             })
         ));
+    }
+
+    #[test]
+    fn start_onboarding_gate_uses_completion_marker() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+
+        assert!(start_needs_onboarding(&config_path).expect("missing config needs onboarding"));
+        run_init_flow(&config_path, true).expect("init");
+        assert!(start_needs_onboarding(&config_path).expect("init is not complete onboarding"));
+
+        let mut cfg = Config::load_existing(&config_path).expect("load");
+        cfg.preferences.onboarding_completed = true;
+        cfg.save(&config_path).expect("save");
+
+        assert!(!start_needs_onboarding(&config_path).expect("completed onboarding"));
     }
 
     #[test]
@@ -4538,6 +4616,48 @@ mod tests {
         let (_tmp, cfg) = temp_cfg();
 
         assert!(parse_developer_tool_selection("madeup", &cfg).is_err());
+    }
+
+    #[test]
+    fn setup_can_replace_stale_tool_choices() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+        let mut cfg = Config::load_existing(&config_path).expect("load");
+        enable_tool(&mut cfg, "codex");
+        cfg.save(&config_path).expect("save stale tool");
+
+        run_setup_flow(
+            &config_path,
+            SetupArgs {
+                non_interactive: true,
+                force_interactive: false,
+                advanced: false,
+                local_model_provider: None,
+                local_model: None,
+                local_models: Vec::new(),
+                remote_model_provider: None,
+                remote_model: None,
+                openrouter_models: Vec::new(),
+                openrouter_api_key: None,
+                enable_openrouter: false,
+                channel: None,
+                channel_value: None,
+                runtime_profile: None,
+                workspace_path: None,
+                state_path: None,
+                session_path: None,
+                external_network: None,
+                context_guardian: None,
+                selected_tools: vec!["openai".to_string()],
+                replace_tools: true,
+            },
+        )
+        .expect("replace tools");
+
+        let cfg = Config::load_existing(&config_path).expect("reload");
+        assert!(!cfg.tools.get("codex").expect("codex").enabled);
+        assert!(cfg.tools.get("openai").expect("openai").enabled);
     }
 
     #[test]
@@ -4654,6 +4774,7 @@ mod tests {
                 external_network: None,
                 context_guardian: None,
                 selected_tools: Vec::new(),
+                replace_tools: false,
             },
         )
         .expect("setup");

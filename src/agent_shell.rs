@@ -29,6 +29,7 @@ const ANSI_RED: &str = "\x1b[38;2;255;95;95m";
 enum AgentShellCommand {
     Help,
     Ask(String),
+    Greeting,
     Doctor,
     RunDemo,
     RunWorkflow(String),
@@ -119,15 +120,16 @@ fn startup_summary(cfg: &Config) -> Result<String> {
 
     Ok(format!(
         "{ANSI_BOLD}{ANSI_BLUE}Quant-M Agent Shell{ANSI_RESET} v{APP_VERSION}
-{ANSI_DIM}mode:{ANSI_RESET} codex_harness
+{ANSI_DIM}mode:{ANSI_RESET} local_control_plane
 {ANSI_DIM}workspace:{ANSI_RESET} {}
 {ANSI_DIM}runtime_profile:{ANSI_RESET} {}
 {ANSI_DIM}network:{ANSI_RESET} {}
 {ANSI_DIM}preferred_local_model:{ANSI_RESET} {}
 {ANSI_DIM}preferred_openrouter_model:{ANSI_RESET} {}
+{ANSI_DIM}enabled_tools:{ANSI_RESET} {}
 {ANSI_DIM}domains:{ANSI_RESET} {} | {ANSI_DIM}workflows:{ANSI_RESET} {} | {ANSI_DIM}sessions:{ANSI_RESET} {} | {ANSI_DIM}shared_state:{ANSI_RESET} {}
 
-{ANSI_GREEN}Type a question to chat through Codex, or type help for commands.{ANSI_RESET}",
+{ANSI_GREEN}Type help for commands. Use onboard to change model/tool settings.{ANSI_RESET}",
         cfg.workspace_dir.display(),
         format!("{:?}", cfg.runtime.profile).to_lowercase(),
         if cfg.runtime.external_network_enabled {
@@ -140,6 +142,7 @@ fn startup_summary(cfg: &Config) -> Result<String> {
             .preferred_openrouter_model
             .as_deref()
             .unwrap_or("unset"),
+        enabled_tool_summary(cfg),
         domain_count,
         workflow_count,
         session_count,
@@ -201,7 +204,10 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
             "That looks like a Quant-M command, but this shell does not run it directly yet. Type exit first, then run `{trimmed}` from your terminal."
         ))),
         _ if parts.len() <= 2 => {
-            if is_chat_like_input(trimmed) {
+            if is_greeting_input(trimmed) {
+                return Ok(AgentShellCommand::Greeting);
+            }
+            if is_question_like_input(trimmed) {
                 return Ok(AgentShellCommand::Ask(trimmed.to_string()));
             }
             if let Some(suggestion) = suggest_command(trimmed) {
@@ -253,18 +259,21 @@ fn looks_like_local_command(input: &str) -> bool {
     )
 }
 
-fn is_chat_like_input(input: &str) -> bool {
+fn is_greeting_input(input: &str) -> bool {
     let normalized = input
         .trim()
         .trim_start_matches('/')
         .to_ascii_lowercase()
         .replace(['_', '-'], " ");
     let normalized = normalized.trim();
-    normalized.ends_with('?')
-        || matches!(
-            normalized,
-            "hi" | "hello" | "hey" | "yo" | "thanks" | "thank you"
-        )
+    matches!(
+        normalized,
+        "hi" | "hello" | "hey" | "yo" | "thanks" | "thank you"
+    )
+}
+
+fn is_question_like_input(input: &str) -> bool {
+    input.trim().ends_with('?')
 }
 
 fn suggest_command(input: &str) -> Option<&'static str> {
@@ -327,6 +336,7 @@ pub fn parse_command_for_fuzz(input: &str) -> Result<&'static str> {
     let label = match command {
         AgentShellCommand::Help => "help",
         AgentShellCommand::Ask(_) => "ask",
+        AgentShellCommand::Greeting => "greeting",
         AgentShellCommand::Doctor => "doctor",
         AgentShellCommand::RunDemo => "run_demo",
         AgentShellCommand::RunWorkflow(_) => "run_workflow",
@@ -359,6 +369,10 @@ fn execute_command(
         }),
         AgentShellCommand::Ask(prompt) => Ok(AgentShellResponse {
             output: run_codex_chat(cfg, &prompt)?,
+            should_exit: false,
+        }),
+        AgentShellCommand::Greeting => Ok(AgentShellResponse {
+            output: "Hi. This is the local Quant-M shell.\n\nTry: help, demo, doctor, settings, or exit.\nRun `onboard` outside this shell to choose Codex, OpenAI CLI, Claude CLI, Antigravity, Ollama, LM Studio, and other optional tools.".to_string(),
             should_exit: false,
         }),
         AgentShellCommand::Doctor => {
@@ -469,9 +483,8 @@ fn execute_command(
 fn help_text() -> &'static str {
     "Quant-M Agent Shell Commands
 
-Chat:
-  <any question>        send a prompt through local Codex CLI
-  ask <question>        explicit Codex prompt
+Optional agent bridge:
+  ask <question>        send a prompt through Codex CLI, if enabled and installed
 
 Overview:
   help
@@ -509,17 +522,7 @@ Exit:
 }
 
 fn format_shell_settings(cfg: &Config) -> String {
-    let enabled_tools = cfg
-        .tools
-        .iter()
-        .filter(|(_id, tool)| tool.enabled)
-        .map(|(id, _tool)| id.as_str())
-        .collect::<Vec<_>>();
-    let enabled_tools = if enabled_tools.is_empty() {
-        "none".to_string()
-    } else {
-        enabled_tools.join(", ")
-    };
+    let enabled_tools = enabled_tool_summary(cfg);
     format!(
         "{ANSI_BOLD}{ANSI_BLUE}Settings{ANSI_RESET}
 multi_model_enabled: {}
@@ -538,6 +541,20 @@ Tune more outside the shell:
         enabled_label(cfg.runtime.external_network_enabled),
         enabled_tools,
     )
+}
+
+fn enabled_tool_summary(cfg: &Config) -> String {
+    let enabled_tools = cfg
+        .tools
+        .iter()
+        .filter(|(_id, tool)| tool.enabled)
+        .map(|(id, _tool)| id.as_str())
+        .collect::<Vec<_>>();
+    if enabled_tools.is_empty() {
+        "none".to_string()
+    } else {
+        enabled_tools.join(", ")
+    }
 }
 
 fn enabled_label(value: bool) -> &'static str {
@@ -886,7 +903,7 @@ mod tests {
         );
         assert_eq!(
             parse_command("hello").expect("greeting"),
-            AgentShellCommand::Ask("hello".to_string())
+            AgentShellCommand::Greeting
         );
         assert_eq!(
             parse_command("help me?").expect("question"),
@@ -1136,6 +1153,23 @@ mod tests {
             command,
             AgentShellCommand::Ask("launch everything".to_string())
         );
+    }
+
+    #[test]
+    fn greeting_stays_local_instead_of_invoking_codex() {
+        let command = parse_command("hello").expect("greeting");
+        assert_eq!(command, AgentShellCommand::Greeting);
+    }
+
+    #[test]
+    fn startup_summary_is_not_codex_locked() {
+        let (_temp, _config_path, cfg) = temp_cfg();
+        let summary = startup_summary(&cfg).expect("summary");
+
+        assert!(summary.contains("mode:\u{1b}[0m local_control_plane"));
+        assert!(summary.contains("enabled_tools:"));
+        assert!(!summary.contains("codex_harness"));
+        assert!(!summary.contains("Type a question to chat through Codex"));
     }
 
     #[test]
