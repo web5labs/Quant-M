@@ -274,6 +274,33 @@ The onboarding flow covers workspace, device type, network posture, model provid
 
 CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
 
+<table>
+  <tr>
+    <td width="50%">
+      <img src="assets/onboarding/onboarding-welcome.png" alt="Quant-M onboarding welcome and workspace prompt">
+    </td>
+    <td width="50%">
+      <img src="assets/onboarding/onboarding-device.png" alt="Quant-M onboarding device profile selection">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="assets/onboarding/onboarding-network.png" alt="Quant-M onboarding network safety selection">
+    </td>
+    <td width="50%">
+      <img src="assets/onboarding/onboarding-tools.png" alt="Quant-M onboarding optional CLI tool selection">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="assets/onboarding/onboarding-continuity.png" alt="Quant-M onboarding operator channel and context guardian selection">
+    </td>
+    <td width="50%">
+      <img src="assets/onboarding/onboarding-review.png" alt="Quant-M onboarding final profile review before saving">
+    </td>
+  </tr>
+</table>
+
 For the fuller colored HTML version, open [`docs/onboarding-mockup.html`](docs/onboarding-mockup.html).
 
 ## Validation
