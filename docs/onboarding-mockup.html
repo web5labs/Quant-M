@@ -195,14 +195,26 @@ It stores memory, sessions, shared state, and replay evidence on this device.
 
 <span class="dim">────────────────────────────────────────</span>
 <span class="bold cyan">Step 5: Developer tools</span>
-<span class="dim">Detect Codex, Gemini, Claude, OpenCode, and Antigravity-style CLIs already on PATH.</span>
+<span class="dim">Choose optional CLIs Quant-M should recognize. Detection does not grant execution permission.</span>
 
-<span class="bold cyan">Scan for supported developer tools?</span>
+<span class="bold">Pick optional CLI tools to recognize.</span>
 
-  <span class="cyan"> 1</span>   🔎 Yes, scan PATH
-  <span class="cyan"> 2</span>   ⏭️ Skip for now
+  <span class="cyan"> 0</span>   ⏭️ none for now
+  <span class="cyan"> 1</span>   🔎 Scan PATH and enable detected supported tools
+  <span class="cyan"> 2</span>   Codex CLI <span class="dim">(OpenAI Codex agent CLI)</span>
+       <span class="dim">Codex is the OpenAI Codex CLI; OpenAI CLI is listed separately.</span>
+  <span class="cyan"> 3</span>   OpenAI CLI <span class="dim">(OpenAI platform CLI)</span>
+  <span class="cyan"> 4</span>   Gemini CLI <span class="dim">(Google Gemini CLI)</span>
+  <span class="cyan"> 5</span>   Claude CLI <span class="dim">(Anthropic Claude Code-style CLI)</span>
+  <span class="cyan"> 6</span>   Anthropic CLI <span class="dim">(Anthropic platform CLI)</span>
+  <span class="cyan"> 7</span>   OpenCode CLI <span class="dim">(open coding agent CLI)</span>
+  <span class="cyan"> 8</span>   Antigravity CLI <span class="dim">(Antigravity-style CLI)</span>
+  <span class="cyan"> 9</span>   Ollama <span class="dim">(local model runtime)</span>
+  <span class="cyan">10</span>   LM Studio <span class="dim">(local model runtime via lms)</span>
 
-<span class="bold">Select</span> <span class="dim">[1]</span>:
+<span class="dim">Type numbers separated by commas, ids like codex/openai/antigravity, `scan`, or `none`.</span>
+
+<span class="bold">Select CLI tool(s)</span> <span class="dim">[1]</span>:
 
 <span class="dim">────────────────────────────────────────</span>
 <span class="bold cyan">Step 6: Operator channel</span>

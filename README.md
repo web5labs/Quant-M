@@ -204,7 +204,7 @@ For a throwaway demo config that will not touch your local setup:
 ./quantm --config /tmp/quant-m-demo.toml onboard
 ```
 
-The flow covers workspace, device type, network posture, model provider, local model availability, developer tools, operator channel, continuity guard, and final review.
+The flow covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review. CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio; detection does not grant execution permission.
 
 For the fuller colored HTML version, open [`docs/onboarding-mockup.html`](docs/onboarding-mockup.html).
 
@@ -212,7 +212,7 @@ For the fuller colored HTML version, open [`docs/onboarding-mockup.html`](docs/o
 
 Coding agents generate work. Agent harnesses coordinate tools and workers. Quant-M preserves evidence, replays decisions, normalizes payloads, tracks cost, and helps the next agent continue safely.
 
-Codex, Claude Code, Gemini, OpenCode, Antigravity-style CLIs, OpenRouter, and local models are better understood as optional tools that can run beside Quant-M, not competitors to Quant-M.
+Codex CLI, OpenAI CLI, Claude Code, Gemini, OpenCode, Antigravity-style CLIs, OpenRouter, and local models are better understood as optional tools that can run beside Quant-M, not competitors to Quant-M.
 
 ## Validation
 

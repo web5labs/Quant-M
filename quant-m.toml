@@ -199,6 +199,12 @@ kind = "open_claw"
 command = "openclaw"
 validation_args = ["--version"]
 
+[tools.openai]
+enabled = false
+kind = "open_ai"
+command = "openai"
+validation_args = ["--version"]
+
 [tools.opencode]
 enabled = false
 kind = "open_code"

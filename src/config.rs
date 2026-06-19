@@ -168,6 +168,7 @@ pub struct ToolConfig {
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
     Codex,
+    OpenAi,
     Gemini,
     Anthropic,
     Claude,
@@ -1335,6 +1336,7 @@ fn default_tool_registry() -> BTreeMap<String, ToolConfig> {
     let mut tools = BTreeMap::new();
     for (id, kind, command, args) in [
         ("codex", ToolKind::Codex, "codex", vec!["--version"]),
+        ("openai", ToolKind::OpenAi, "openai", vec!["--version"]),
         ("gemini", ToolKind::Gemini, "gemini", vec!["--version"]),
         (
             "anthropic",

@@ -2279,40 +2279,36 @@ fn run_interactive_setup(
     print_onboarding_section(
         "5",
         "Developer tools",
-        "Detect Codex, Gemini, Claude, OpenCode, and Antigravity-style CLIs already on PATH.",
+        "Choose optional CLIs Quant-M should recognize. Detection does not grant execution permission.",
     );
-    let scan_tools = prompt_numbered_choice(
-        "Scan for supported developer tools?",
-        &[("🔎 Yes, scan PATH", "yes"), ("⏭️ Skip for now", "skip")],
-        1,
-    )?;
-    if scan_tools == "yes" {
-        let detected = scan_supported_developer_tools(cfg);
-        if detected.is_empty() {
-            let command = quant_m_command_hint();
-            println!(
-                "{}No supported developer CLI tools detected.{} You can add them later with `{command} tool scan`.",
-                ANSI_YELLOW, ANSI_RESET
-            );
-            print_codex_setup_steps();
-        } else {
-            for tool in &detected {
-                enable_tool_arg(&mut args, &tool.id);
-            }
-            println!(
-                "{}{}✓ Detected:{} {}",
-                ANSI_BOLD,
-                ANSI_GREEN,
-                ANSI_RESET,
-                detected
-                    .iter()
-                    .map(|tool| tool.display.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            let command = quant_m_command_hint();
-            println!("Validate any detected tool later with: {command} tool validate <tool>");
+    let selected_tools = prompt_developer_tools(cfg)?;
+    if selected_tools.is_empty() {
+        let command = quant_m_command_hint();
+        println!(
+            "{}No CLI tools selected.{} You can add them later with `{command} onboard` or `{command} tool scan`.",
+            ANSI_DIM, ANSI_RESET
+        );
+    } else {
+        for tool in &selected_tools {
+            enable_tool_arg(&mut args, tool);
         }
+        let command = quant_m_command_hint();
+        println!(
+            "{}{}✓ Tool preferences:{} {}",
+            ANSI_BOLD,
+            ANSI_GREEN,
+            ANSI_RESET,
+            selected_tools
+                .iter()
+                .map(|tool| developer_tool_display(tool))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        println!(
+            "{}Detection is not permission. Shell-backed use still requires config and policy.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+        println!("Validate any selected tool later with: {command} tool validate <tool>");
     }
 
     if args.channel.is_none() {
@@ -2914,6 +2910,141 @@ fn prompt_secret_like(label: &str) -> Result<String> {
     Ok(strip_terminal_escape_input(input.trim()))
 }
 
+fn prompt_developer_tools(cfg: &Config) -> Result<Vec<String>> {
+    let options = developer_tool_menu_options();
+    println!();
+    println!(
+        "{}Pick optional CLI tools to recognize.{}",
+        ANSI_BOLD, ANSI_RESET
+    );
+    println!("  {} 0{}   ⏭️ none for now", ANSI_CYAN, ANSI_RESET);
+    println!(
+        "  {} 1{}   🔎 Scan PATH and enable detected supported tools",
+        ANSI_CYAN, ANSI_RESET
+    );
+    for (index, (id, label, note)) in options.iter().enumerate() {
+        println!(
+            "  {}{:>2}{}   {} {}({}){}",
+            ANSI_CYAN,
+            index + 2,
+            ANSI_RESET,
+            label,
+            ANSI_DIM,
+            note,
+            ANSI_RESET
+        );
+        if *id == "codex" {
+            println!(
+                "       {}Codex is the OpenAI Codex CLI; OpenAI CLI is listed separately.{}",
+                ANSI_DIM, ANSI_RESET
+            );
+        }
+    }
+    println!();
+    println!(
+        "{}Type numbers separated by commas, ids like codex/openai/antigravity, `scan`, or `none`.{}",
+        ANSI_DIM, ANSI_RESET
+    );
+
+    loop {
+        let answer = prompt_default("Select CLI tool(s)", "1")?;
+        match parse_developer_tool_selection(&answer, cfg) {
+            Ok(selected) => return Ok(selected),
+            Err(err) => println!("{err}"),
+        }
+    }
+}
+
+fn developer_tool_menu_options() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
+        ("codex", "Codex CLI", "OpenAI Codex agent CLI"),
+        ("openai", "OpenAI CLI", "OpenAI platform CLI"),
+        ("gemini", "Gemini CLI", "Google Gemini CLI"),
+        ("claude", "Claude CLI", "Anthropic Claude Code-style CLI"),
+        ("anthropic", "Anthropic CLI", "Anthropic platform CLI"),
+        ("opencode", "OpenCode CLI", "open coding agent CLI"),
+        ("antigravity", "Antigravity CLI", "Antigravity-style CLI"),
+        ("ollama", "Ollama", "local model runtime"),
+        ("lmstudio", "LM Studio", "local model runtime via lms"),
+    ]
+}
+
+fn parse_developer_tool_selection(answer: &str, cfg: &Config) -> Result<Vec<String>> {
+    let trimmed = answer.trim();
+    if trimmed.is_empty() || trimmed == "1" || trimmed.eq_ignore_ascii_case("scan") {
+        let detected = scan_supported_developer_tools(cfg);
+        if detected.is_empty() {
+            let command = quant_m_command_hint();
+            println!(
+                "{}No supported CLI tools detected on PATH.{}",
+                ANSI_YELLOW, ANSI_RESET
+            );
+            print_codex_setup_steps();
+            println!("You can add tools later with: {command} tool scan");
+        }
+        return Ok(unique_tool_ids(detected.into_iter().map(|tool| tool.id)));
+    }
+    if trimmed == "0"
+        || trimmed.eq_ignore_ascii_case("none")
+        || trimmed.eq_ignore_ascii_case("skip")
+    {
+        return Ok(Vec::new());
+    }
+
+    let options = developer_tool_menu_options();
+    let mut selected = Vec::new();
+    for raw in trimmed.split(',') {
+        let item = normalize_registry_id(raw.trim());
+        if item.is_empty() {
+            continue;
+        }
+        if item == "scan" {
+            selected.extend(
+                scan_supported_developer_tools(cfg)
+                    .into_iter()
+                    .map(|tool| tool.id),
+            );
+            continue;
+        }
+        if item == "0" || item == "none" || item == "skip" {
+            continue;
+        }
+        if let Ok(index) = item.parse::<usize>() {
+            if index == 1 {
+                selected.extend(
+                    scan_supported_developer_tools(cfg)
+                        .into_iter()
+                        .map(|tool| tool.id),
+                );
+                continue;
+            }
+            let option_index = index.saturating_sub(2);
+            let Some((id, _label, _note)) = options.get(option_index) else {
+                anyhow::bail!("tool number {index} is not in the menu");
+            };
+            selected.push((*id).to_string());
+            continue;
+        }
+        let known = options.iter().any(|(id, _label, _note)| *id == item)
+            || supported_developer_tool_ids().contains(&item.as_str());
+        if !known {
+            anyhow::bail!("unknown CLI tool `{item}`");
+        }
+        selected.push(item);
+    }
+    Ok(unique_tool_ids(selected))
+}
+
+fn unique_tool_ids(ids: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut selected = Vec::new();
+    for id in ids {
+        if !selected.contains(&id) {
+            selected.push(id);
+        }
+    }
+    selected
+}
+
 #[derive(Debug, Clone)]
 struct DetectedTool {
     id: String,
@@ -2923,12 +3054,15 @@ struct DetectedTool {
 fn developer_tool_display(id: &str) -> String {
     match id {
         "codex" => "Codex CLI".to_string(),
+        "openai" => "OpenAI CLI".to_string(),
         "gemini" => "Gemini CLI".to_string(),
         "anthropic" => "Anthropic CLI".to_string(),
         "claude" => "Claude CLI".to_string(),
         "opencode" => "OpenCode CLI".to_string(),
         "antigravity" => "Antigravity CLI".to_string(),
         "antgravity" => "Antgravity CLI".to_string(),
+        "ollama" => "Ollama".to_string(),
+        "lmstudio" => "LM Studio".to_string(),
         other => other.to_string(),
     }
 }
@@ -2936,12 +3070,15 @@ fn developer_tool_display(id: &str) -> String {
 fn supported_developer_tool_ids() -> &'static [&'static str] {
     &[
         "codex",
+        "openai",
         "gemini",
         "anthropic",
         "claude",
         "opencode",
         "antigravity",
         "antgravity",
+        "ollama",
+        "lmstudio",
     ]
 }
 
@@ -4359,6 +4496,48 @@ mod tests {
         assert_eq!(strip_terminal_escape_input("\u{1b}[Cskip"), "skip");
         assert_eq!(strip_terminal_escape_input("^[[Cskip"), "skip");
         assert_eq!(strip_terminal_escape_input("skip"), "skip");
+    }
+
+    #[test]
+    fn developer_tool_selection_supports_manual_cli_choices() {
+        let (_tmp, cfg) = temp_cfg();
+
+        let selected = parse_developer_tool_selection("2,3,antigravity,ollama,lmstudio", &cfg)
+            .expect("parse tools");
+
+        assert_eq!(
+            selected,
+            vec![
+                "codex".to_string(),
+                "openai".to_string(),
+                "antigravity".to_string(),
+                "ollama".to_string(),
+                "lmstudio".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn developer_tool_selection_supports_none_and_dedupes() {
+        let (_tmp, cfg) = temp_cfg();
+
+        assert!(
+            parse_developer_tool_selection("none", &cfg)
+                .expect("parse none")
+                .is_empty()
+        );
+
+        let selected =
+            parse_developer_tool_selection("codex, codex, openai", &cfg).expect("parse tools");
+
+        assert_eq!(selected, vec!["codex".to_string(), "openai".to_string()]);
+    }
+
+    #[test]
+    fn developer_tool_selection_rejects_unknown_tools() {
+        let (_tmp, cfg) = temp_cfg();
+
+        assert!(parse_developer_tool_selection("madeup", &cfg).is_err());
     }
 
     #[test]
