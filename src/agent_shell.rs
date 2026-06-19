@@ -201,6 +201,9 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
             "That looks like a Quant-M command, but this shell does not run it directly yet. Type exit first, then run `{trimmed}` from your terminal."
         ))),
         _ if parts.len() <= 2 => {
+            if is_chat_like_input(trimmed) {
+                return Ok(AgentShellCommand::Ask(trimmed.to_string()));
+            }
             if let Some(suggestion) = suggest_command(trimmed) {
                 Ok(AgentShellCommand::Hint(format!(
                     "Did you mean {suggestion}? Try: {suggestion}"
@@ -248,6 +251,20 @@ fn looks_like_local_command(input: &str) -> bool {
             | "onboard"
             | "tui"
     )
+}
+
+fn is_chat_like_input(input: &str) -> bool {
+    let normalized = input
+        .trim()
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
+        .replace(['_', '-'], " ");
+    let normalized = normalized.trim();
+    normalized.ends_with('?')
+        || matches!(
+            normalized,
+            "hi" | "hello" | "hey" | "yo" | "thanks" | "thank you"
+        )
 }
 
 fn suggest_command(input: &str) -> Option<&'static str> {
@@ -866,6 +883,14 @@ mod tests {
         assert_eq!(
             parse_command("what is Quant-M?").expect("free text"),
             AgentShellCommand::Ask("what is Quant-M?".to_string())
+        );
+        assert_eq!(
+            parse_command("hello").expect("greeting"),
+            AgentShellCommand::Ask("hello".to_string())
+        );
+        assert_eq!(
+            parse_command("help me?").expect("question"),
+            AgentShellCommand::Ask("help me?".to_string())
         );
         assert_eq!(
             parse_command("run mock-research").expect("mock"),

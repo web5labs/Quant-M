@@ -22,11 +22,22 @@ It began as a stress test for an AI-assisted quant-risk cluster: cheap edge devi
 
 ## Five-Minute Proof
 
-Clone the repo and start the local shell:
+Clone the repo:
 
 ```bash
 git clone https://github.com/web5labs/Quant-M.git
 cd Quant-M
+```
+
+For guided first-run setup, start onboarding:
+
+```bash
+./quantm onboard
+```
+
+For the local shell directly:
+
+```bash
 ./quantm
 ```
 
@@ -39,10 +50,21 @@ help
 exit
 ```
 
+To chat through the Codex CLI from inside the shell, use `ask <question>` after Codex is installed and logged in:
+
+```text
+ask what should I inspect first?
+```
+
 Or run the proof loop directly:
 
 ```bash
 ./quantm consensus --dry-run "What should a new Quant-M user inspect first?"
+```
+
+Copy the printed `session_id`, then run:
+
+```bash
 ./quantm replay <session_id>
 ./quantm compact <session_id>
 ./quantm context guard --json
