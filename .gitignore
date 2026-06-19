@@ -18,8 +18,7 @@ Thumbs.db
 /strategist/
 
 # Local runtime workspace/state
-/workspace/*
-!/workspace/.gitkeep
+/workspace/
 
 # Local copied runtime/state workspaces
 /workspace-copy/
