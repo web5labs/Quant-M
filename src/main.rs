@@ -1784,11 +1784,109 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
     bootstrap::ensure_workspace(&cfg)?;
     let _truth_report = truth_files::init_truth_files(&cfg, false)?;
 
+    print_quant_m_brand_banner();
     println!(
         "Quant-M ready.\nworkspace: {}\n\nOpening the local shell. Type help, demo, doctor, or exit.\n",
         init.workspace.display()
     );
     agent_shell::run(&cfg, config_path)
+}
+
+const QUANT_M_ASCII_BANNER: &[&str] = &[
+    "██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗      ███╗   ███╗",
+    "██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝      ████╗ ████║",
+    "██║   ██║██║   ██║███████║██╔██╗ ██║   ██║   █████╗██╔████╔██║",
+    "██║▄▄ ██║██║   ██║██╔══██║██║╚██╗██║   ██║   ╚════╝██║╚██╔╝██║",
+    "╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║         ██║ ╚═╝ ██║",
+    " ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝         ╚═╝     ╚═╝",
+];
+
+fn print_quant_m_brand_banner() {
+    if !io::stdout().is_terminal() {
+        return;
+    }
+    let color_enabled = env::var_os("NO_COLOR").is_none();
+    let width = terminal_width();
+    if width < 78 {
+        if color_enabled {
+            println!("{ANSI_BOLD}{ANSI_BLUE}Quant-M{ANSI_RESET}");
+            println!("{ANSI_CYAN}Local-first governed AI work.{ANSI_RESET}");
+        } else {
+            println!("Quant-M");
+            println!("Local-first governed AI work.");
+        }
+        println!();
+        return;
+    }
+
+    let banner_width = QUANT_M_ASCII_BANNER
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(1);
+    println!();
+    for line in QUANT_M_ASCII_BANNER {
+        if color_enabled {
+            println!("{}", render_gradient_line(line, banner_width));
+        } else {
+            println!("{line}");
+        }
+    }
+    if color_enabled {
+        println!();
+        println!("{ANSI_CYAN}Local-first Rust control plane for governed AI work.{ANSI_RESET}");
+        println!(
+            "{ANSI_BLUE}Evidence | replay | FSM authority | side-effect gates | safe defaults{ANSI_RESET}"
+        );
+    } else {
+        println!();
+        println!("Local-first Rust control plane for governed AI work.");
+        println!("Evidence | replay | FSM authority | side-effect gates | safe defaults");
+    }
+    println!();
+}
+
+fn terminal_width() -> usize {
+    env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|width| *width > 0)
+        .unwrap_or(80)
+}
+
+fn render_gradient_line(line: &str, width: usize) -> String {
+    let mut rendered = String::new();
+    for (index, ch) in line.chars().enumerate() {
+        if ch == ' ' {
+            rendered.push(ch);
+            continue;
+        }
+        let denominator = width.saturating_sub(1).max(1) as f32;
+        let t = index as f32 / denominator;
+        let (red, green, blue) = gradient_rgb(t);
+        rendered.push_str(&format!("\x1b[38;2;{red};{green};{blue}m{ch}{ANSI_RESET}"));
+    }
+    rendered
+}
+
+fn gradient_rgb(t: f32) -> (u8, u8, u8) {
+    let start = (95.0, 215.0, 255.0);
+    let middle = (0.0, 140.0, 255.0);
+    let end = (20.0, 80.0, 255.0);
+    let (from, to, local_t) = if t < 0.5 {
+        (start, middle, t / 0.5)
+    } else {
+        (middle, end, (t - 0.5) / 0.5)
+    };
+    (
+        lerp_color(from.0, to.0, local_t),
+        lerp_color(from.1, to.1, local_t),
+        lerp_color(from.2, to.2, local_t),
+    )
+}
+
+fn lerp_color(from: f32, to: f32, t: f32) -> u8 {
+    (from.mul_add(1.0 - t, to * t).round()).clamp(0.0, 255.0) as u8
 }
 
 #[derive(Debug, Clone)]
@@ -2020,7 +2118,7 @@ fn run_interactive_setup(
     let base_args = args.clone();
     let mut args = args;
 
-    println!("{CLI_BANNER}");
+    print_quant_m_brand_banner();
     println!(
         "{}{}🧠 Welcome to Quant-M{}",
         ANSI_BOLD, ANSI_BLUE, ANSI_RESET
