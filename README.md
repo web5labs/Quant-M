@@ -1,107 +1,28 @@
 # Quant-M
 
 <p align="center">
-  <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="340">
+  <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="420">
 </p>
 
-**Quant-M is a flight recorder and control plane for AI-assisted work. It preserves evidence, decisions, costs, and context so agents can continue safely instead of starting over.**
+<p align="center">
+  <strong>Local-first Rust control plane and flight recorder for governed AI work.</strong>
+</p>
 
-AI agents can generate work fast, but they often lose the trail. Decisions disappear into chat history. Evidence gets buried. Context gets too long. Another model continues without knowing what was proven, what was rejected, or what still needs review.
+<p align="center">
+  Evidence · replay · FSM authority · side-effect gates · context continuity · safe local defaults
+</p>
 
-Quant-M gives AI work a memory, a flight recorder, and a safety boundary.
+Quant-M turns messy agent work into a local, inspectable record: what happened, what evidence supported it, what was blocked, what it cost, and whether another model or session can safely continue.
 
-It helps answer:
+It began as a stress test for an AI-assisted quant-risk cluster: cheap edge devices acting as workers, a stronger Rust core coordinating them, and strict finite state machines deciding whether high-risk actions were even allowed. Trading is not the product. It is the proving ground that forced Quant-M to care about evidence, replay, policy, cost, state, and operator authority.
 
-- What happened?
-- What evidence supported it?
-- What changed?
-- What was blocked?
-- What did it cost?
-- Can another agent safely continue?
+> `v0.1.0-alpha`: public developer preview. Local-first, CLI-first, intentionally conservative, and not a production trading system.
 
-> v0.1.0-beta: CLI-first, local-first, and intentionally conservative. Sharp edges are expected.
+[Five-Minute Proof](#five-minute-proof) | [Story](#story) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Safety](#safety-posture) | [Release Notes](docs/release/v0.1.0-alpha.md)
 
-[Quick Start](#quick-start) | [How It Works](#how-it-works) | [Continuity Story](#continuity-story) | [Features](#features) | [Where It Fits](#where-quant-m-fits) | [Release Notes](docs/release/v0.1.0-beta.md)
+## Five-Minute Proof
 
-## Current Capability Status
-
-Quant-M uses explicit capability maturity labels. The Rust inventory is the source of truth:
-
-```bash
-./quantm capabilities
-./quantm capabilities --json
-./quantm capabilities show <capability_id>
-./quantm capabilities audit-docs
-```
-
-Status labels include `shipped`, `guarded`, `dry_run`, `mock`, `experimental`, `design_only`, `external_required`, `unavailable`, and `deprecated`.
-
-Safety rules: Quant-M is local-first; workers propose and the core decides; channels are not execution authority; live trading is denied; provider, network, shell, webhook, and Telegram paths stay gated; detection does not equal permission.
-
-## Runtime State Authority
-
-Markdown explains why. Rust decides state. Replay proves.
-
-Typed FSMs in `src/fsm_core.rs` currently cover worker jobs, session/replay compatibility, policy approval, skill execution, worker proposal review, and Context Guardian continuity state. Shell-backed skills remain blocked unless config and policy allow them; a blocked skill is a safety outcome, not a runtime failure. Context commands still show green/yellow/red for readability, but JSON also includes typed `context_state`, `context_event`, `recommended_action`, `fsm_transition`, `blocked`, and `operator_review_required` fields so new sessions can make repeatable compact, handoff, or review decisions.
-
-Proof commands:
-
-```bash
-quant-m fsm authority
-quant-m fsm authority --json
-cargo test fsm_core
-cargo test skills
-cargo test typed
-cargo test proposal
-```
-
-## Why This Exists
-
-Quant-M is Git-like history for AI work.
-
-It is a flight recorder for agent sessions.
-
-It helps agents continue without pretending they remember.
-
-It favors governed execution over unchecked autonomy.
-
-The goal is not flashy autonomy. The goal is durable intelligence: local evidence, replayable sessions, compact handoffs, degraded-context warnings, and human authority over worker output.
-
-## How It Works
-
-Long AI sessions tend to fail the same way: the work grows, the context window fills, and the next agent has to guess what mattered. Quant-M turns that into a local proof loop.
-
-An agent works.
-
-Quant-M records evidence.
-
-When context becomes stale, Quant-M creates a compact packet.
-
-The Context Guardian prepares a continuation handoff.
-
-A new agent resumes from accepted facts instead of rereading thousands of lines.
-
-Quant-M does not try to make agents more magical. It makes their work easier to inspect, replay, resume, and stop.
-
-## Continuity Story
-
-Imagine an eight-hour research or coding session. The agent has inspected files, rejected bad paths, found useful evidence, and spent tokens getting there. Then the context window is nearly exhausted.
-
-Without Quant-M, the next session starts by rereading chat history and hoping the summary is right.
-
-With Quant-M, the run leaves behind session evidence, a replayable record, a compact packet, a continuity handoff, and cost records. A new agent can resume from the accepted facts instead of rebuilding the whole trail from memory.
-
-## Why The Water Bear?
-
-The water bear is not just a mascot. It is the product philosophy.
-
-Tardigrades are famous for surviving brutal conditions: pressure, radiation, dehydration, cold, heat, and even space-like environments. Quant-M is built for the harsh parts of agent work: context loss, drift, stale memory, incomplete evidence, failed runs, and handoffs between models.
-
-Most AI tools optimize for speed, autonomy, and more agents. Quant-M optimizes for survival, continuity, and resilience. The little armored creature is a reminder: make the work durable before making it autonomous.
-
-## Quick Start
-
-Clone it and start locally:
+Clone the repo and start the local shell:
 
 ```bash
 git clone https://github.com/web5labs/Quant-M.git
@@ -109,9 +30,7 @@ cd Quant-M
 ./quantm
 ```
 
-The launcher builds the local release binary if needed, prepares safe local state, and opens the Quant-M shell.
-
-Inside the shell, try:
+Inside `quant-m>`, try:
 
 ```text
 demo
@@ -120,13 +39,134 @@ help
 exit
 ```
 
-If you paste outer-terminal commands while inside `quant-m>`, Quant-M will still run the local ones it recognizes. For example, `doctor`, `quant-m doctor`, and `./quantm doctor` all run the local doctor check.
+Or run the proof loop directly:
 
-The first run is intentionally local. No broker. No live model call. No browser harness. No hosted service. No API key.
+```bash
+./quantm consensus --dry-run "What should a new Quant-M user inspect first?"
+./quantm replay <session_id>
+./quantm compact <session_id>
+./quantm context guard --json
+./quantm cost summary
+./quantm fsm authority
+```
+
+The first run is intentionally safe:
+
+- no broker
+- no live trading
+- no hidden provider call
+- no automatic shell execution
+- no hosted service requirement
+- no API key requirement
+
+## Story
+
+Quant-M has two namesakes.
+
+**The water bear** represents resilience. Tardigrades survive pressure, radiation, dehydration, cold, heat, and space-like environments. Quant-M is built for the harsh parts of AI work: stale context, failed runs, drift, interrupted sessions, incomplete evidence, and handoffs between models.
+
+**The quant** represents disciplined decision systems. The original concept was an AI hedge-fund-style cluster where old Wi-Fi-capable devices became small workers reporting to a stronger core machine. Each worker could research, propose, or monitor, but high-risk actions had to pass through explicit evidence, weighted checks, policy gates, and finite state machines.
+
+The original benchmark desks were:
+
+| Benchmark desk | Why it stresses the runtime |
+| --- | --- |
+| Forex | Multi-session markets, macro timing, risk discipline |
+| Stocks | Market hours, news noise, portfolio context |
+| Crypto arbitrage | Fragmented APIs, fast state changes, execution risk |
+| Bitcoin DCA | Long-running accumulation, cost and schedule tracking |
+| Prediction-style markets | Ambiguous signals, sentiment, and operator review |
+
+Those desks are not the alpha product promise. They explain why Quant-M is strict. A system shaped by high-risk decision environments cannot treat chat text as authority, cannot let workers silently execute, and cannot replay side effects.
+
+## Runtime Model
+
+Markdown explains why. Rust decides state. Replay proves.
+
+```mermaid
+flowchart LR
+    A[Agent or worker output] --> B[Normalize payload]
+    B --> C[Record evidence]
+    C --> D[Policy and FSM authority]
+    D --> E{Allowed?}
+    E -->|yes| F[Local action or accepted state]
+    E -->|blocked| G[Blocked evidence]
+    E -->|approval pending| H[Operator review]
+    F --> I[Replay without side effects]
+    G --> I
+    H --> I
+```
+
+Quant-M is not trying to make agents more magical. It makes their work easier to inspect, replay, resume, and stop.
+
+```mermaid
+flowchart TD
+    S[Long-running session] --> E[Session evidence]
+    E --> R[Replay record]
+    E --> C[Compact packet]
+    C --> G[Context Guardian]
+    G --> H[Continuation handoff]
+    H --> N[New agent resumes from accepted facts]
+```
+
+## What Quant-M Does
+
+| Surface | Purpose |
+| --- | --- |
+| Evidence trail | Preserve what happened and where proof lives |
+| Replay | Re-check a run without repeating side effects |
+| Compact packets | Turn long sessions into small continuation files |
+| Context Guardian | Emit typed continuation state and recommended action |
+| Cost ledger | Inspect dry-run and provider-path costs locally |
+| Capability truth | Distinguish shipped, guarded, dry-run, mock, experimental, design-only, external-required, unavailable, and deprecated surfaces |
+| Side-effect policy gate | Normalize decisions such as `allowed`, `blocked`, `approval_pending`, `denied`, `unavailable`, `dry_run_only`, and `replay_skipped` |
+| Workflow cursor FSM | Keep workflow execution ordered without pretending descriptor browsing is execution |
+
+## Authority Snapshot
+
+The Rust authority registry is the source of truth:
+
+```bash
+./quantm fsm authority
+./quantm fsm authority --json
+./quantm capabilities
+./quantm capabilities --json
+```
+
+Current alpha snapshot:
+
+| FSM | Status |
+| --- | --- |
+| `worker_job` | `wired` |
+| `skill_execution` | `wired` |
+| `context_guardian` | `wired` |
+| `workflow_cursor` | `partially_wired` |
+| `policy_approval` | `partially_wired` |
+| `session_replay` | `partially_wired` |
+| `worker_proposal` | `partially_wired` |
+| `provider_tool_onboarding` | `audited_only` |
+| `question_consensus_strategist` | `audited_only` |
+| `shared_state_lifecycle` | `audited_only` |
+
+`partially_wired` and `audited_only` are honest labels. Quant-M should not claim universal runtime authority where a surface is still inspection-only, locally validated, or documented rather than fully enforced.
+
+## Safety Posture
+
+Quant-M is conservative on purpose:
+
+- Workers propose; the governed core decides.
+- Channels are not execution authority.
+- Replay does not repeat side effects.
+- Shell-backed skills are blocked unless config and policy allow them.
+- Provider, network, Telegram, webhook, HTTP worker, and shell paths stay gated.
+- Live trading, broker execution, exchange execution, and auto-approval are not enabled.
+- Detection does not equal permission: a model, CLI, tool, or channel can be present without being allowed.
+
+This release is useful for evaluating the governance model, not for delegating unchecked autonomy.
 
 ## Onboarding Preview
 
-Run the guided setup when you want the first-run questions instead of jumping straight into the shell:
+Run guided setup when you want first-run questions instead of jumping straight into the shell:
 
 ```bash
 ./quantm onboard
@@ -138,248 +178,52 @@ For a throwaway demo config that will not touch your local setup:
 ./quantm --config /tmp/quant-m-demo.toml onboard
 ```
 
-The flow is deliberately short: workspace, device type, network posture, model provider, developer tools, operator channel, continuity guard, and final review.
-
-<details>
-<summary><strong>HTML-style terminal preview</strong></summary>
-
-<br>
-
-<pre>
-<strong>🧠 Welcome to Quant-M</strong>
-
-<strong>Quant-M is a local-first Rust runtime for governed agent work.</strong>
-It stores memory, sessions, shared state, and replay evidence on this device.
-This device can run as a Quant-M Agent Node.
-
-────────────────────────────────────────
-<strong>Step 1: Workspace</strong>
-Choose where local memory and sessions live.
-
-<strong>Where should Quant-M store its local memory, state, sessions, and queues?</strong> [./workspace]:
-
-────────────────────────────────────────
-<strong>Step 2: Device</strong>
-Pick the closest runtime profile.
-
-<strong>Choose this device type.</strong>
-
-   1   💻 Laptop or desktop
-   2   📱 Phone / Termux / edge device
-   3   🏢 Staff-OS worker node
-   4   🖥️ VPS / server
-
-<strong>Select</strong> [1]:
-
-────────────────────────────────────────
-<strong>Step 3: Network</strong>
-Keep first-run safe unless you opt in.
-
-<strong>Should Quant-M use the internet?</strong>
-
-   1   🔒 No, local only
-   2   ✋ Ask me before network use
-   3   🌐 Yes, allow provider checks
-
-<strong>Select</strong> [1]:
-
-────────────────────────────────────────
-<strong>Step 4: Models</strong>
-Quant-M can run with no model selected. Remote and local models are optional.
-
-<strong>Do you have an OpenRouter API key?</strong>
-
-   1   ⏭️ No, none for now
-   2   🔑 Yes, use OPENROUTER_API_KEY from my environment
-   3   💾 Yes, paste and save a key locally
-   4   📋 Not yet, show me the export command
-
-<strong>Select</strong> [1]:
-
-<strong>Do you have local model(s) available?</strong> [y/N]:
-
-────────────────────────────────────────
-<strong>Step 5: Developer tools</strong>
-Detect Codex, Gemini, Claude, OpenCode, and Antigravity-style CLIs already on PATH.
-
-<strong>Scan for supported developer tools?</strong>
-
-   1   🔎 Yes, scan PATH
-   2   ⏭️ Skip for now
-
-<strong>Select</strong> [1]:
-
-────────────────────────────────────────
-<strong>Step 6: Operator channel</strong>
-Choose the default way Quant-M talks to you.
-
-<strong>How should Quant-M talk to you?</strong>
-
-   1   ⌨️ Terminal
-   2   🔗 Webhook later
-   3   ✈️ Telegram later
-
-<strong>Select</strong> [1]:
-
-────────────────────────────────────────
-<strong>Step 7: Continuity</strong>
-Keep long sessions recoverable with local handoff packets.
-
-<strong>Start context guardian automatically when the Quant-M daemon runs?</strong>
-
-   1   🛡️ Yes, keep continuity handoffs ready
-   2   ⏭️ No, I will run context guard manually
-
-<strong>Select</strong> [1]:
-
-╭─ Onboarding review ─────────────────────╮
-│ workspace       ./workspace
-│ device_type     laptop
-│ network         local only / ask before live checks
-│ model_provider  none
-│ tools           codex
-│ channel         none
-│ guardian        enabled
-│ config          /tmp/quant-m-demo.toml
-╰─────────────────────────────────────────╯
-
-<strong>Ready to save this onboarding profile?</strong>
-
-   1   ✅ Save and continue
-   2   🔁 Start over
-
-<strong>Select</strong> [1]:
-
-✓ Setup complete.
-
-Next:
-  ./quantm agent
-  ./quantm doctor
-  ./quantm demo
-</pre>
+The flow covers workspace, device type, network posture, model provider, local model availability, developer tools, operator channel, continuity guard, and final review.
 
 For the fuller colored HTML version, open [`docs/onboarding-mockup.html`](docs/onboarding-mockup.html).
 
-</details>
-
-## Try The Proof Loop
-
-In a few commands, you can see the core idea: create evidence, replay it, compact it, prepare a handoff, and inspect cost.
-
-```bash
-cargo run --release -- consensus --dry-run "What should a new Quant-M user inspect first?"
-```
-
-Copy the printed `session_id`, then run:
-
-```bash
-SESSION_ID=session-...
-cargo run --release -- replay "$SESSION_ID"
-cargo run --release -- compact "$SESSION_ID"
-cargo run --release -- context guard --json
-cargo run --release -- cost summary
-```
-
-You should see:
-
-- session evidence in `workspace/state/sessions/`
-- replay validation with no side effects
-- a compact packet in `workspace/state/compacted/`
-- a continuity handoff in `workspace/state/context-guardian/`
-- a local cost summary for the mock run
-
-## Features
-
-Quant-M keeps the homepage promise small and sharp:
-
-- Evidence trail: see what happened and where the proof lives.
-- Replay: re-check a run without repeating side effects.
-- Compact packets: turn long sessions into small continuation files.
-- Context Guardian: prepare handoffs when context is stale, risky, or too long.
-- Cost ledger: inspect dry-run and provider-path costs locally.
-- Policy gates: keep risky actions behind explicit operator control.
-- API payload normalization: switch between OpenAI, Gemini, OpenRouter, local models, workers, and CLIs with a steadier state shape.
-- Local-first setup: run the proof path without a hosted broker or API key.
-
 ## Where Quant-M Fits
 
-Coding agents generate code.
+Coding agents generate work. Agent harnesses coordinate tools and workers. Quant-M preserves evidence, replays decisions, normalizes payloads, tracks cost, and helps the next agent continue safely.
 
-Agent harnesses coordinate tools and workers.
+Codex, Claude Code, Gemini, OpenCode, Antigravity-style CLIs, OpenRouter, and local models are better understood as optional tools that can run beside Quant-M, not competitors to Quant-M.
 
-Quant-M preserves evidence, replays work, normalizes payloads, tracks cost, and helps the next agent continue safely.
+## Validation
 
-Codex, Claude Code, Antigravity CLI, and similar tools are better understood as tools that can run beside Quant-M, not competitors to Quant-M. Deeper harness comparisons and benchmark notes live in [BENCHMARKS.md](BENCHMARKS.md).
-
-## API Payload Normalization
-
-Quant-M treats model and tool output as untrusted until it is normalized. The user benefit is simple: you should be able to move between OpenAI, Gemini, OpenRouter, local models, workers, and CLI tools without rewriting your workflow records every time a payload shape changes.
-
-That normalization layer is what makes Quant-M useful beside coding tools and agent harnesses. A model can be creative, a worker can be messy, and an API can change shape; Quant-M still preserves a consistent local record of what was actually accepted.
-
-## v0.1.0-beta Proof
-
-The beta proof path is intentionally small:
-
-- 539 tests passing
-- 3.7M clean repository export
-- 4.2M release binary
-- local-first proof path with evidence, replay, compact packets, context guardian handoff, and cost summary
-
-Verified from a clean local export. Empty-machine verification pending.
-
-## Safety Defaults
-
-Quant-M is conservative on purpose:
-
-- It does not secretly call models.
-- It does not auto-accept worker output.
-- It does not treat chat text as authority.
-- It does not trade.
-- It does not need a hosted broker for the proof path.
-- It keeps optional integrations behind configuration and policy checks.
-
-## Useful Commands
+Local release validation for `v0.1.0-alpha` passed:
 
 ```bash
-# Start local shell
-./quantm
+cargo fmt --all -- --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo build --release --quiet
+python3 scripts/lint_project_onboarding.py --target .
+cargo run --quiet -- fsm authority --json
+```
 
-# Run any CLI command through the launcher
-./quantm doctor
-./quantm demo
+The `v0.1.0-alpha` release tag points at:
 
-# Proof path
-./quantm consensus --dry-run "What should we inspect first?"
-./quantm replay <session_id>
-./quantm compact <session_id>
-./quantm context guard --json
-./quantm cost summary
-
-# Operator surfaces
-./quantm agent
-./quantm shell
-./quantm tui
+```text
+720d68b5883da485365259e5417e0bb3bf413ea2
 ```
 
 ## Current Status
 
-Status as of June 16, 2026: **v0.1.0-beta candidate**.
-
-Use this as a public beta, not as production enterprise software. The current release is for local CLI users who want evidence, replay, context handoffs, cost visibility, and operator-controlled agent work.
+Status: **public developer preview / alpha**.
 
 Still developing:
 
-- release binaries and install scripts
-- fresh empty-machine Mac and Linux validation
+- packaged release binaries and installer scripts
+- fresh Mac and Linux first-run verification from README only
 - formal launchd/systemd autostart docs
 - broader provider normalization
 - worker federation
 - distributed state
+- shared-state lifecycle FSM
 
 ## Contributing
 
-Contributions should preserve Quant-M's local-first boundary: no hidden provider calls, no implicit live execution, and no worker proposal auto-acceptance.
+Contributions should preserve Quant-M's local-first boundary: no hidden provider calls, no implicit live execution, no channel-as-authority, no live trading, and no worker proposal auto-acceptance.
 
 ## License
 
