@@ -204,6 +204,24 @@ workspace/state/context-packets/<packet_id>/
 - If a task cannot fit into a small or medium packet, split the task unless the FSM state is audit, migration, or repair.
 - Implementation packet outputs should stay short: changed files, validation run, risks remaining, and next recommended state.
 
+## Phase 2D: Quant-M Boil Context Compression Savings Report
+
+Status: planned
+
+Measure continuation-context cost avoided by using compact evidence-backed packets instead of raw session history. Boil should sit on compact packets, context status, context guardian, context firewall, replay/session artifacts, and the existing cost ledger; it must not become a second compaction engine, provider proxy, live billing integration, or background compression system.
+
+Human-readable terminal and Markdown cost display must use `cost_ledger.rs` formatting so tiny estimates remain visible:
+
+```text
+Raw continuation estimate: $0.00021400 USD
+Boiled continuation estimate: $0.00001900 USD
+Estimated cost avoided: $0.00019500 USD
+```
+
+Machine-readable JSON must keep cost values numeric. JSON may add optional display fields, but numeric fields such as `raw_estimated_cost`, `boiled_estimated_cost`, and `estimated_cost_avoided` must not be replaced with formatted strings.
+
+Safety rule: optimize for safe continuation first and token savings second. If compact evidence is stale, incomplete, missing validation evidence, or unsafe to continue from, the report must say so even when estimated savings are large.
+
 ## Phase 3: Quant-M-Native Project Instruction Files
 
 Status: `PROJECT_TRUTH_FILES_01: COMPLETE`

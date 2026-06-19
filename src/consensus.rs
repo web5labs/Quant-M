@@ -236,7 +236,10 @@ pub fn run_consensus_dry_run(cfg: &Config, question: &str) -> Result<ConsensusRe
         actual_cost_usd: 0.0,
         estimated_cost_usd: 0.0,
         mode: "dry_run_mock".to_string(),
-        note: "$0.00 actual, mock-only".to_string(),
+        note: format!(
+            "{} actual, mock-only",
+            cost_ledger::format_currency_amount(0.0, "USD")
+        ),
     };
     let now = Utc::now().to_rfc3339();
     let metadata = ConsensusMetadata {

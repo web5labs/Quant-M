@@ -63,6 +63,12 @@ Idea / existing repo
   -> separate UI/UX goal
 ```
 
+## Token-compression boundary
+
+Quant-M's token discipline is a continuity layer, not a live provider-compression proxy. It saves tokens between sessions by turning long runs into compact, evidence-backed handoff packets instead of compressing every model request before it is sent.
+
+Closest current features: `quant-m compact <session_id>`, Context Guardian, Context Status, and Context Firewall packet tiers. A future Headroom-inspired upgrade should use real tokenizer budgets, before/after measurements, and optional local retrieval from compact evidence refs.
+
 ---
 
 ## Agent role

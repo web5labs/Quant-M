@@ -117,8 +117,8 @@ pub fn summarize_costs(
         .collect();
     records.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
-    let total_estimated_cost = round4(records.iter().map(|record| record.estimated_cost).sum());
-    let total_actual_cost = round4(records.iter().map(|record| record.actual_cost).sum());
+    let total_estimated_cost = round8(records.iter().map(|record| record.estimated_cost).sum());
+    let total_actual_cost = round8(records.iter().map(|record| record.actual_cost).sum());
     let dry_run_count = records.iter().filter(|record| record.dry_run).count();
     let by_workflow_kind = bucket_by(&records, |record| record.workflow_kind.as_str());
     let by_provider = bucket_by(&records, |record| record.provider.as_str());
@@ -148,12 +148,10 @@ pub fn summarize_costs(
 pub fn render_cost_summary(summary: &CostSummary) -> String {
     if summary.record_count == 0 {
         return format!(
-            "Cost summary\nrecords: 0\ninvalid_records: {}\ntotal_estimated_cost: {:.2} {}\ntotal_actual_cost: {:.2} {}\nnext: {}\n",
+            "Cost summary\nrecords: 0\ninvalid_records: {}\ntotal_estimated_cost: {}\ntotal_actual_cost: {}\nnext: {}\n",
             summary.invalid_record_count,
-            summary.total_estimated_cost,
-            summary.currency,
-            summary.total_actual_cost,
-            summary.currency,
+            format_currency_amount(summary.total_estimated_cost, &summary.currency),
+            format_currency_amount(summary.total_actual_cost, &summary.currency),
             summary.next_recommended_command
         );
     }
@@ -163,14 +161,12 @@ pub fn render_cost_summary(summary: &CostSummary) -> String {
         .map(|record| record.session_id.as_str())
         .unwrap_or("none");
     format!(
-        "Cost summary\nrecords: {}\ndry_run_records: {}\ninvalid_records: {}\ntotal_estimated_cost: {:.2} {}\ntotal_actual_cost: {:.2} {}\nby_workflow_kind: {}\nby_provider: {}\nlatest_session_id: {}\nnext: {}\n",
+        "Cost summary\nrecords: {}\ndry_run_records: {}\ninvalid_records: {}\ntotal_estimated_cost: {}\ntotal_actual_cost: {}\nby_workflow_kind: {}\nby_provider: {}\nlatest_session_id: {}\nnext: {}\n",
         summary.record_count,
         summary.dry_run_count,
         summary.invalid_record_count,
-        summary.total_estimated_cost,
-        summary.currency,
-        summary.total_actual_cost,
-        summary.currency,
+        format_currency_amount(summary.total_estimated_cost, &summary.currency),
+        format_currency_amount(summary.total_actual_cost, &summary.currency),
         format_buckets(&summary.by_workflow_kind),
         format_buckets(&summary.by_provider),
         latest_session,
@@ -218,8 +214,8 @@ fn bucket_by<'a>(
         bucket.actual_cost += record.actual_cost;
     }
     for bucket in buckets.values_mut() {
-        bucket.estimated_cost = round4(bucket.estimated_cost);
-        bucket.actual_cost = round4(bucket.actual_cost);
+        bucket.estimated_cost = round8(bucket.estimated_cost);
+        bucket.actual_cost = round8(bucket.actual_cost);
     }
     buckets
 }
@@ -232,12 +228,29 @@ fn format_buckets(buckets: &BTreeMap<String, CostSummaryBucket>) -> String {
         .iter()
         .map(|(key, bucket)| {
             format!(
-                "{} records={} estimated={:.2} actual={:.2}",
-                key, bucket.record_count, bucket.estimated_cost, bucket.actual_cost
+                "{} records={} estimated={} actual={}",
+                key,
+                bucket.record_count,
+                format_currency_amount(bucket.estimated_cost, "USD"),
+                format_currency_amount(bucket.actual_cost, "USD")
             )
         })
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+pub fn format_currency_amount(value: f64, currency: &str) -> String {
+    let value = round8(value);
+    let value = if value.abs() < 0.000000005 {
+        0.0
+    } else {
+        value
+    };
+    if currency.eq_ignore_ascii_case("usd") {
+        format!("${value:.8} USD")
+    } else {
+        format!("{value:.8} {}", currency.trim())
+    }
 }
 
 fn stable_hex(value: &str) -> String {
@@ -249,9 +262,13 @@ fn stable_hex(value: &str) -> String {
     format!("{hash:08x}")
 }
 
-fn round4(value: f64) -> f64 {
-    let rounded = (value * 10_000.0).round() / 10_000.0;
-    if rounded.abs() < 0.0001 { 0.0 } else { rounded }
+fn round8(value: f64) -> f64 {
+    let rounded = (value * 100_000_000.0).round() / 100_000_000.0;
+    if rounded.abs() < 0.00000001 {
+        0.0
+    } else {
+        rounded
+    }
 }
 
 #[cfg(test)]
@@ -359,8 +376,27 @@ mod tests {
         assert_eq!(summary.total_estimated_cost, 0.0);
         assert_eq!(summary.total_actual_cost, 0.0);
         assert!(rendered.contains("records: 0"));
-        assert!(rendered.contains("total_actual_cost: 0.00 USD"));
+        assert!(rendered.contains("total_actual_cost: $0.00000000 USD"));
         assert!(rendered.contains("quant-m consensus --dry-run"));
+    }
+
+    #[test]
+    fn tiny_costs_render_as_precise_dollar_amounts() {
+        let (_tmp, cfg) = temp_cfg();
+        let mut record =
+            consensus_dry_run_record("session-tiny", "workflow-tiny", "cmd", Some(19), None);
+        record.estimated_cost = 0.000019;
+        record.actual_cost = 0.000019;
+        append_cost_record(&cfg, &record).expect("append");
+
+        let summary = summarize_costs(&cfg, None, None).expect("summary");
+        let rendered = render_cost_summary(&summary);
+
+        assert_eq!(summary.total_estimated_cost, 0.000019);
+        assert_eq!(summary.total_actual_cost, 0.000019);
+        assert!(rendered.contains("total_estimated_cost: $0.00001900 USD"));
+        assert!(rendered.contains("total_actual_cost: $0.00001900 USD"));
+        assert!(rendered.contains("estimated=$0.00001900 USD"));
     }
 
     #[test]

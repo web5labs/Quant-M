@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::cost_ledger::format_currency_amount;
 use crate::worker_proposals::{
     SubmitWorkerProposalInput, WorkerProposalKind, WorkerProposalRecord, WorkerSurfaceKind,
     submit_worker_proposal,
@@ -214,14 +215,18 @@ pub fn render_question(question: &QuantMQuestion) -> String {
 
 pub fn render_agent_cluster_proposal_plan(plan: &AgentClusterProposalPlan) -> String {
     let mut out = format!(
-        "Question worker proposal plan\nmode: {}\nquestion: {}\ndecision_scope: {}\nestimated_cost: {:.2} {}\nactual_cost: {:.2} {}\nwrite_available: {}\n",
+        "Question worker proposal plan\nmode: {}\nquestion: {}\ndecision_scope: {}\nestimated_cost: {}\nactual_cost: {}\nwrite_available: {}\n",
         plan.question.mode,
         plan.question.question_text,
         plan.question.decision_scope,
-        plan.estimated_cost.estimated_cost,
-        plan.estimated_cost.currency,
-        plan.estimated_cost.actual_cost,
-        plan.estimated_cost.currency,
+        format_currency_amount(
+            plan.estimated_cost.estimated_cost,
+            &plan.estimated_cost.currency
+        ),
+        format_currency_amount(
+            plan.estimated_cost.actual_cost,
+            &plan.estimated_cost.currency
+        ),
         plan.write_available
     );
     out.push_str("worker_lanes:\n");

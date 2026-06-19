@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::cost_ledger::{self, CostLedgerRecord};
+use crate::cost_ledger::{self, CostLedgerRecord, format_currency_amount};
 use crate::sessions::{self, AgentId, DomainId, SessionContext, SessionEvent};
 use crate::worker_proposals::{
     SubmitWorkerProposalInput, WorkerProposalKind, WorkerProposalRecord, WorkerSurfaceKind,
@@ -330,7 +330,7 @@ pub fn render_terminal_summary(report: &StrategistReport) -> String {
          contradictions: {}\n\
          confidence: {:.2}\n\
          policy_result: {:?}\n\
-         actual_cost: {:.2} {}\n\
+         actual_cost: {}\n\
          report: {}\n\
          report_json: {}\n\
          evidence_index: {}\n\
@@ -345,8 +345,10 @@ pub fn render_terminal_summary(report: &StrategistReport) -> String {
         report.contradiction_summary,
         report.confidence,
         report.policy_result,
-        report.cost_estimate.actual_cost,
-        report.cost_estimate.currency,
+        format_currency_amount(
+            report.cost_estimate.actual_cost,
+            &report.cost_estimate.currency
+        ),
         report.artifact_paths.report_markdown.display(),
         report.artifact_paths.report_json.display(),
         report.artifact_paths.evidence_index_json.display(),
@@ -557,7 +559,7 @@ fn render_markdown_report(report: &StrategistReport) -> String {
          - strategy_scope: {}\n\
          - policy_result: {:?}\n\
          - confidence: {:.2}\n\
-         - actual_cost: {:.2} {}\n\n\
+         - actual_cost: {}\n\n\
          ## Lanes\n\n{}\n\n\
          ## Agreement\n\n{}\n\n\
          ## Contradictions\n\n{}\n\n\
@@ -568,8 +570,10 @@ fn render_markdown_report(report: &StrategistReport) -> String {
         report.strategy_scope,
         report.policy_result,
         report.confidence,
-        report.cost_estimate.actual_cost,
-        report.cost_estimate.currency,
+        format_currency_amount(
+            report.cost_estimate.actual_cost,
+            &report.cost_estimate.currency
+        ),
         lane_lines,
         report.agreement_summary,
         report.contradiction_summary,

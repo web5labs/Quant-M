@@ -182,7 +182,8 @@ impl DomainPack for MockResearchDomain {
             name: "Capture Research Brief".to_string(),
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
-            description: "Capture a research brief without mutating external state.".to_string(),
+            description: "Status: mock. Capture a research brief without mutating external state."
+                .to_string(),
             input_schema_name: "ResearchBriefInput".to_string(),
             output_schema_name: "ResearchBriefOutput".to_string(),
             side_effect_level: SideEffectLevel::ReadOnly,
@@ -218,7 +219,7 @@ impl DomainPack for MockResearchDomain {
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
             description:
-                "Review a research brief by reading current context and producing a draft summary."
+                "Status: mock. Review a research brief by reading current context and producing a draft summary."
                     .to_string(),
             steps: vec![WorkflowStepDescriptor {
                 step_id: "capture-brief".to_string(),
@@ -246,7 +247,7 @@ impl DomainPack for MockResearchDomain {
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
             description:
-                "Describe deterministic research brief transitions without executing them."
+                "Status: mock. Describe deterministic research brief transitions without executing them."
                     .to_string(),
             initial_state: FsmStateId::new("state:brief_received"),
             states: vec![
@@ -280,8 +281,9 @@ impl DomainPack for MockResearchDomain {
             name: "Mock Research Brief Scheduler".to_string(),
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
-            description: "Describe a cron-style research brief cadence without executing it."
-                .to_string(),
+            description:
+                "Status: mock. Describe a cron-style research brief cadence without executing it."
+                    .to_string(),
             cadence: ScheduleCadenceDescriptor {
                 trigger_kind: ScheduleTriggerKind::Cron,
                 cron_expr: Some("0 */6 * * *".to_string()),
@@ -310,8 +312,9 @@ impl DomainPack for MockResearchDomain {
             version: "0.1.0".to_string(),
             category: DeskCategory::Research,
             domain_id: self.domain_id(),
-            description: "Package the research brief flow as a reusable desk-shaped use case."
-                .to_string(),
+            description:
+                "Status: mock. Package the research brief flow as a reusable desk-shaped use case."
+                    .to_string(),
             skill_ids: vec!["mock-research.capture-brief".to_string()],
             workflow_ids: vec![WorkflowId::new("workflow:mock-research-brief")],
             fsm_ids: vec![FsmId::new("fsm:mock-research-brief")],
@@ -366,7 +369,7 @@ impl DomainPack for MockTradingDomain {
                 name: "Score Mock Handoff".to_string(),
                 version: "0.1.0".to_string(),
                 domain_id: self.domain_id(),
-                description: "Score a paper-trade handoff without touching live venues."
+                description: "Status: mock. Score a paper-trade handoff without touching live venues, brokers, exchanges, or live orders."
                     .to_string(),
                 input_schema_name: "MockHandoffInput".to_string(),
                 output_schema_name: "MockScoreOutput".to_string(),
@@ -379,7 +382,7 @@ impl DomainPack for MockTradingDomain {
                 name: "Prepare Paper Trade Review".to_string(),
                 version: "0.1.0".to_string(),
                 domain_id: self.domain_id(),
-                description: "Write local paper-trade review artifacts without live execution."
+                description: "Status: mock/guarded. Write local paper-trade review artifacts without broker/exchange integration or live execution."
                     .to_string(),
                 input_schema_name: "PaperTradeReviewInput".to_string(),
                 output_schema_name: "PaperTradeReviewOutput".to_string(),
@@ -444,7 +447,9 @@ impl DomainPack for MockTradingDomain {
             name: "Mock Trading Paper Review".to_string(),
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
-            description: "Review a paper-trade candidate without placing live orders.".to_string(),
+            description:
+                "Status: mock. Review a paper-trade candidate without placing live orders."
+                    .to_string(),
             steps: vec![
                 WorkflowStepDescriptor {
                     step_id: "score-handoff".to_string(),
@@ -482,7 +487,7 @@ impl DomainPack for MockTradingDomain {
             name: "Mock Trading Paper Review FSM".to_string(),
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
-            description: "Describe a paper-only trading review path without any live execution."
+            description: "Status: mock. Describe a paper-only trading review path without broker/exchange integration or live execution."
                 .to_string(),
             initial_state: FsmStateId::new("state:handoff_received"),
             states: vec![
@@ -535,8 +540,9 @@ impl DomainPack for MockTradingDomain {
             name: "Mock Trading Paper Review Scheduler".to_string(),
             version: "0.1.0".to_string(),
             domain_id: self.domain_id(),
-            description: "Describe a paper-only polling cadence for trading review prep."
-                .to_string(),
+            description:
+                "Status: mock. Describe a paper-only polling cadence for trading review prep."
+                    .to_string(),
             cadence: ScheduleCadenceDescriptor {
                 trigger_kind: ScheduleTriggerKind::Polling,
                 cron_expr: None,
@@ -562,7 +568,7 @@ impl DomainPack for MockTradingDomain {
             version: "0.1.0".to_string(),
             category: DeskCategory::Forex,
             domain_id: self.domain_id(),
-            description: "Package a paper-only trading review desk without enabling live trading."
+            description: "Status: mock. Package a paper-only trading review desk without broker/exchange integration, live orders, or live trading."
                 .to_string(),
             skill_ids: vec![
                 "mock-trading.score-handoff".to_string(),

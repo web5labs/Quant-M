@@ -6,6 +6,12 @@ Minimize token leakage by making agents read only what is necessary, only when n
 
 The firewall sits between Quant-M project memory and any agent packet. It does not replace the wiki, compact packets, session evidence, or project spec. It decides which small, state-relevant subset is allowed into a packet.
 
+The Context Firewall is not a live provider-compression proxy. It reduces future token waste by deciding what context a continuation agent is allowed to receive, then recording a receipt for that decision.
+
+## Headroom Boundary
+
+Headroom-style compression saves tokens before each LLM call. Quant-M context discipline saves tokens between sessions by starting the next run from compact truth instead of rediscovery. If a Headroom-inspired layer is added, it should use real tokenizer budgets, measured before/after compaction, and optional local retrieval from compact evidence refs.
+
 ## Token Leakage Definition
 
 Token leakage includes:
@@ -253,7 +259,7 @@ The first shippable Context Firewall slice should:
 ## Integration Rules
 
 - Reuse compact truth packets instead of creating a second summary layer.
-- Reuse context-status and context-decay checks before packet generation.
+- Reuse context-status, typed Context Guardian FSM fields, and context-decay checks before packet generation.
 - Reuse worker proposal records for non-authoritative agent packet outputs when possible.
 - Reuse FSM descriptors for state and transition checks.
 - Do not let packet generation mutate canonical project truth.
