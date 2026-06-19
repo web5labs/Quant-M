@@ -5,10 +5,6 @@
 </p>
 
 <p align="center">
-  <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="300">
-</p>
-
-<p align="center">
   <strong>Local-first Rust control plane and flight recorder for governed AI work.</strong>
 </p>
 
@@ -86,6 +82,10 @@ The first run is intentionally safe:
 - no API key requirement
 
 ## Story
+
+<p align="center">
+  <img src="assets/quant-m-product.png" alt="Quant-M silver armored water bear agent mascot" width="300">
+</p>
 
 Quant-M has two namesakes.
 
