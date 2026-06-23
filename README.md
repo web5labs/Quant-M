@@ -87,6 +87,14 @@ help
 exit
 ```
 
+For an inspect-first terminal cockpit, use the existing TUI chat mode:
+
+```bash
+./quantm tui chat --inspect
+```
+
+This is chat-shaped evidence navigation, not an agent authority surface. It reads structured Quant-M truth through internal Rust paths and does not call providers, write worker proposals, or shell out to `quant-m`.
+
 To chat through the Codex CLI from inside the shell, use `ask <question>` after Codex is installed and logged in:
 
 ```text
