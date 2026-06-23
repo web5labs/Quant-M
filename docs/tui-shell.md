@@ -34,6 +34,19 @@ Inspect-first chat-shaped evidence cockpit:
 ./target/release/quant-m tui chat --inspect
 ```
 
+macOS, Linux, and Termux can also use the smoke helper:
+
+```bash
+./scripts/smoke_tui_chat.sh
+```
+
+Windows PowerShell:
+
+```powershell
+cargo build
+.\target\debug\quant-m.exe tui chat --inspect
+```
+
 ## Keyboard shortcuts
 
 - `q` quit

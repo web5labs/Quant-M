@@ -93,6 +93,12 @@ For an inspect-first terminal cockpit, use the existing TUI chat mode:
 ./quantm tui chat --inspect
 ```
 
+On Windows PowerShell, after building with Cargo, run:
+
+```powershell
+.\target\debug\quant-m.exe tui chat --inspect
+```
+
 This is chat-shaped evidence navigation, not an agent authority surface. It reads structured Quant-M truth through internal Rust paths and does not call providers, write worker proposals, or shell out to `quant-m`.
 
 To chat through the Codex CLI from inside the shell, use `ask <question>` after Codex is installed and logged in:
@@ -280,7 +286,7 @@ For a throwaway demo config that will not touch your local setup:
 
 The onboarding flow covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
 
-CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
+When you say a local model is available, onboarding scans common Ollama and LM Studio model locations and lists detected model tags first. CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
 
 <table>
   <tr>
