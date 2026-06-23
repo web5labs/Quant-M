@@ -489,6 +489,7 @@ fn validate_record(record: &SharedStateRecord) -> Result<()> {
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn parse_and_validate_record_for_fuzz(raw: &str) -> Result<()> {
     let record = serde_json::from_str::<SharedStateRecord>(raw)?;
     validate_record(&record)

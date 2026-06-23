@@ -201,6 +201,7 @@ fn validate_descriptor(
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn validate_descriptor_for_fuzz(
     descriptor: &FsmDescriptor,
     workflow_registry: Option<&WorkflowRegistry>,

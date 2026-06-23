@@ -1143,6 +1143,7 @@ fn rebase_workspace_child(
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn parse_and_validate_toml_for_fuzz(raw: &str) -> Result<()> {
     if let Ok(cfg) = toml::from_str::<Config>(raw) {
         return cfg.validate();

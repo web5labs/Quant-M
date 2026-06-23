@@ -280,6 +280,7 @@ fn validate_cadence(scheduler_id: &SchedulerId, cadence: &ScheduleCadenceDescrip
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn validate_descriptor_for_fuzz(
     descriptor: &SchedulerDescriptor,
     workflow_registry: Option<&WorkflowRegistry>,

@@ -69,12 +69,14 @@ pub fn run_workflow(cfg: &Config, workflow_id: &WorkflowId) -> Result<WorkflowRu
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 struct WorkflowRunRequestForFuzz {
     workflow_id: String,
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn parse_request_for_fuzz(raw: &str) -> Result<()> {
     if let Ok(request) = serde_json::from_str::<WorkflowRunRequestForFuzz>(raw) {
         let _ = request.workflow_id.parse::<WorkflowId>()?;

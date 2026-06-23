@@ -331,6 +331,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn parse_command_for_fuzz(input: &str) -> Result<&'static str> {
     let command = parse_command(input)?;
     let label = match command {

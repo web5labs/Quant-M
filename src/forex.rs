@@ -729,6 +729,7 @@ pub fn map_stonex_payload(cfg: &Config, raw_json: &str) -> Result<IngestResult> 
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn map_stonex_payload_for_fuzz(raw_json: &str) -> Result<IngestResult> {
     let payload: StoneXQuotePayload =
         serde_json::from_str(raw_json).context("invalid StoneX/FOREX.com quote payload JSON")?;
@@ -736,6 +737,7 @@ pub fn map_stonex_payload_for_fuzz(raw_json: &str) -> Result<IngestResult> {
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn parse_mql5_rows_for_fuzz(raw_json: &str) -> Result<Vec<MacroEvent>> {
     let rows: Vec<Mql5EventRow> =
         serde_json::from_str(raw_json).context("invalid JSON for MQL5 row list")?;

@@ -182,6 +182,7 @@ fn validate_descriptor(descriptor: &WorkflowDescriptor) -> Result<()> {
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn validate_descriptor_for_fuzz(descriptor: &WorkflowDescriptor) -> Result<()> {
     validate_descriptor(descriptor)
 }

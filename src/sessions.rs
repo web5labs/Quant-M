@@ -520,6 +520,7 @@ fn typed_session_state_from_replay(state: &SessionReplayState) -> SessionLifecyc
 }
 
 #[cfg(feature = "fuzzing_hooks")]
+#[allow(dead_code)]
 pub fn parse_and_replay_event_for_fuzz(raw: &str) -> Result<SessionReplayState> {
     let event = serde_json::from_str::<SessionEvent>(raw)?;
     if let SessionEvent::OperatorDecision { record } = &event {

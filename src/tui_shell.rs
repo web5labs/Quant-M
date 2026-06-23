@@ -1081,8 +1081,11 @@ mod tests {
     }
 
     fn test_config(tmp: &TempDir) -> Config {
-        let mut cfg = Config::default();
-        cfg.workspace_dir = tmp.path().join("workspace");
+        let workspace_dir = tmp.path().join("workspace");
+        let mut cfg = Config {
+            workspace_dir: workspace_dir.clone(),
+            ..Config::default()
+        };
         cfg.state_sql.sqlite_path = cfg.workspace_dir.join("state/shared-state.db");
         cfg.runtime.session_dir = cfg.workspace_dir.join("state/sessions");
         cfg

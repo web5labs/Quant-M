@@ -3017,6 +3017,7 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     deduped
 }
 
+#[allow(dead_code)]
 fn detect_ollama_model_tags_in(home: &Path) -> Vec<String> {
     detect_ollama_model_tags_from_roots(&[home.join(".ollama/models/manifests")])
 }
@@ -3056,6 +3057,7 @@ fn ollama_model_tag_from_manifest_path(root: &Path, path: &Path) -> Option<Strin
     }
 }
 
+#[allow(dead_code)]
 fn detect_lmstudio_model_tags_in(home: &Path) -> Vec<String> {
     let roots = [
         home.join("Library/Application Support/LM Studio/models"),
