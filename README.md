@@ -70,13 +70,29 @@ Run the local demo path:
 ./quantm demo
 ```
 
-Or start the shell:
+Or start Quant-M:
 
 ```bash
 ./quantm
 ```
 
-On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire before opening the shell.
+On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire. After onboarding is completed, `./quantm` opens the governed Quant-M chat cockpit so the user can communicate with the local evidence agent.
+
+Inside the Quant-M chat cockpit, try:
+
+```text
+/help
+/state
+/cost
+/ask what should I inspect first?
+/quit
+```
+
+The classic text shell remains available:
+
+```bash
+./quantm shell
+```
 
 Inside `quant-m>`, try:
 
@@ -93,7 +109,7 @@ For an inspect-first terminal cockpit, use the existing TUI chat mode:
 ./quantm tui chat --inspect
 ```
 
-On Windows PowerShell, after building with Cargo, run:
+The same command works on macOS, Linux, and Termux once the repo is built. On Windows PowerShell, after building with Cargo, run:
 
 ```powershell
 .\target\debug\quant-m.exe tui chat --inspect

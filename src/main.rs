@@ -1837,11 +1837,15 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
     let _truth_report = truth_files::init_truth_files(&cfg, false)?;
 
     print_quant_m_brand_banner();
-    println!(
-        "Quant-M ready.\nworkspace: {}\n\nOpening the local shell. Type help, demo, doctor, or exit.\n",
-        init.workspace.display()
-    );
-    agent_shell::run(&cfg, config_path)
+    println!("{}", start_chat_message(&init.workspace));
+    tui_shell::run_chat(&cfg, config_path, true)
+}
+
+fn start_chat_message(workspace: &Path) -> String {
+    format!(
+        "Quant-M ready.\nworkspace: {}\n\nOpening the governed Quant-M chat cockpit. Type /help, /state, /cost, /ask, or /quit.\nUse `quant-m shell` for the classic text shell.\n",
+        workspace.display()
+    )
 }
 
 fn start_needs_onboarding(config_path: &std::path::Path) -> Result<bool> {
@@ -4985,6 +4989,16 @@ mod tests {
         cfg.save(&config_path).expect("save");
 
         assert!(!start_needs_onboarding(&config_path).expect("completed onboarding"));
+    }
+
+    #[test]
+    fn start_flow_announces_governed_chat_after_onboarding() {
+        let tmp = TempDir::new().expect("tempdir");
+        let message = start_chat_message(tmp.path());
+
+        assert!(message.contains("Opening the governed Quant-M chat cockpit"));
+        assert!(message.contains("/ask"));
+        assert!(message.contains("quant-m shell"));
     }
 
     #[test]

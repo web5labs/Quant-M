@@ -158,7 +158,7 @@ fn initial_chat_messages(inspect: bool) -> Vec<ChatMessage> {
         kind: ChatMessageKind::DisplayOnlyNote,
         storage_mode: TuiStorageMode::InspectOnly,
         body: format!(
-            "Quant-M TUI chat is an evidence cockpit, not an authority surface. mode={}",
+            "You are now talking with Quant-M, the local governed evidence agent. This chat is an evidence cockpit, not an authority surface. mode={}",
             if inspect {
                 "inspect"
             } else {
