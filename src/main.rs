@@ -50,10 +50,10 @@ mod workflow_registry;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Serialize, de::DeserializeOwned};
-use std::env;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{env, fs};
 
 use adapters::AdapterHub;
 use config::Config;
@@ -185,7 +185,10 @@ enum Commands {
     },
     #[command(visible_alias = "shell")]
     Agent,
-    Tui,
+    Tui {
+        #[command(subcommand)]
+        command: Option<TuiCommand>,
+    },
     /// Run the local proof workflow and print the next inspection commands.
     Demo,
     Status,
@@ -630,6 +633,16 @@ enum LlmCommand {
 }
 
 #[derive(Subcommand, Debug)]
+enum TuiCommand {
+    /// Open the governed chat-shaped evidence cockpit.
+    Chat {
+        /// Keep chat mode inspect-only. This is the default and only MVP posture.
+        #[arg(long, default_value_t = true)]
+        inspect: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum QuestionCommand {
     Ask {
         #[arg(long)]
@@ -907,9 +920,12 @@ async fn main() -> Result<()> {
         Commands::Agent => {
             agent_shell::run(&cfg, &config_path)?;
         }
-        Commands::Tui => {
-            tui_shell::run(&cfg, &config_path)?;
-        }
+        Commands::Tui { command } => match command {
+            None => tui_shell::run(&cfg, &config_path)?,
+            Some(TuiCommand::Chat { inspect }) => {
+                tui_shell::run_chat(&cfg, &config_path, inspect)?;
+            }
+        },
         Commands::Demo => {
             let result = demo_flow::run(&cfg)?;
             print!("{}", demo_flow::render(&result));
@@ -2270,17 +2286,52 @@ fn run_interactive_setup(
         _ => unreachable!("choice is constrained"),
     }
 
-    let has_local_models = prompt_yes_no("Do you have local model(s) available?", false)?;
+    let detected_local_providers = detected_local_provider_options();
+    if !detected_local_providers.is_empty() {
+        println!();
+        println!(
+            "{}{}Detected local model(s){}",
+            ANSI_BOLD, ANSI_GREEN, ANSI_RESET
+        );
+        for (provider, note) in &detected_local_providers {
+            println!(
+                "  {}{}{}   {} {}({}){}",
+                ANSI_CYAN,
+                provider,
+                ANSI_RESET,
+                local_provider_display(provider),
+                ANSI_DIM,
+                note,
+                ANSI_RESET
+            );
+        }
+        println!(
+            "{}Detection checks common macOS, Windows, and Linux model directories. It does not start a model server or grant execution permission.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+    }
+
+    let has_local_models = if detected_local_providers.is_empty() {
+        prompt_yes_no("Do you have local model(s) available?", false)?
+    } else {
+        prompt_yes_no("Use detected local model(s)?", true)?
+    };
     if has_local_models {
         println!(
             "{}Local models stay on this machine. Quant-M records the provider/model names only; it does not start a model server.{}",
             ANSI_DIM, ANSI_RESET
         );
-        let local_provider = prompt_choice(
-            "Local model provider [ollama/lmstudio]",
-            "ollama",
-            &["ollama", "lmstudio"],
-        )?;
+        let local_provider = if detected_local_providers.is_empty() {
+            prompt_choice(
+                "Local model provider [ollama/lmstudio]",
+                "ollama",
+                &["ollama", "lmstudio"],
+            )?
+        } else if detected_local_providers.len() == 1 {
+            detected_local_providers[0].0.clone()
+        } else {
+            prompt_detected_local_provider(&detected_local_providers)?
+        };
         let local_models = prompt_local_models(&local_provider)?;
         if let Some(first) = local_models.first() {
             args.local_model_provider = Some(local_provider);
@@ -2654,13 +2705,13 @@ fn prompt_yes_no(label: &str, default: bool) -> Result<bool> {
 }
 
 fn prompt_openrouter_models() -> Result<Vec<String>> {
-    let options = [
+    let options = model_options(&[
         ("qwen/qwen3-coder", "coding default"),
         ("openai/gpt-4.1-mini", "balanced general work"),
         ("openai/gpt-4o-mini", "cheap fallback"),
         ("anthropic/claude-3.5-sonnet", "reasoning/review lane"),
         ("google/gemini-2.5-pro", "long-context reasoning lane"),
-    ];
+    ]);
     prompt_model_menu(
         "OpenRouter models for multiplexing/council routing",
         &options,
@@ -2669,27 +2720,142 @@ fn prompt_openrouter_models() -> Result<Vec<String>> {
 }
 
 fn prompt_local_models(provider: &str) -> Result<Vec<String>> {
-    let ollama = [
+    let options = local_model_options(provider);
+    if options
+        .iter()
+        .any(|(_model, note)| note.starts_with("detected"))
+    {
+        println!(
+            "{}Detected local model tags are listed first. Detection does not grant execution permission.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+    } else {
+        println!(
+            "{}No local model tags were detected in common {provider} locations. Pick a suggested tag or type custom:<model-id>.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+    }
+    prompt_model_menu("Local models", &options, false)
+}
+
+fn prompt_detected_local_provider(options: &[(String, String)]) -> Result<String> {
+    let menu: Vec<(String, String)> = options
+        .iter()
+        .map(|(provider, note)| (provider.clone(), note.clone()))
+        .collect();
+    println!();
+    println!(
+        "{}{}Local model providers{}",
+        ANSI_BOLD, ANSI_MAGENTA, ANSI_RESET
+    );
+    for (index, (provider, note)) in menu.iter().enumerate() {
+        println!(
+            "  {}{:>2}{}   {} {}({}){}",
+            ANSI_CYAN,
+            index + 1,
+            ANSI_RESET,
+            local_provider_display(provider),
+            ANSI_DIM,
+            note,
+            ANSI_RESET
+        );
+    }
+    loop {
+        let answer = prompt_default("Select local provider", "1")?;
+        if let Ok(index) = answer.trim().parse::<usize>()
+            && index > 0
+            && let Some((provider, _note)) = menu.get(index - 1)
+        {
+            return Ok(provider.clone());
+        }
+        let normalized = normalize_registry_id(&answer);
+        if let Some((provider, _note)) = menu.iter().find(|(provider, _note)| {
+            normalize_registry_id(provider) == normalized
+                || normalize_registry_id(&local_provider_display(provider)) == normalized
+        }) {
+            return Ok(provider.clone());
+        }
+        println!("Please choose a detected local provider number or name.");
+    }
+}
+
+fn detected_local_provider_options() -> Vec<(String, String)> {
+    ["ollama", "lmstudio"]
+        .into_iter()
+        .filter_map(|provider| {
+            let models = detect_local_model_tags(provider);
+            if models.is_empty() {
+                return None;
+            }
+            let preview = models
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let suffix = if models.len() > 3 {
+                format!(", +{} more", models.len() - 3)
+            } else {
+                String::new()
+            };
+            Some((
+                provider.to_string(),
+                format!("{} detected: {preview}{suffix}", models.len()),
+            ))
+        })
+        .collect()
+}
+
+fn local_provider_display(provider: &str) -> String {
+    match normalize_registry_id(provider).as_str() {
+        "ollama" => "Ollama".to_string(),
+        "lmstudio" => "LM Studio".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn local_model_options(provider: &str) -> Vec<(String, String)> {
+    let defaults = default_local_model_options(provider);
+    let mut options: Vec<(String, String)> = detect_local_model_tags(provider)
+        .into_iter()
+        .map(|model| (model, "detected on local disk".to_string()))
+        .collect();
+    for (model, note) in defaults {
+        if !options.iter().any(|(existing, _note)| existing == &model) {
+            options.push((model, note));
+        }
+    }
+    options
+}
+
+fn default_local_model_options(provider: &str) -> Vec<(String, String)> {
+    let ollama = model_options(&[
         ("qwen3-coder:7b", "local coding default"),
         ("llama3.1:8b", "general local fallback"),
         ("deepseek-coder:6.7b", "local code lane"),
-    ];
-    let lmstudio = [
+    ]);
+    let lmstudio = model_options(&[
         ("local-model", "current LM Studio model"),
         ("qwen3-coder", "coding model alias"),
         ("llama-3.1-8b-instruct", "general local alias"),
-    ];
-    let options = if provider == "lmstudio" {
-        &lmstudio
+    ]);
+    if provider == "lmstudio" {
+        lmstudio
     } else {
-        &ollama
-    };
-    prompt_model_menu("Local models", options, false)
+        ollama
+    }
+}
+
+fn model_options(values: &[(&str, &str)]) -> Vec<(String, String)> {
+    values
+        .iter()
+        .map(|(model, note)| ((*model).to_string(), (*note).to_string()))
+        .collect()
 }
 
 fn prompt_model_menu(
     label: &str,
-    options: &[(&str, &str)],
+    options: &[(String, String)],
     allow_none: bool,
 ) -> Result<Vec<String>> {
     println!();
@@ -2729,7 +2895,7 @@ fn prompt_model_menu(
 
 fn parse_model_selection(
     answer: &str,
-    options: &[(&str, &str)],
+    options: &[(String, String)],
     allow_none: bool,
 ) -> Result<Vec<String>> {
     let trimmed = answer.trim();
@@ -2761,12 +2927,211 @@ fn parse_model_selection(
             let Some((model, _note)) = options.get(index.saturating_sub(1)) else {
                 anyhow::bail!("model number {index} is not in the menu");
             };
-            models.push((*model).to_string());
+            models.push(model.clone());
             continue;
         }
         models.push(item.to_string());
     }
     Ok(normalize_model_list(models))
+}
+
+fn detect_local_model_tags(provider: &str) -> Vec<String> {
+    match provider {
+        "ollama" => detect_ollama_model_tags_from_roots(&local_model_search_roots("ollama")),
+        "lmstudio" => detect_lmstudio_model_tags_from_roots(&local_model_search_roots("lmstudio")),
+        _ => Vec::new(),
+    }
+}
+
+fn user_home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+}
+
+fn local_model_search_roots(provider: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = user_home_dir() {
+        match provider {
+            "ollama" => {
+                roots.push(home.join(".ollama/models/manifests"));
+            }
+            "lmstudio" => {
+                roots.push(home.join("Library/Application Support/LM Studio/models"));
+                roots.push(home.join(".cache/lm-studio/models"));
+                roots.push(home.join(".cache/lmstudio/models"));
+                roots.push(home.join(".lmstudio/models"));
+                roots.push(home.join("AppData/Local/LM Studio/models"));
+                roots.push(home.join("AppData/Roaming/LM Studio/models"));
+                roots.push(home.join("Models"));
+                roots.push(home.join("models"));
+            }
+            _ => {}
+        }
+    }
+    if provider == "ollama" {
+        push_env_join(&mut roots, "OLLAMA_MODELS", "manifests");
+    }
+    if provider == "lmstudio" {
+        push_env_path(&mut roots, "LMSTUDIO_MODELS_DIR");
+        push_env_path(&mut roots, "LM_STUDIO_MODELS_DIR");
+        push_env_join(&mut roots, "LOCALAPPDATA", "LM Studio/models");
+        push_env_join(&mut roots, "APPDATA", "LM Studio/models");
+        push_env_join(&mut roots, "PROGRAMDATA", "LM Studio/models");
+        roots.push(PathBuf::from(
+            "/Applications/LM Studio.app/Contents/Resources/models",
+        ));
+        roots.push(PathBuf::from("/opt/LM Studio/models"));
+        roots.push(PathBuf::from("/usr/local/share/lmstudio/models"));
+        roots.push(PathBuf::from("/usr/share/lmstudio/models"));
+    }
+    dedupe_paths(roots)
+}
+
+fn push_env_path(roots: &mut Vec<PathBuf>, name: &str) {
+    if let Some(value) = env::var_os(name) {
+        let path = PathBuf::from(value);
+        if !path.as_os_str().is_empty() {
+            roots.push(path);
+        }
+    }
+}
+
+fn push_env_join(roots: &mut Vec<PathBuf>, name: &str, suffix: &str) {
+    if let Some(value) = env::var_os(name) {
+        let base = PathBuf::from(value);
+        if !base.as_os_str().is_empty() {
+            roots.push(base.join(suffix));
+        }
+    }
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !deduped.iter().any(|existing: &PathBuf| existing == &path) {
+            deduped.push(path);
+        }
+    }
+    deduped
+}
+
+fn detect_ollama_model_tags_in(home: &Path) -> Vec<String> {
+    detect_ollama_model_tags_from_roots(&[home.join(".ollama/models/manifests")])
+}
+
+fn detect_ollama_model_tags_from_roots(roots: &[PathBuf]) -> Vec<String> {
+    let mut models = Vec::new();
+    for root in roots {
+        collect_files_limited(root, 6, 250, &mut |path| {
+            if let Some(model) = ollama_model_tag_from_manifest_path(root, path) {
+                models.push(model);
+            }
+        });
+    }
+    models.sort();
+    normalize_model_list(models)
+}
+
+fn ollama_model_tag_from_manifest_path(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root).ok()?;
+    let parts: Vec<String> = rel
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let tag = parts.last()?.trim();
+    let model = parts.get(parts.len().saturating_sub(2))?.trim();
+    let namespace = parts.get(parts.len().saturating_sub(3))?.trim();
+    if tag.is_empty() || model.is_empty() {
+        return None;
+    }
+    if namespace.is_empty() || namespace == "library" {
+        Some(format!("{model}:{tag}"))
+    } else {
+        Some(format!("{namespace}/{model}:{tag}"))
+    }
+}
+
+fn detect_lmstudio_model_tags_in(home: &Path) -> Vec<String> {
+    let roots = [
+        home.join("Library/Application Support/LM Studio/models"),
+        home.join(".cache/lm-studio/models"),
+        home.join(".cache/lmstudio/models"),
+        home.join(".lmstudio/models"),
+        home.join("AppData/Local/LM Studio/models"),
+        home.join("AppData/Roaming/LM Studio/models"),
+        home.join("Models"),
+        home.join("models"),
+    ];
+    detect_lmstudio_model_tags_from_roots(&roots)
+}
+
+fn detect_lmstudio_model_tags_from_roots(roots: &[PathBuf]) -> Vec<String> {
+    let mut models = Vec::new();
+    for root in roots {
+        collect_files_limited(root, 5, 400, &mut |path| {
+            if let Some(model) = lmstudio_model_tag_from_path(path) {
+                models.push(model);
+            }
+        });
+    }
+    models.sort();
+    normalize_model_list(models)
+}
+
+fn lmstudio_model_tag_from_path(path: &Path) -> Option<String> {
+    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    if !matches!(
+        extension.as_str(),
+        "gguf" | "bin" | "safetensors" | "onnx" | "mlmodel"
+    ) {
+        return None;
+    }
+    path.file_stem()
+        .map(|stem| stem.to_string_lossy().trim().to_string())
+        .filter(|stem| !stem.is_empty())
+}
+
+fn collect_files_limited(
+    root: &Path,
+    max_depth: usize,
+    mut remaining: usize,
+    visit: &mut impl FnMut(&Path),
+) {
+    if !root.is_dir() || remaining == 0 {
+        return;
+    }
+    collect_files_limited_inner(root, max_depth, &mut remaining, visit);
+}
+
+fn collect_files_limited_inner(
+    root: &Path,
+    depth_left: usize,
+    remaining: &mut usize,
+    visit: &mut impl FnMut(&Path),
+) {
+    if *remaining == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if *remaining == 0 {
+            break;
+        }
+        let path = entry.path();
+        if path.is_file() {
+            *remaining -= 1;
+            visit(&path);
+        } else if depth_left > 0 && path.is_dir() {
+            collect_files_limited_inner(&path, depth_left - 1, remaining, visit);
+        }
+    }
 }
 
 fn looks_like_pasted_command(value: &str) -> bool {
@@ -4081,7 +4446,7 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         | Commands::Settings { .. } => StorageMode::Inspect,
         Commands::Doctor { .. } => StorageMode::SessionWrite,
         Commands::Agent => StorageMode::Inspect,
-        Commands::Tui => StorageMode::Inspect,
+        Commands::Tui { .. } => StorageMode::Inspect,
         Commands::Demo => StorageMode::SessionWrite,
         Commands::Skill { .. }
         | Commands::Policy { .. }
@@ -4498,6 +4863,82 @@ mod tests {
     }
 
     #[test]
+    fn local_model_detection_reads_ollama_manifest_tags() {
+        let tmp = TempDir::new().expect("tempdir");
+        let manifest = tmp
+            .path()
+            .join(".ollama/models/manifests/registry.ollama.ai/library/qwen3-coder/7b");
+        std::fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("mkdir");
+        std::fs::write(&manifest, "{}").expect("write manifest");
+
+        let models = detect_ollama_model_tags_in(tmp.path());
+
+        assert_eq!(models, vec!["qwen3-coder:7b"]);
+    }
+
+    #[test]
+    fn local_model_detection_keeps_non_library_ollama_namespace() {
+        let tmp = TempDir::new().expect("tempdir");
+        let manifest = tmp
+            .path()
+            .join(".ollama/models/manifests/registry.ollama.ai/acme/private-coder/latest");
+        std::fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("mkdir");
+        std::fs::write(&manifest, "{}").expect("write manifest");
+
+        let models = detect_ollama_model_tags_in(tmp.path());
+
+        assert_eq!(models, vec!["acme/private-coder:latest"]);
+    }
+
+    #[test]
+    fn local_model_detection_reads_lmstudio_model_files() {
+        let tmp = TempDir::new().expect("tempdir");
+        let model = tmp
+            .path()
+            .join("Library/Application Support/LM Studio/models/qwen/qwen3-coder-7b.gguf");
+        std::fs::create_dir_all(model.parent().expect("model parent")).expect("mkdir");
+        std::fs::write(&model, "").expect("write model marker");
+
+        let models = detect_lmstudio_model_tags_in(tmp.path());
+
+        assert_eq!(models, vec!["qwen3-coder-7b"]);
+    }
+
+    #[test]
+    fn local_model_detection_reads_lmstudio_windows_style_roots() {
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path().join("LocalAppData/LM Studio/models");
+        let model = root.join("publisher/model-family/model-file.safetensors");
+        std::fs::create_dir_all(model.parent().expect("model parent")).expect("mkdir");
+        std::fs::write(&model, "").expect("write model marker");
+
+        let models = detect_lmstudio_model_tags_from_roots(&[root]);
+
+        assert_eq!(models, vec!["model-file"]);
+    }
+
+    #[test]
+    fn local_model_detection_reads_ollama_custom_model_roots() {
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path().join("ollama-models/manifests");
+        let manifest = root.join("registry.ollama.ai/library/llama3.1/8b");
+        std::fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("mkdir");
+        std::fs::write(&manifest, "{}").expect("write manifest");
+
+        let models = detect_ollama_model_tags_from_roots(&[root]);
+
+        assert_eq!(models, vec!["llama3.1:8b"]);
+    }
+
+    #[test]
+    fn local_model_options_keep_default_selection_stable() {
+        let options = default_local_model_options("ollama");
+        let selected = parse_model_selection("1", &options, false).expect("parse");
+
+        assert_eq!(selected, vec!["qwen3-coder:7b"]);
+    }
+
+    #[test]
     fn onboard_command_parses() {
         let cli = Cli::try_parse_from(["quant-m", "onboard"]).expect("parse onboard");
         assert!(matches!(
@@ -4557,6 +4998,24 @@ mod tests {
 
         let cli = Cli::try_parse_from(["quant-m", "shell"]).expect("parse shell alias");
         assert!(matches!(cli.command, Some(Commands::Agent)));
+
+        let cli = Cli::try_parse_from(["quant-m", "tui"]).expect("parse tui");
+        assert!(matches!(cli.command, Some(Commands::Tui { command: None })));
+
+        let cli =
+            Cli::try_parse_from(["quant-m", "tui", "chat", "--inspect"]).expect("parse tui chat");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Tui {
+                command: Some(TuiCommand::Chat { inspect: true })
+            })
+        ));
+        assert_eq!(
+            storage_mode_for_command(&Commands::Tui {
+                command: Some(TuiCommand::Chat { inspect: true })
+            }),
+            StorageMode::Inspect
+        );
     }
 
     #[test]

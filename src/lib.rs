@@ -36,6 +36,7 @@ pub mod shutdown;
 pub mod side_effect_gate;
 pub mod skill_registry;
 pub mod skills;
+pub mod state_review;
 pub mod state_sql;
 pub mod strategist;
 pub mod telegram;

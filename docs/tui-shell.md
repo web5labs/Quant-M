@@ -28,6 +28,12 @@ cargo build --release
 ./target/release/quant-m tui
 ```
 
+Inspect-first chat-shaped evidence cockpit:
+
+```bash
+./target/release/quant-m tui chat --inspect
+```
+
 ## Keyboard shortcuts
 
 - `q` quit
@@ -63,6 +69,18 @@ The TUI also keeps a last-action panel so the operator can see the most recent w
 - reads shared state through the existing inspect-safe path
 - stays local-first and side-effect light for the `mock-research` proof domain
 
+Chat mode adds typed evidence navigation commands:
+
+- `/help`
+- `/refresh`
+- `/state [domain]`
+- `/cost [session_id]`
+- `/replay <session_id>`
+- `/ask <question>`
+- `/quit`
+
+In the MVP, chat mode is inspect-first. `/ask` records display-only navigation text and does not call a provider. Any action above inspect-only must be represented as a typed storage mode before it can be enabled.
+
 ## What the TUI does not do
 
 - it does not replace the CLI
@@ -72,6 +90,8 @@ The TUI also keeps a last-action panel so the operator can see the most recent w
 - it does not require external adapters
 - it does not enable live trading
 - it does not add new registries or governance layers
+- chat mode does not make chat text authoritative
+- chat mode does not use a free-form command router or shell out to `quant-m`
 
 ## Staff OS and cmux guidance
 
