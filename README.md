@@ -76,7 +76,21 @@ Or start Quant-M:
 ./quantm
 ```
 
-On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire. After onboarding is completed, `./quantm` opens the governed Quant-M chat cockpit so the user can communicate with the local evidence agent.
+On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire before any chat UI opens. If the command is launched from a non-interactive copy/paste runner, Quant-M stops and asks you to run `./quantm onboard` in a real terminal instead of silently entering stale inspect mode.
+
+During onboarding, choose the CLI or provider you actually want to use. Manual CLI choices are allowed even before login; after browser/account verification, run the matching validation command:
+
+```bash
+./quantm tool setup codex
+./quantm tool setup claude
+./quantm tool setup antigravity
+./quantm tool validate codex
+./quantm tool validate claude
+./quantm tool validate antigravity
+./quantm provider validate openrouter --live
+```
+
+After onboarding is completed, `./quantm` opens the governed Quant-M chat cockpit. If a chat-capable CLI such as Codex, Claude, or Gemini is enabled, `/ask` and plain text route to that CLI through a bounded adapter. If no chat-capable CLI is enabled, the cockpit stays inspect-only and will say so directly instead of pretending to answer.
 
 Inside the Quant-M chat cockpit, try:
 

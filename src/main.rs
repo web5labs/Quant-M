@@ -469,6 +469,9 @@ enum ToolCommand {
         #[arg(long)]
         json: bool,
     },
+    Setup {
+        tool: String,
+    },
     Scan {
         #[arg(long)]
         json: bool,
@@ -892,6 +895,10 @@ async fn main() -> Result<()> {
 
     if is_onboarding_command(&command) {
         return handle_onboarding_command(command, &config_path).await;
+    }
+
+    if matches!(command, Commands::Start) {
+        return run_start_flow(&config_path);
     }
 
     let cfg = Config::load_or_create(&config_path)
@@ -1794,37 +1801,14 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
 }
 
 fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
-    if start_needs_onboarding(config_path)?
-        && io::stdin().is_terminal()
-        && io::stdout().is_terminal()
-    {
+    if start_needs_onboarding(config_path)? {
+        if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+            anyhow::bail!(
+                "first-run onboarding has not been completed for this project; run `./quantm onboard` in an interactive terminal, or run `./quantm setup --non-interactive` for safe defaults"
+            );
+        }
         println!("First-run onboarding has not been completed for this project.");
-        let report = run_setup_flow(
-            config_path,
-            SetupArgs {
-                non_interactive: false,
-                force_interactive: false,
-                advanced: false,
-                local_model_provider: None,
-                local_model: None,
-                local_models: Vec::new(),
-                remote_model_provider: None,
-                remote_model: None,
-                openrouter_models: Vec::new(),
-                openrouter_api_key: None,
-                enable_openrouter: false,
-                channel: None,
-                channel_value: None,
-                runtime_profile: None,
-                workspace_path: None,
-                state_path: None,
-                session_path: None,
-                external_network: None,
-                context_guardian: None,
-                selected_tools: Vec::new(),
-                replace_tools: false,
-            },
-        )?;
+        let report = run_setup_flow(config_path, default_interactive_setup_args())?;
         print_setup_report(&report, false)?;
     }
 
@@ -1836,7 +1820,37 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
 
     print_quant_m_brand_banner();
     println!("{}", start_chat_message(&cfg.workspace_dir));
-    tui_shell::run_chat(&cfg, config_path, !tui_shell::codex_chat_enabled(&cfg))
+    tui_shell::run_chat(
+        &cfg,
+        config_path,
+        tui_shell::selected_chat_tool(&cfg).is_none(),
+    )
+}
+
+fn default_interactive_setup_args() -> SetupArgs {
+    SetupArgs {
+        non_interactive: false,
+        force_interactive: false,
+        advanced: false,
+        local_model_provider: None,
+        local_model: None,
+        local_models: Vec::new(),
+        remote_model_provider: None,
+        remote_model: None,
+        openrouter_models: Vec::new(),
+        openrouter_api_key: None,
+        enable_openrouter: false,
+        channel: None,
+        channel_value: None,
+        runtime_profile: None,
+        workspace_path: None,
+        state_path: None,
+        session_path: None,
+        external_network: None,
+        context_guardian: None,
+        selected_tools: Vec::new(),
+        replace_tools: false,
+    }
 }
 
 fn start_chat_message(workspace: &Path) -> String {
@@ -1991,10 +2005,14 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
     } else {
         report.enabled_tools.join(", ")
     };
-    let tool_validation_next = if report.enabled_tools.iter().any(|tool| tool == "codex") {
-        format!("  {command} tool validate codex\n")
-    } else {
+    let tool_validation_next = if report.enabled_tools.is_empty() {
         String::new()
+    } else {
+        report
+            .enabled_tools
+            .iter()
+            .map(|tool| format!("  {command} tool validate {tool}\n"))
+            .collect::<String>()
     };
     print_serialized_or_text(
         report,
@@ -3214,15 +3232,67 @@ fn quant_m_command_hint() -> String {
     exe.display().to_string()
 }
 
-fn print_codex_setup_steps() {
-    println!();
-    println!("{}{}✨ Codex setup{}", ANSI_BOLD, ANSI_BLUE, ANSI_RESET);
-    println!("  1. Install or open the Codex CLI.");
-    println!("  2. Sign in with your OpenAI account.");
-    println!("  3. Verify it responds: codex --version");
+fn print_tool_setup_steps(tool: &str) {
+    let tool = normalize_registry_id(tool);
     let command = quant_m_command_hint();
+    println!();
+    println!(
+        "{}{}✨ {} setup{}",
+        ANSI_BOLD,
+        ANSI_BLUE,
+        developer_tool_display(&tool),
+        ANSI_RESET
+    );
+    match tool.as_str() {
+        "codex" => {
+            println!("  1. Install or open Codex CLI.");
+            println!("  2. Run `codex login` and complete browser verification.");
+            println!("  3. Verify it responds: codex --version");
+        }
+        "claude" => {
+            println!("  1. Install or open Claude Code CLI.");
+            println!("  2. Run `claude login` and complete browser verification.");
+            println!("  3. Verify it responds: claude --version");
+        }
+        "gemini" => {
+            println!("  1. Install or open Gemini CLI.");
+            println!("  2. Run the Gemini CLI login/auth command shown by Gemini.");
+            println!("  3. Verify it responds: gemini --version");
+        }
+        "antigravity" | "antgravity" => {
+            println!("  1. Install or open Antigravity.");
+            println!("  2. Complete its browser/account verification flow.");
+            println!("  3. Verify any CLI shim responds: antigravity --version");
+            println!(
+                "  Note: Quant-M will register Antigravity, but will not fake chat responses unless a stable non-interactive CLI prompt command is available."
+            );
+        }
+        "openrouter" => {
+            println!("  1. Create or open your OpenRouter account in a browser.");
+            println!("  2. Create an API key.");
+            println!(
+                "  3. Run `{command} onboard` and paste the key when prompted, or export OPENROUTER_API_KEY."
+            );
+            println!("  4. Validate with `{command} provider validate openrouter --live`.");
+            return;
+        }
+        "openai" => {
+            println!("  1. Install or open the OpenAI CLI.");
+            println!("  2. Run its login command or set OPENAI_API_KEY.");
+            println!("  3. Verify it responds: openai --version");
+        }
+        other => {
+            println!("  1. Install or open `{other}`.");
+            println!("  2. Complete its account or browser verification flow.");
+            println!("  3. Verify it responds to its configured validation command.");
+        }
+    }
     println!("  4. Return here and run: {command} onboard");
-    println!("  5. After setup, run: {command} tool validate codex");
+    println!("  5. After setup, run: {command} tool validate {tool}");
+}
+
+fn print_codex_setup_steps() {
+    print_tool_setup_steps("codex");
 }
 
 fn prompt_numbered_choice(
@@ -3354,14 +3424,12 @@ fn prompt_developer_tools(cfg: &Config) -> Result<Vec<String>> {
     );
     for (index, (id, label, note)) in options.iter().enumerate() {
         println!(
-            "  {}{:>2}{}   {} {}({}){}",
+            "  {}{:>2}{}   {} ({})",
             ANSI_CYAN,
             index + 2,
             ANSI_RESET,
             label,
-            ANSI_DIM,
-            note,
-            ANSI_RESET
+            note
         );
         if *id == "codex" {
             println!(
@@ -3372,7 +3440,7 @@ fn prompt_developer_tools(cfg: &Config) -> Result<Vec<String>> {
     }
     println!();
     println!(
-        "{}Type numbers separated by commas, ids like codex/openai/antigravity, `scan`, or `none`.{}",
+        "{}Type numbers separated by commas, ids like codex/claude/antigravity, `scan`, or `none`. Manual choices are allowed before login; validate after browser/account setup.{}",
         ANSI_DIM, ANSI_RESET
     );
 
@@ -3704,6 +3772,10 @@ fn handle_tool_command(config_path: &std::path::Path, command: ToolCommand) -> R
                     );
                 }
             }
+            Ok(())
+        }
+        ToolCommand::Setup { tool } => {
+            print_tool_setup_steps(&tool);
             Ok(())
         }
         ToolCommand::Scan { json } => {
@@ -5041,6 +5113,17 @@ mod tests {
     }
 
     #[test]
+    fn start_requires_onboarding_before_chat_in_non_interactive_context() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+
+        let err = run_start_flow(&config_path).expect_err("start should require onboarding");
+
+        assert!(err.to_string().contains("first-run onboarding"));
+        assert!(!config_path.exists());
+    }
+
+    #[test]
     fn start_flow_announces_governed_chat_after_onboarding() {
         let tmp = TempDir::new().expect("tempdir");
         let message = start_chat_message(tmp.path());
@@ -5088,6 +5171,15 @@ mod tests {
             }),
             StorageMode::Inspect
         );
+
+        let cli =
+            Cli::try_parse_from(["quant-m", "tool", "setup", "claude"]).expect("parse tool setup");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Tool {
+                command: ToolCommand::Setup { tool }
+            }) if tool == "claude"
+        ));
     }
 
     #[test]

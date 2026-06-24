@@ -1,5 +1,5 @@
 use crate::bootstrap;
-use crate::config::{Config, ModelPreference};
+use crate::config::{Config, ModelPreference, ToolKind};
 use crate::demo_flow;
 use crate::domain;
 use crate::execution_runtime::{self, WorkflowRunResult};
@@ -23,6 +23,7 @@ const ANSI_DIM: &str = "\x1b[2m";
 const ANSI_BLUE: &str = "\x1b[38;2;80;160;255m";
 const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
 const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
+const ANSI_YELLOW: &str = "\x1b[38;2;255;210;90m";
 const ANSI_RED: &str = "\x1b[38;2;255;95;95m";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -627,6 +628,91 @@ pub(crate) fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
             if stderr.is_empty() { "" } else { "stderr: " },
             stderr,
             hint
+        ))
+    }
+}
+
+pub(crate) fn run_cli_chat(cfg: &Config, tool_id: &str, prompt: &str) -> Result<String> {
+    let id = tool_id.trim().to_ascii_lowercase();
+    let Some(tool) = cfg.tools.get(&id) else {
+        return Ok(format!(
+            "{ANSI_RED}Unknown CLI tool `{}`.{ANSI_RESET}\nRun `quant-m tool list` to inspect configured tools.",
+            tool_id
+        ));
+    };
+    if !tool.enabled {
+        return Ok(format!(
+            "{ANSI_RED}{} is not enabled in this Quant-M profile.{ANSI_RESET}\nRun `quant-m onboard` or select it during setup.",
+            tool.command
+        ));
+    }
+    if !command_present(&tool.command) {
+        return Ok(format!(
+            "{ANSI_RED}{} is not on PATH.{ANSI_RESET}\nRun `quant-m tool setup {}` for login/install guidance, then `quant-m tool validate {}`.",
+            tool.command, id, id
+        ));
+    }
+
+    match tool.kind {
+        ToolKind::Codex => run_codex_chat(cfg, prompt),
+        ToolKind::Claude | ToolKind::Anthropic => {
+            run_prompt_arg_chat(cfg, &tool.command, &id, "Claude", &["-p"], prompt)
+        }
+        ToolKind::Gemini => run_prompt_arg_chat(cfg, &tool.command, &id, "Gemini", &["-p"], prompt),
+        ToolKind::Antigravity | ToolKind::Antgravity => Ok(format!(
+            "{ANSI_YELLOW}Antigravity is enabled and detected, but Quant-M does not yet know a stable non-interactive prompt command for it.{ANSI_RESET}\nOpen Antigravity and complete browser login there, then use `quant-m tool validate antigravity` to keep it registered. Quant-M will not fake an answer from this CLI."
+        )),
+        _ => Ok(format!(
+            "{ANSI_YELLOW}{} is enabled, but Quant-M does not yet have a safe chat adapter for this CLI kind ({:?}).{ANSI_RESET}\nUse `quant-m tool validate {}` to verify the command, or choose Codex, Claude, or Gemini for direct TUI chat.",
+            tool.command, tool.kind, id
+        )),
+    }
+}
+
+fn run_prompt_arg_chat(
+    cfg: &Config,
+    command: &str,
+    tool_id: &str,
+    label: &str,
+    prompt_args: &[&str],
+    prompt: &str,
+) -> Result<String> {
+    let harness_prompt = format!(
+        "You are {label} running through the Quant-M local agent harness.\n\
+         Keep the answer concise and practical.\n\
+         Quant-M workspace: {}\n\n\
+         User prompt:\n{}",
+        cfg.workspace_dir.display(),
+        prompt
+    );
+    let output = Command::new(command)
+        .args(prompt_args)
+        .arg(harness_prompt)
+        .output()
+        .with_context(|| format!("failed to run {command} for {tool_id} chat"))?;
+    format_cli_chat_output(label, output)
+}
+
+fn format_cli_chat_output(label: &str, output: std::process::Output) -> Result<String> {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() {
+        let mut lines = vec![format!("{ANSI_BOLD}{ANSI_GREEN}{label}{ANSI_RESET}")];
+        if !stderr.is_empty() {
+            lines.push(format!("{ANSI_DIM}{stderr}{ANSI_RESET}"));
+        }
+        if stdout.is_empty() {
+            lines.push(format!("{label} completed without text output."));
+        } else {
+            lines.push(stdout);
+        }
+        Ok(lines.join("\n"))
+    } else {
+        Ok(format!(
+            "{ANSI_RED}{label} CLI failed.{ANSI_RESET}\nstatus: {}\n{}{}",
+            output.status,
+            if stderr.is_empty() { "" } else { "stderr: " },
+            stderr
         ))
     }
 }

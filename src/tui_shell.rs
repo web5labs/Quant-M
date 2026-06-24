@@ -135,6 +135,7 @@ struct ChatMessage {
 #[derive(Debug, Clone)]
 struct ChatApp {
     inspect_only: bool,
+    chat_tool: Option<String>,
     messages: Vec<ChatMessage>,
     input: String,
     notice: String,
@@ -142,11 +143,14 @@ struct ChatApp {
 }
 
 pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> {
+    let chat_tool = (!inspect).then(|| selected_chat_tool(cfg)).flatten();
+    let inspect_only = inspect || chat_tool.is_none();
     let mut app = ChatApp {
-        inspect_only: inspect,
-        messages: initial_chat_messages(inspect),
+        inspect_only,
+        chat_tool,
+        messages: initial_chat_messages(inspect_only, selected_chat_tool(cfg).as_deref()),
         input: String::new(),
-        notice: initial_chat_notice(inspect),
+        notice: initial_chat_notice(inspect_only, selected_chat_tool(cfg).as_deref()),
         snapshot: collect_snapshot(cfg)?,
     };
 
@@ -156,24 +160,34 @@ pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> 
     result
 }
 
-fn initial_chat_messages(inspect: bool) -> Vec<ChatMessage> {
+fn initial_chat_messages(inspect: bool, chat_tool: Option<&str>) -> Vec<ChatMessage> {
     vec![ChatMessage {
         kind: ChatMessageKind::DisplayOnlyNote,
         storage_mode: TuiStorageMode::InspectOnly,
         body: format!(
             "You are now talking with Quant-M, the local governed evidence agent. This chat is an evidence cockpit, not an authority surface. mode={}",
-            if inspect { "inspect" } else { "codex-readonly" }
+            chat_mode_label(inspect, chat_tool)
         ),
     }]
 }
 
-fn initial_chat_notice(inspect: bool) -> String {
+fn initial_chat_notice(inspect: bool, chat_tool: Option<&str>) -> String {
     if inspect {
         "Inspect-only cockpit. /ask records navigation text; no provider or CLI call is made."
             .to_string()
     } else {
-        "Codex read-only cockpit. /ask and plain text call Codex CLI through read-only exec."
-            .to_string()
+        format!(
+            "{} cockpit. /ask and plain text call the selected CLI through a bounded adapter.",
+            chat_mode_label(false, chat_tool)
+        )
+    }
+}
+
+fn chat_mode_label(inspect: bool, chat_tool: Option<&str>) -> String {
+    if inspect {
+        "inspect".to_string()
+    } else {
+        format!("{}-cli", chat_tool.unwrap_or("tool"))
     }
 }
 
@@ -388,16 +402,17 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                     .to_string(),
         },
         TuiAction::AskInspect { question } => {
-            if !codex_chat_enabled(cfg) {
+            if app.chat_tool.is_none() {
                 ChatMessage {
                     kind: ChatMessageKind::DisplayOnlyNote,
                     storage_mode,
                     body: format!(
-                        "Codex CLI is not enabled in this Quant-M profile, so no provider or CLI call was made.\nquestion: {question}\nnext: run `quant-m onboard` or `quant-m setup --tool codex`, then validate with `quant-m tool validate codex`."
+                        "No chat-capable CLI is enabled in this Quant-M profile, so no provider or CLI call was made.\nquestion: {question}\nnext: run `quant-m onboard`, select Codex, Claude, Gemini, or Antigravity, then validate with `quant-m tool validate <tool>`."
                     ),
                 }
             } else {
-                match agent_shell::run_codex_chat(cfg, &question) {
+                let tool_id = app.chat_tool.as_deref().unwrap_or("codex");
+                match agent_shell::run_cli_chat(cfg, tool_id, &question) {
                     Ok(output) => ChatMessage {
                         kind: ChatMessageKind::CodexCliResponse,
                         storage_mode,
@@ -497,9 +512,9 @@ fn render_chat(frame: &mut Frame, app: &ChatApp) {
 
 fn render_chat_header(frame: &mut Frame, area: Rect, app: &ChatApp, compact: bool) {
     let mode = if app.inspect_only {
-        "inspect"
+        "inspect".to_string()
     } else {
-        "codex-readonly"
+        chat_mode_label(false, app.chat_tool.as_deref())
     };
     let text = Line::from(vec![
         Span::styled(
@@ -651,11 +666,19 @@ fn chat_message_style(kind: ChatMessageKind) -> Style {
     }
 }
 
-pub(crate) fn codex_chat_enabled(cfg: &Config) -> bool {
-    cfg.tools
-        .get("codex")
-        .map(|tool| tool.enabled)
-        .unwrap_or(false)
+pub(crate) fn selected_chat_tool(cfg: &Config) -> Option<String> {
+    [
+        "codex",
+        "claude",
+        "anthropic",
+        "gemini",
+        "antigravity",
+        "openai",
+        "opencode",
+    ]
+    .into_iter()
+    .find(|id| cfg.tools.get(*id).map(|tool| tool.enabled).unwrap_or(false))
+    .map(str::to_string)
 }
 
 fn run_app(
@@ -1121,6 +1144,7 @@ mod tests {
     fn test_chat_app(inspect_only: bool) -> ChatApp {
         ChatApp {
             inspect_only,
+            chat_tool: None,
             messages: Vec::new(),
             input: String::new(),
             notice: String::new(),
@@ -1270,7 +1294,7 @@ mod tests {
     }
 
     #[test]
-    fn ask_codex_mode_reports_disabled_tool_without_calling_cli() {
+    fn ask_cli_mode_reports_missing_chat_tool_without_calling_cli() {
         let tmp = TempDir::new().expect("tempdir");
         let cfg = test_config(&tmp);
         let mut app = test_chat_app(false);
@@ -1286,18 +1310,21 @@ mod tests {
         let message = app.messages.last().expect("ask response");
         assert_eq!(message.kind, ChatMessageKind::DisplayOnlyNote);
         assert_eq!(message.storage_mode, TuiStorageMode::ReadOnlyToolCall);
-        assert!(message.body.contains("Codex CLI is not enabled"));
+        assert!(message.body.contains("No chat-capable CLI is enabled"));
         assert!(!cost_ledger::cost_ledger_path(&cfg).exists());
         assert!(!cfg.runtime.session_dir.exists());
     }
 
     #[test]
-    fn codex_chat_enabled_follows_onboarding_tool_flag() {
+    fn selected_chat_tool_follows_onboarding_tool_priority() {
         let tmp = TempDir::new().expect("tempdir");
         let mut cfg = test_config(&tmp);
 
-        assert!(!codex_chat_enabled(&cfg));
+        assert!(selected_chat_tool(&cfg).is_none());
+        assert!(selected_chat_tool(&cfg).is_none());
+        cfg.tools.get_mut("claude").expect("claude tool").enabled = true;
+        assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("claude"));
         cfg.tools.get_mut("codex").expect("codex tool").enabled = true;
-        assert!(codex_chat_enabled(&cfg));
+        assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("codex"));
     }
 }
