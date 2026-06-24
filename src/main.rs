@@ -2168,6 +2168,11 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     for tool in &args.selected_tools {
         enable_tool(&mut cfg, tool);
     }
+    cfg.preferences.preferred_chat_tool = args
+        .selected_tools
+        .iter()
+        .find(|tool| is_chat_capable_tool(tool))
+        .cloned();
 
     let mut cfg = cfg.sanitize();
     cfg.validate()?;
@@ -3578,6 +3583,20 @@ fn supported_developer_tool_ids() -> &'static [&'static str] {
         "ollama",
         "lmstudio",
     ]
+}
+
+fn is_chat_capable_tool(id: &str) -> bool {
+    matches!(
+        id.trim().to_ascii_lowercase().as_str(),
+        "codex"
+            | "claude"
+            | "anthropic"
+            | "gemini"
+            | "antigravity"
+            | "antgravity"
+            | "openai"
+            | "opencode"
+    )
 }
 
 fn scan_supported_developer_tools(cfg: &Config) -> Vec<DetectedTool> {
@@ -5281,6 +5300,10 @@ mod tests {
         let cfg = Config::load_existing(&config_path).expect("reload");
         assert!(!cfg.tools.get("codex").expect("codex").enabled);
         assert!(cfg.tools.get("openai").expect("openai").enabled);
+        assert_eq!(
+            cfg.preferences.preferred_chat_tool.as_deref(),
+            Some("openai")
+        );
     }
 
     #[test]

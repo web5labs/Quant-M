@@ -115,7 +115,7 @@ enum ChatMessageKind {
     StateRecord,
     CostRecord,
     WorkerProposal,
-    CodexCliResponse,
+    ToolCliResponse,
     Error,
 }
 
@@ -322,7 +322,7 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
             kind: ChatMessageKind::DisplayOnlyNote,
             storage_mode,
             body: format!(
-                "Typed actions only. {CHAT_INPUT_HINT}. Chat text is evidence input, not runtime authority. In codex-readonly mode, /ask and plain text call Codex CLI with a read-only sandbox.\nstorage modes: {}\nmessage provenance: {}",
+                "Typed actions only. {CHAT_INPUT_HINT}. Chat text is evidence input, not runtime authority. In CLI mode, /ask and plain text call the selected tool through a bounded adapter.\nstorage modes: {}\nmessage provenance: {}",
                 known_storage_modes_label(),
                 known_message_kinds_label()
             ),
@@ -414,14 +414,14 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                 let tool_id = app.chat_tool.as_deref().unwrap_or("codex");
                 match agent_shell::run_cli_chat(cfg, tool_id, &question) {
                     Ok(output) => ChatMessage {
-                        kind: ChatMessageKind::CodexCliResponse,
+                        kind: ChatMessageKind::ToolCliResponse,
                         storage_mode,
                         body: output,
                     },
                     Err(err) => ChatMessage {
                         kind: ChatMessageKind::Error,
                         storage_mode,
-                        body: format!("Codex CLI call failed: {err}"),
+                        body: format!("{} CLI call failed: {err}", tool_id),
                     },
                 }
             }
@@ -465,7 +465,7 @@ fn known_message_kinds_label() -> String {
         ChatMessageKind::StateRecord,
         ChatMessageKind::CostRecord,
         ChatMessageKind::WorkerProposal,
-        ChatMessageKind::CodexCliResponse,
+        ChatMessageKind::ToolCliResponse,
         ChatMessageKind::Error,
     ]
     .into_iter()
@@ -646,7 +646,7 @@ fn chat_message_prefix(kind: ChatMessageKind) -> &'static str {
         ChatMessageKind::StateRecord => "State:",
         ChatMessageKind::CostRecord => "Cost:",
         ChatMessageKind::WorkerProposal => "Proposal:",
-        ChatMessageKind::CodexCliResponse => "Codex:",
+        ChatMessageKind::ToolCliResponse => "Tool:",
         ChatMessageKind::Error => "Error:",
     }
 }
@@ -661,12 +661,21 @@ fn chat_message_style(kind: ChatMessageKind) -> Style {
         ChatMessageKind::StateRecord => Style::default().fg(Color::Cyan),
         ChatMessageKind::CostRecord => Style::default().fg(Color::LightMagenta),
         ChatMessageKind::WorkerProposal => Style::default().fg(Color::Magenta),
-        ChatMessageKind::CodexCliResponse => Style::default().fg(Color::Cyan),
+        ChatMessageKind::ToolCliResponse => Style::default().fg(Color::Cyan),
         ChatMessageKind::Error => Style::default().fg(Color::Red),
     }
 }
 
 pub(crate) fn selected_chat_tool(cfg: &Config) -> Option<String> {
+    if let Some(preferred) = cfg
+        .preferences
+        .preferred_chat_tool
+        .as_deref()
+        .and_then(|tool| enabled_chat_tool_id(cfg, tool))
+    {
+        return Some(preferred);
+    }
+
     [
         "codex",
         "claude",
@@ -677,8 +686,27 @@ pub(crate) fn selected_chat_tool(cfg: &Config) -> Option<String> {
         "opencode",
     ]
     .into_iter()
-    .find(|id| cfg.tools.get(*id).map(|tool| tool.enabled).unwrap_or(false))
-    .map(str::to_string)
+    .find_map(|id| enabled_chat_tool_id(cfg, id))
+}
+
+fn enabled_chat_tool_id(cfg: &Config, id: &str) -> Option<String> {
+    let id = id.trim().to_ascii_lowercase();
+    let supported = matches!(
+        id.as_str(),
+        "codex"
+            | "claude"
+            | "anthropic"
+            | "gemini"
+            | "antigravity"
+            | "antgravity"
+            | "openai"
+            | "opencode"
+    );
+    if supported && cfg.tools.get(&id).map(|tool| tool.enabled).unwrap_or(false) {
+        Some(id)
+    } else {
+        None
+    }
 }
 
 fn run_app(
@@ -1223,7 +1251,7 @@ mod tests {
         assert!(known_storage_modes_label().contains("RequiresApproval"));
         assert!(known_storage_modes_label().contains("ReadOnlyToolCall"));
         assert!(known_message_kinds_label().contains("WorkerProposal"));
-        assert!(known_message_kinds_label().contains("CodexCliResponse"));
+        assert!(known_message_kinds_label().contains("ToolCliResponse"));
     }
 
     #[test]
@@ -1316,7 +1344,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_chat_tool_follows_onboarding_tool_priority() {
+    fn selected_chat_tool_follows_enabled_fallback_priority() {
         let tmp = TempDir::new().expect("tempdir");
         let mut cfg = test_config(&tmp);
 
@@ -1326,5 +1354,16 @@ mod tests {
         assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("claude"));
         cfg.tools.get_mut("codex").expect("codex tool").enabled = true;
         assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn selected_chat_tool_honors_preferred_chat_tool_over_codex() {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = test_config(&tmp);
+        cfg.tools.get_mut("codex").expect("codex tool").enabled = true;
+        cfg.tools.get_mut("claude").expect("claude tool").enabled = true;
+        cfg.preferences.preferred_chat_tool = Some("claude".to_string());
+
+        assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("claude"));
     }
 }
