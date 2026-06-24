@@ -1,0 +1,37 @@
+[profile]
+id = "base-runtime"
+purpose = "Run prebuilt Quant-M binaries with Android peripheral access."
+default = true
+transport = "usb-adb"
+quant_m_build_mode = "prebuilt-binary"
+
+[packages]
+root = ["openssh", "curl", "termux-tools", "termux-api"]
+excluded = ["git", "rust", "cargo", "clang", "llvm", "rsync"]
+
+[offline_mirror]
+path = "android-node-kit/bundles/profiles/base-runtime/offline"
+staged_for_arches = ["aarch64", "arm"]
+repos = ["termux-main", "termux-main-21"]
+
+[[offline_mirror.repo_detail]]
+name = "termux-main"
+android_sdk = "modern"
+aarch64_package_count = 58
+arm_package_count = 58
+
+[[offline_mirror.repo_detail]]
+name = "termux-main-21"
+android_sdk = "21-23"
+aarch64_package_count = 43
+arm_package_count = 43
+
+[runtime_capabilities]
+ssh = true
+http_client = true
+android_peripherals = true
+browser_open = true
+camera = true
+microphone = true
+on_device_rust_build = false
+git_clone = false

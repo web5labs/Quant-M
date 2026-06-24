@@ -1,0 +1,137 @@
+# Quant-M edge device dependency bundle manifest.
+# This describes the USB/ADB install payload and the on-device packages expected
+# after Termux is opened and bootstrap-termux.sh is run.
+
+[bundle]
+id = "quant-m-edge-bundle"
+version = "0.1.0"
+created_for = "android-edge-devices"
+transport = "usb-adb"
+owner = "android-node-kit"
+status = "offline-dependencies-staged"
+
+[targets]
+primary_arch = "aarch64-linux-android"
+fallback_arches = ["armv7-linux-androideabi"]
+min_android_notes = "Termux APK variants are present for modern Android and Android 5 era devices."
+
+[host_requirements]
+adb = true
+rustup = true
+android_ndk = true
+quant_m_source = "quant-m/Quant-M"
+
+[[apk_payloads]]
+name = "Termux"
+path = "android-node-kit/apks/termux/termux-app.apk"
+required = true
+notes = "Use for modern devices when compatible."
+
+[[apk_payloads]]
+name = "Termux Android 5"
+path = "android-node-kit/apks/termux/termux-app-apt-android-5.apk"
+required = false
+notes = "Fallback APK for older Android devices."
+
+[[apk_payloads]]
+name = "Termux Android 5 universal"
+path = "android-node-kit/apks/termux/termux-app-apt-android-5-universal.apk"
+required = false
+notes = "Universal fallback APK for older Android devices."
+
+[[apk_payloads]]
+name = "Termux:API"
+path = "android-node-kit/apks/termux/termux-api.apk"
+required = true
+version = "v0.53.0"
+size_bytes = 8854381
+sha256 = "ecf916ff80ae751e65c092f51c055cce4de417ebeea8e449cd0f294afdbde39a"
+checksum_path = "android-node-kit/apks/termux/termux-api-checksums-sha256.txt"
+source_url = "https://github.com/termux/termux-api/releases/download/v0.53.0/termux-api-app_v0.53.0%2Bgithub.debug.apk"
+notes = "Required companion app for camera, microphone, battery, sensor, clipboard, notification, and other Android peripheral access from Termux."
+
+[termux_packages]
+required = [
+  "openssh",
+  "git",
+  "curl",
+  "termux-tools",
+  "termux-api",
+  "rust",
+]
+optional = [
+  "rsync",
+]
+
+[offline_mirror]
+path = "android-node-kit/bundles/quant-m-edge-bundle/offline"
+size_approx = "920M"
+file_count = 275
+install_script = "android-node-kit/bundles/quant-m-edge-bundle/offline-install-termux.sh"
+staged_for_arches = ["aarch64", "arm"]
+root_packages = ["openssh", "git", "curl", "termux-tools", "termux-api", "rust", "rsync"]
+notes = "The on-device installer chooses termux-main-21 automatically for Android SDK 21-23 when present; otherwise it uses termux-main."
+
+[[offline_mirror.repos]]
+name = "termux-main"
+source_url = "https://packages.termux.dev/apt/termux-main"
+android_sdk = "modern"
+aarch64_package_count = 78
+arm_package_count = 78
+
+[[offline_mirror.repos]]
+name = "termux-main-21"
+source_url = "https://packages.termux.dev/apt/termux-main-21"
+android_sdk = "21-23"
+aarch64_package_count = 55
+arm_package_count = 55
+
+[quant_m]
+source_dir = "quant-m/Quant-M"
+default_config = "quant-m/Quant-M/configs/nodes/android-default.toml"
+binary_name = "quant-m"
+expected_bundle_paths = [
+  "android-node-kit/bundles/quant-m-edge-bundle/bin/aarch64-linux-android/quant-m",
+  "android-node-kit/bundles/quant-m-edge-bundle/bin/armv7-linux-androideabi/quant-m",
+]
+on_device_binary_path = "/data/data/com.termux/files/home/quant-m-node/bin/quant-m"
+on_device_workspace = "/data/data/com.termux/files/home/quant-m-node"
+
+[adb_install_flow]
+steps = [
+  "Enable developer options and USB debugging on the device.",
+  "Connect over USB and confirm 'adb devices' shows the device as authorized.",
+  "Install a compatible Termux APK with 'adb install -r <termux-apk>'.",
+  "Install Termux:API companion APK with 'adb install -r android-node-kit/apks/termux/termux-api.apk'.",
+  "Open Termux once on the device so the app initializes its home directory.",
+  "Push android-node-kit/bundles/quant-m-edge-bundle to /sdcard/Download/quant-m-edge-bundle.",
+  "Run the offline installer from Termux with bash /sdcard/Download/quant-m-edge-bundle/offline-install-termux.sh.",
+  "Push the matching Quant-M binary and android-default.toml into ~/quant-m-node.",
+  "Run ~/quant-m-node/bin/quant-m init and ~/quant-m-node/bin/quant-m status.",
+]
+
+[inventory]
+current_nodes_csv = "android-node-kit/inventory/nodes.csv"
+record_new_devices = true
+required_columns = ["name", "label", "host", "port", "user", "serial", "model"]
+known_device_count = 5
+
+[verification]
+termux_api_checks = [
+  "termux-battery-status",
+  "termux-wifi-connectioninfo",
+  "termux-camera-info",
+  "termux-camera-photo -c 0 /sdcard/Download/quant-m-camera-test.jpg",
+  "termux-microphone-record -f /sdcard/Download/quant-m-mic-test.wav -l 3",
+  "termux-open-url https://example.com",
+]
+quant_m_checks = [
+  "~/quant-m-node/bin/quant-m --version",
+  "cd ~/quant-m-node && ~/quant-m-node/bin/quant-m status",
+]
+
+[gaps]
+items = [
+  "Prebuilt Quant-M Android binaries are not present in this bundle yet.",
+  "Host Android NDK path and linker configuration are not captured in this workspace yet.",
+]

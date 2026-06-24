@@ -1,0 +1,4 @@
+openssh
+curl
+termux-tools
+termux-api

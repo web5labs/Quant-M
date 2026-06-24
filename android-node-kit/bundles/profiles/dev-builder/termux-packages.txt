@@ -1,0 +1,7 @@
+openssh
+git
+curl
+termux-tools
+termux-api
+rust
+rsync

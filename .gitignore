@@ -20,6 +20,15 @@ Thumbs.db
 # Local runtime workspace/state
 /workspace/
 
+# Android edge provisioning artifacts generated locally
+/android-node-kit/apks/
+/android-node-kit/bundles/**/offline/
+/android-node-kit/bundles/**/*.apk
+/android-node-kit/bundles/**/*.deb
+/android-node-kit/bundles/**/*.zip
+/android-node-kit/bundles/**/*.tar
+/android-node-kit/bundles/**/*.tar.gz
+
 # Local copied runtime/state workspaces
 /workspace-copy/
 /workspace-*/
