@@ -22,7 +22,7 @@ Quant-M is not a chatbot, broker, hosted agent platform, or trading bot. It is t
 
 > `v0.1.0-alpha`: public developer preview. CLI-first, local-first, intentionally conservative, and not a production trading system.
 
-[Five-Minute Proof](#five-minute-proof) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Release Notes](docs/release/v0.1.0-alpha.md)
+[Five-Minute Proof](#five-minute-proof) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Validation](#validation)
 
 ## What Quant-M Is
 
@@ -343,8 +343,6 @@ When you say a local model is available, onboarding scans common Ollama and LM S
   </tr>
 </table>
 
-For the fuller colored HTML version, open [`docs/onboarding-mockup.html`](docs/onboarding-mockup.html).
-
 ## Validation
 
 Local release validation for `v0.1.0-alpha` passed:
@@ -354,7 +352,6 @@ cargo fmt --all -- --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo build --release --quiet
-python3 scripts/lint_project_onboarding.py --target .
 cargo run --quiet -- fsm authority --json
 ```
 

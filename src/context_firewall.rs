@@ -214,13 +214,13 @@ fn included_context_for_size(
 ) -> Vec<ContextItemReceipt> {
     let mut items = vec![
         ContextItemReceipt {
-            path: PathBuf::from("docs/codex/execution-plan.md"),
+            path: PathBuf::from("README.md"),
             tier: ContextTier::ContractOnly,
             included_as: "contract_summary_reference".to_string(),
             reason: "Current objective, FSM state, validation commands, and stop conditions are required for every packet.".to_string(),
         },
         ContextItemReceipt {
-            path: PathBuf::from("docs/fsm/product-state-machines.md"),
+            path: PathBuf::from("README.md"),
             tier: ContextTier::StateOnly,
             included_as: "state_boundary_reference".to_string(),
             reason: "Runtime state boundaries prevent packet work from skipping policy, replay, or approval gates.".to_string(),
@@ -232,10 +232,10 @@ fn included_context_for_size(
         PacketSize::Medium | PacketSize::Large | PacketSize::Audit
     ) {
         items.push(ContextItemReceipt {
-            path: PathBuf::from("docs/wiki/MANIFEST.md"),
+            path: PathBuf::from("README.md"),
             tier: ContextTier::SummaryOnly,
             included_as: "context_router_summary".to_string(),
-            reason: "The manifest routes agents to summaries before full wiki or source context."
+            reason: "The README gives the public runtime boundary before deeper source inspection."
                 .to_string(),
         });
         if let Some(path) = status.latest_compact_packet_path.as_ref() {
@@ -250,7 +250,7 @@ fn included_context_for_size(
 
     if matches!(size, PacketSize::Large | PacketSize::Audit) {
         items.push(ContextItemReceipt {
-            path: PathBuf::from("docs/codex/context-firewall.md"),
+            path: PathBuf::from("README.md"),
             tier: ContextTier::TargetedSourceSections,
             included_as: "packet_rules_source".to_string(),
             reason: "Large packets may include targeted source sections for packet rules and acceptance gates.".to_string(),
@@ -259,7 +259,7 @@ fn included_context_for_size(
 
     if matches!(size, PacketSize::Audit) {
         items.push(ContextItemReceipt {
-            path: PathBuf::from("docs/project-spec.md"),
+            path: PathBuf::from("README.md"),
             tier: ContextTier::FullSourceContext,
             included_as: "audit_source_context".to_string(),
             reason: "Audit packets may inspect full project intent when reconstructing or reviewing contract drift.".to_string(),
@@ -272,12 +272,12 @@ fn included_context_for_size(
 fn excluded_context_for_size(size: PacketSize) -> Vec<String> {
     match size {
         PacketSize::Small => vec![
-            "Full wiki files excluded; use manifest or split the task if more context is needed.".to_string(),
+            "Internal planning notes excluded; split the task if more context is needed.".to_string(),
             "Full source files excluded; this packet is for state and contract only.".to_string(),
             "Conversation history excluded; use durable session or compact evidence only.".to_string(),
         ],
         PacketSize::Medium => vec![
-            "Full wiki files excluded; summaries are enough for this packet.".to_string(),
+            "Internal planning notes excluded; summaries are enough for this packet.".to_string(),
             "Full source files excluded; request a large packet for targeted source sections.".to_string(),
             "Conversation history excluded; use durable session or compact evidence only.".to_string(),
         ],
@@ -482,7 +482,7 @@ mod tests {
                 .receipt
                 .included_context
                 .iter()
-                .any(|item| item.path == PathBuf::from("docs/project-spec.md"))
+                .any(|item| item.path == PathBuf::from("README.md"))
         );
     }
 

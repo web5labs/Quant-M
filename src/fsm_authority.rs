@@ -53,7 +53,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
                 "loop --dry-run",
             ],
             source_module: "src/fsm_core.rs; src/context_status.rs; src/context_guardian.rs",
-            docs_reference: "docs/fsm/rust-fsm-authority-audit.md",
+            docs_reference: "README.md",
             emits_session_evidence: false,
             gates_side_effects: true,
             known_limitations: vec![
@@ -74,7 +74,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
                 "policy evaluate-skill",
             ],
             source_module: "src/fsm_core.rs; src/side_effect_gate.rs; src/skills.rs; src/worker.rs; src/policy_registry.rs",
-            docs_reference: "docs/fsm/side-effect-policy-gate-audit.md",
+            docs_reference: "README.md",
             emits_session_evidence: true,
             gates_side_effects: true,
             known_limitations: vec![
@@ -95,7 +95,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
                 "tool list",
             ],
             source_module: "src/capabilities.rs; src/config.rs; src/main.rs",
-            docs_reference: "docs/feature-map.md",
+            docs_reference: "README.md",
             emits_session_evidence: false,
             gates_side_effects: true,
             known_limitations: vec![
@@ -113,7 +113,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
                 "strategist dry-run",
             ],
             source_module: "src/question.rs; src/consensus.rs; src/strategist.rs",
-            docs_reference: "docs/feature-map.md",
+            docs_reference: "README.md",
             emits_session_evidence: true,
             gates_side_effects: true,
             known_limitations: vec![
@@ -133,7 +133,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
                 "compact",
             ],
             source_module: "src/fsm_core.rs; src/sessions.rs; src/compaction.rs",
-            docs_reference: "docs/fsm/product-state-machines.md",
+            docs_reference: "README.md",
             emits_session_evidence: false,
             gates_side_effects: true,
             known_limitations: vec![
@@ -147,7 +147,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
             authority_status: FsmAuthorityStatus::AuditedOnly,
             wired_command_surfaces: vec!["state", "state-review", "state snapshot"],
             source_module: "src/shared_state.rs; src/state_sql.rs",
-            docs_reference: "docs/shared_state.md",
+            docs_reference: "README.md",
             emits_session_evidence: false,
             gates_side_effects: false,
             known_limitations: vec![
@@ -161,7 +161,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
             authority_status: FsmAuthorityStatus::Wired,
             wired_command_surfaces: vec!["skills run", "skills list", "skills show"],
             source_module: "src/fsm_core.rs; src/skills.rs",
-            docs_reference: "docs/quant-m-skills.md",
+            docs_reference: "README.md",
             emits_session_evidence: true,
             gates_side_effects: true,
             known_limitations: vec![
@@ -175,7 +175,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
             authority_status: FsmAuthorityStatus::Wired,
             wired_command_surfaces: vec!["worker submit", "worker once", "worker run"],
             source_module: "src/fsm_core.rs; src/worker.rs",
-            docs_reference: "docs/fsm/product-state-machines.md",
+            docs_reference: "README.md",
             emits_session_evidence: true,
             gates_side_effects: true,
             known_limitations: vec!["WorkerResult ok/error remains outbox compatibility"],
@@ -186,7 +186,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
             authority_status: FsmAuthorityStatus::PartiallyWired,
             wired_command_surfaces: vec!["worker proposal submit", "worker proposal list"],
             source_module: "src/worker_proposals.rs",
-            docs_reference: "docs/feature-map.md",
+            docs_reference: "README.md",
             emits_session_evidence: false,
             gates_side_effects: true,
             known_limitations: vec![
@@ -200,7 +200,7 @@ pub fn authority_records() -> Vec<FsmAuthorityRecord> {
             authority_status: FsmAuthorityStatus::PartiallyWired,
             wired_command_surfaces: vec!["run workflow"],
             source_module: "src/fsm_core.rs; src/workflow_registry.rs; src/execution_runtime.rs",
-            docs_reference: "docs/fsm/workflow-cursor-fsm-audit.md",
+            docs_reference: "README.md",
             emits_session_evidence: true,
             gates_side_effects: false,
             known_limitations: vec![

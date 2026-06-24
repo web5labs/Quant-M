@@ -218,17 +218,13 @@ pub fn validate_unique_ids(records: &[CapabilityRecord]) -> Result<()> {
 }
 
 pub fn audit_docs(cfg: &Config) -> Result<CapabilityAuditReport> {
-    let checked_docs = vec![
-        "README.md".to_string(),
-        "docs/feature-map.md".to_string(),
-        "docs/quant-m-skills.md".to_string(),
-    ];
+    let checked_docs = vec!["README.md".to_string(), "Cargo.toml".to_string()];
     let required = [
-        ("README.md", "Current Capability Status"),
+        ("README.md", "What Quant-M Is"),
         ("README.md", "Detection does not equal permission"),
-        ("docs/feature-map.md", "Feature Truth Map"),
-        ("docs/feature-map.md", "status"),
-        ("docs/quant-m-skills.md", "maturity"),
+        ("README.md", "Authority Snapshot"),
+        ("README.md", "Five-Minute Proof"),
+        ("Cargo.toml", "name = \"quant-m\""),
     ];
     let mut missing_markers = Vec::new();
     for (path, marker) in required {
@@ -329,7 +325,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/memory/brain.db",
                 "workspace/daily/",
             ],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "sessions.replay",
@@ -346,7 +342,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m demo", "quant-m session list"],
             &["cargo test sessions", "cargo test replay"],
             &["workspace/state/sessions/"],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "context.compact-guard",
@@ -372,7 +368,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/state/compacted/",
                 "workspace/state/context-guardian/",
             ],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "context.boil",
@@ -387,7 +383,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m boil <session_id> --dry-run"],
             &["cargo test boil"],
             &["workspace/state/boil/"],
-            &["docs/pi-inspired-feature-hardening-plan.md"],
+            &["README.md"],
         ),
         record(
             "loop.dry-run",
@@ -399,7 +395,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m loop --dry-run --json"],
             &["cargo test loop_dry_run"],
             &["workspace/state/loops/"],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "cost.ledger",
@@ -427,7 +423,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/state/shared-state.db",
                 "workspace/state/cost-ledger.jsonl",
             ],
-            &["README.md", "docs/feature-map.md"],
+            &["README.md", "README.md"],
         ),
         record(
             "strategist.dry-run",
@@ -442,7 +438,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/state/strategist/",
                 "workspace/state/worker-proposals/",
             ],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "question.utility",
@@ -457,7 +453,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m question ask --mode agent-cluster \"What next?\""],
             &["cargo test question"],
             &["workspace/state/worker-proposals/"],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         worker_runtime_record(cfg),
         record(
@@ -475,7 +471,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             ],
             &["cargo test worker_proposals", "cargo test cluster_boundary"],
             &["workspace/state/worker-proposals/"],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "adapters.terminal",
@@ -487,7 +483,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m adapter send \"hello\""],
             &["cargo test adapters"],
             &["workspace/logs/"],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         webhook_record(cfg),
         telegram_record(cfg),
@@ -520,7 +516,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "cargo test desk_registry",
             ],
             &[],
-            &["docs/feature-map.md", "docs/quant-m-skills.md"],
+            &["README.md", "README.md"],
         ),
         record(
             "state.shared",
@@ -545,7 +541,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/state/shared-state.db",
                 "workspace/state/shared-state.redb",
             ],
-            &["docs/shared_state.md", "docs/feature-map.md"],
+            &["README.md", "README.md"],
         ),
         record(
             "cockpit.planning",
@@ -557,7 +553,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m cockpit plan --host auto"],
             &["cargo test terminal_cockpit"],
             &[],
-            &["docs/terminal-cockpit-adapters.md"],
+            &["README.md"],
         ),
         record(
             "truth.files",
@@ -573,7 +569,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/SHIPPABLE.md",
                 "workspace/AGENTS.md",
             ],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "domain.mock-research",
@@ -591,7 +587,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
                 "workspace/state/sessions/",
                 "workspace/state/shared-state.db",
             ],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "domain.mock-trading-paper",
@@ -606,7 +602,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m policy evaluate-skill mock-trading.prepare-paper-review"],
             &["cargo test domain", "cargo test policy_registry"],
             &["workspace/state/shared-state.db"],
-            &["docs/feature-map.md"],
+            &["README.md"],
         ),
         record(
             "live-trading.execution",
@@ -618,7 +614,7 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m policy show mock-trading.trading-action-deny"],
             &["cargo test mock_trading"],
             &[],
-            &["docs/feature-map.md", "docs/assumptions.md"],
+            &["README.md", "README.md"],
         ),
         record(
             "design.repeatable-project-skills",
@@ -629,8 +625,8 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &[],
             &[],
             &[],
-            &["docs/wiki/raw/project/*.md"],
-            &["docs/quant-m-skills.md"],
+            &["README.md"],
+            &["README.md"],
         ),
     ]
 }
@@ -655,7 +651,7 @@ fn worker_runtime_record(cfg: &Config) -> CapabilityRecord {
             "workspace/queue/dead-letter.ndjson",
             "workspace/state/worker_state.json",
         ],
-        &["docs/feature-map.md"],
+        &["README.md"],
     );
     record.config_gates = vec![
         format!(
@@ -684,7 +680,7 @@ fn webhook_record(cfg: &Config) -> CapabilityRecord {
         &["quant-m channel list"],
         &["cargo test adapters"],
         &[],
-        &["docs/feature-map.md"],
+        &["README.md"],
     );
     record
         .requirements
@@ -709,7 +705,7 @@ fn telegram_record(cfg: &Config) -> CapabilityRecord {
         &["quant-m channel list --json"],
         &["cargo test telegram", "cargo test channels"],
         &["workspace/state/sessions/"],
-        &["docs/feature-map.md"],
+        &["README.md"],
     );
     record
         .requirements
@@ -742,7 +738,7 @@ fn skills_record(cfg: &Config) -> CapabilityRecord {
         &["quant-m skills list"],
         &["cargo test skills"],
         &["workspace/skills/<skill>/SKILL.md"],
-        &["docs/quant-m-skills.md", "docs/feature-map.md"],
+        &["README.md", "README.md"],
     );
     record.requirements.push(req(
         "config",
@@ -791,7 +787,7 @@ fn provider_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["quant-m provider list --json"],
             &["cargo test provider", "cargo test llm"],
             &[],
-            &["README.md", "docs/feature-map.md"],
+            &["README.md", "README.md"],
         );
         record.requirements.push(req(
             "config",

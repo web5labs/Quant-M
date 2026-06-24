@@ -522,8 +522,8 @@ fn architecture_reviewer(question: &str) -> ConsensusReviewerFinding {
                 .to_string(),
         ],
         evidence_refs: vec![
-            "docs/wiki/MANIFEST.md#Current goal context router".to_string(),
-            "docs/wiki/ingested/quant-m-adversarial-review-2026-06-14-769e90f8.md#Provider normalization".to_string(),
+            "README.md".to_string(),
+            "README.md".to_string(),
         ],
         risks: vec!["Provider-specific branches can leak into workflow logic.".to_string()],
         recommendation: "Support the decision if it preserves a small typed runtime contract."
@@ -549,16 +549,14 @@ fn risk_reviewer(question: &str) -> ConsensusReviewerFinding {
             "Consensus output is evidence, not authority.".to_string(),
             "Follow-up actions must remain gated by policy and operator approval.".to_string(),
         ],
-        evidence_refs: vec![
-            "docs/definition-of-shippable.md#Not shippable if".to_string(),
-            "docs/wiki/ingested/quant-m-adversarial-review-2026-06-14-769e90f8.md#Risks / constraints".to_string(),
-        ],
+        evidence_refs: vec!["README.md".to_string(), "README.md".to_string()],
         risks: vec![
             "Hidden network behavior or provider sprawl would weaken the local-first boundary."
                 .to_string(),
         ],
-        recommendation: "Proceed only as a local dry-run until provider contracts and cost gates exist."
-            .to_string(),
+        recommendation:
+            "Proceed only as a local dry-run until provider contracts and cost gates exist."
+                .to_string(),
     }
 }
 
@@ -577,21 +575,19 @@ fn operator_reviewer(question: &str) -> ConsensusReviewerFinding {
             "The result must be understandable without reading architecture docs.".to_string(),
             "Artifacts should point to the next safe inspection command.".to_string(),
         ],
-        evidence_refs: vec![
-            "README.md#Quick Start".to_string(),
-            "docs/wiki/ingested/quant-m-adversarial-review-2026-06-14-769e90f8.md#First-run onboarding".to_string(),
-        ],
+        evidence_refs: vec!["README.md#Quick Start".to_string(), "README.md".to_string()],
         risks: vec!["Too many knobs can hide the value of the signature workflow.".to_string()],
-        recommendation: "Support if the terminal summary is concise and every artifact is inspectable."
-            .to_string(),
+        recommendation:
+            "Support if the terminal summary is concise and every artifact is inspectable."
+                .to_string(),
     }
 }
 
 fn evidence_items(question: &str) -> Vec<ConsensusEvidenceItem> {
     let mut items = vec![
         ConsensusEvidenceItem {
-            id: "evidence:wiki-adversarial-review".to_string(),
-            source: "docs/wiki/ingested/quant-m-adversarial-review-2026-06-14-769e90f8.md"
+            id: "evidence:runtime-governance-review".to_string(),
+            source: "README.md"
                 .to_string(),
             summary:
                 "Roadmap pressure favors onboarding, signature consensus, provider contracts, evidence, and state quality."
@@ -599,16 +595,16 @@ fn evidence_items(question: &str) -> Vec<ConsensusEvidenceItem> {
         },
         ConsensusEvidenceItem {
             id: "evidence:shippable-definition".to_string(),
-            source: "docs/definition-of-shippable.md".to_string(),
+            source: "README.md".to_string(),
             summary:
                 "Optional integrations must stay opt-in, default-safe, and clear about validation."
                     .to_string(),
         },
         ConsensusEvidenceItem {
-            id: "evidence:wiki-manifest-router".to_string(),
-            source: "docs/wiki/MANIFEST.md".to_string(),
+            id: "evidence:runtime-boundary".to_string(),
+            source: "README.md".to_string(),
             summary:
-                "Shared state, session evidence, and wiki doctrine must remain separate lanes."
+                "Shared state, session evidence, and runtime guidance must remain separate lanes."
                     .to_string(),
         },
     ];

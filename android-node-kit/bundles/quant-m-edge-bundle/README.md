@@ -25,7 +25,6 @@ PROFILE=dev-builder android-node-kit/scripts/adb-stage-device.sh
 - Bootstrap: `android-node-kit/bootstrap/bootstrap-termux.sh`
 - Public inventory template: `android-node-kit/inventory/nodes.example.csv`
 - Private local inventory: `android-node-kit/inventory/nodes.csv` (ignored by git)
-- Wiki: `android-node-kit/WikiSkill/wiki/index.md`
 
 ## Missing Before Full Install
 

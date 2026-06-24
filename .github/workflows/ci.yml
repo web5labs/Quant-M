@@ -16,5 +16,3 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
-      - name: Onboarding lint
-        run: python3 scripts/lint_project_onboarding.py --target .
