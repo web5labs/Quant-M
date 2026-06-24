@@ -541,25 +541,21 @@ fn render_chat_header(frame: &mut Frame, area: Rect, app: &ChatApp, compact: boo
 }
 
 fn render_chat_messages(frame: &mut Frame, area: Rect, app: &ChatApp, compact: bool) {
-    let max_messages = area.height.saturating_sub(2).max(1) as usize;
-    let visible = app
-        .messages
-        .iter()
-        .rev()
-        .take(max_messages)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev();
+    let max_lines = area.height.saturating_sub(2).max(1) as usize;
     let mut lines = Vec::new();
-    for message in visible {
+    for message in &app.messages {
         let style = chat_message_style(message.kind);
         let alignment = if compact || message.kind != ChatMessageKind::HumanInput {
             Alignment::Left
         } else {
             Alignment::Right
         };
-        let rendered = render_chat_message_text(message);
-        lines.push(Line::from(Span::styled(rendered, style)).alignment(alignment));
+        for rendered in render_chat_message_lines(message) {
+            lines.push(Line::from(Span::styled(rendered, style)).alignment(alignment));
+        }
+    }
+    if lines.len() > max_lines {
+        lines = lines.split_off(lines.len() - max_lines);
     }
     frame.render_widget(
         Paragraph::new(Text::from(lines))
@@ -577,13 +573,21 @@ fn chat_layout_mode(width: u16) -> ChatLayoutMode {
     }
 }
 
+#[cfg(test)]
 fn render_chat_message_text(message: &ChatMessage) -> String {
+    render_chat_message_lines(message).join("\n")
+}
+
+fn render_chat_message_lines(message: &ChatMessage) -> Vec<String> {
     let prefix = chat_message_prefix(message.kind);
-    let body = message.body.lines().next().unwrap_or("");
-    format!(
-        "{prefix} [{:?}/{:?}] {body}",
+    let mut body_lines = message.body.lines();
+    let first = body_lines.next().unwrap_or("");
+    let mut rendered = vec![format!(
+        "{prefix} [{:?}/{:?}] {first}",
         message.kind, message.storage_mode
-    )
+    )];
+    rendered.extend(body_lines.map(|line| format!("    {line}")));
+    rendered
 }
 
 fn render_chat_evidence_rail(frame: &mut Frame, area: Rect, app: &ChatApp) {
@@ -1294,6 +1298,19 @@ mod tests {
         assert!(rendered.contains("StateRecord"));
         assert!(rendered.contains("InspectOnly"));
         assert!(rendered.contains("State review"));
+    }
+
+    #[test]
+    fn rendered_chat_messages_preserve_multiline_tool_answers() {
+        let message = ChatMessage {
+            kind: ChatMessageKind::ToolCliResponse,
+            storage_mode: TuiStorageMode::ReadOnlyToolCall,
+            body: "Codex\nActual useful answer".to_string(),
+        };
+        let rendered = render_chat_message_text(&message);
+
+        assert!(rendered.contains("Codex"));
+        assert!(rendered.contains("Actual useful answer"));
     }
 
     #[test]

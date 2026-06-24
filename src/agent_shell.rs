@@ -564,12 +564,24 @@ fn enabled_label(value: bool) -> &'static str {
 }
 
 pub(crate) fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
-    if !command_present("codex") {
+    run_codex_chat_command(cfg, "codex", prompt)
+}
+
+fn run_codex_chat_command(cfg: &Config, command: &str, prompt: &str) -> Result<String> {
+    if !command_present(command) {
         return Ok(format!(
             "{ANSI_RED}Codex CLI is not on PATH.{ANSI_RESET}\nRun `codex login`, then retry from this shell."
         ));
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| cfg.workspace_dir.clone());
+    let last_message_path = std::env::temp_dir().join(format!(
+        "quantm-codex-last-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
     let harness_prompt = format!(
         "You are Codex running through the Quant-M local agent harness.\n\
          Keep the answer concise and practical.\n\
@@ -578,42 +590,38 @@ pub(crate) fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
         cfg.workspace_dir.display(),
         prompt
     );
-    let mut child = Command::new("codex")
+    let output = Command::new(command)
         .arg("exec")
         .arg("--color")
-        .arg("always")
+        .arg("never")
         .arg("--sandbox")
         .arg("read-only")
         .arg("--skip-git-repo-check")
         .arg("--cd")
         .arg(cwd)
-        .arg("-")
-        .stdin(Stdio::piped())
+        .arg("--output-last-message")
+        .arg(&last_message_path)
+        .arg(harness_prompt)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .context("failed to run codex exec")?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(harness_prompt.as_bytes())
-            .context("failed to send prompt to codex exec")?;
-    }
-    let output = child
-        .wait_with_output()
-        .context("failed to wait for codex exec")?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if output.status.success() {
-        let mut lines = vec![format!("{ANSI_BOLD}{ANSI_GREEN}Codex{ANSI_RESET}")];
-        if !stderr.is_empty() {
-            lines.push(format!("{ANSI_DIM}{stderr}{ANSI_RESET}"));
-        }
-        if stdout.is_empty() {
-            lines.push("Codex completed without text output.".to_string());
+        let answer = std::fs::read_to_string(&last_message_path)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let _ = std::fs::remove_file(&last_message_path);
+        if !answer.is_empty() {
+            Ok(answer)
+        } else if !stdout.is_empty() {
+            Ok(stdout)
         } else {
-            lines.push(stdout);
+            Ok("Codex completed without text output.".to_string())
         }
-        Ok(lines.join("\n"))
     } else {
         let hint = if stderr.contains("readonly database")
             || stderr.contains("Operation not permitted")
@@ -654,7 +662,7 @@ pub(crate) fn run_cli_chat(cfg: &Config, tool_id: &str, prompt: &str) -> Result<
     }
 
     match tool.kind {
-        ToolKind::Codex => run_codex_chat(cfg, prompt),
+        ToolKind::Codex => run_codex_chat_command(cfg, &tool.command, prompt),
         ToolKind::Claude | ToolKind::Anthropic => {
             run_prompt_arg_chat(cfg, &tool.command, &id, "Claude", &["-p"], prompt)
         }
@@ -1099,6 +1107,41 @@ mod tests {
             parse_command("contex-status").expect("context typo"),
             AgentShellCommand::Hint("Did you mean context-status? Try: context-status".to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_chat_returns_last_message_answer_not_cli_label() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (tmp, _config_path, cfg) = temp_cfg();
+        let fake_codex = tmp.path().join("codex");
+        std::fs::write(
+            &fake_codex,
+            r#"#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+printf 'ACTUAL_CODEX_RESPONSE\nsecond line\n' > "$out"
+printf 'codex\ntranscript text that should not win\n'
+"#,
+        )
+        .expect("write fake codex");
+        let mut perms = std::fs::metadata(&fake_codex)
+            .expect("fake metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, perms).expect("chmod fake codex");
+
+        let output = run_codex_chat_command(&cfg, fake_codex.to_str().expect("path"), "hello")
+            .expect("codex chat");
+
+        assert_eq!(output, "ACTUAL_CODEX_RESPONSE\nsecond line");
     }
 
     #[test]
