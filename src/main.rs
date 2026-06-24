@@ -71,7 +71,6 @@ const CLI_BANNER: &str = "\
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_BOLD: &str = "\x1b[1m";
 const ANSI_DIM: &str = "\x1b[2m";
-const ANSI_UNDERLINE: &str = "\x1b[4m";
 const ANSI_BLUE: &str = "\x1b[38;2;80;160;255m";
 const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
 const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
@@ -1829,7 +1828,6 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
         print_setup_report(&report, false)?;
     }
 
-    let init = run_init_flow(config_path, true)?;
     let cfg = Config::load_or_create(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
     cfg.validate()?;
@@ -1837,7 +1835,7 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
     let _truth_report = truth_files::init_truth_files(&cfg, false)?;
 
     print_quant_m_brand_banner();
-    println!("{}", start_chat_message(&init.workspace));
+    println!("{}", start_chat_message(&cfg.workspace_dir));
     tui_shell::run_chat(&cfg, config_path, true)
 }
 
@@ -1993,11 +1991,16 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
     } else {
         report.enabled_tools.join(", ")
     };
+    let tool_validation_next = if report.enabled_tools.iter().any(|tool| tool == "codex") {
+        format!("  {command} tool validate codex\n")
+    } else {
+        String::new()
+    };
     print_serialized_or_text(
         report,
         json,
         &format!(
-            "Setup complete.\nconfig: {}\nworkspace: {}\ndevice_type: {}\nnetwork: {}\noperator_channel: {}\ntools: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command} agent\n  {command} doctor\n  {command} demo\n  {command} context guard",
+            "Setup complete.\nconfig: {}\nworkspace: {}\ndevice_type: {}\nnetwork: {}\noperator_channel: {}\ntools: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command}\n  {command} doctor\n{}  {command} shell\n\n`{command}` opens the governed Quant-M chat cockpit. Selected CLI tools such as Codex are recognized there, but tool detection is not execution permission.",
             report.config.display(),
             report.workspace.display(),
             runtime_profile_label(report.runtime_profile),
@@ -2016,6 +2019,7 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
             remote_model,
             openrouter_model,
             report.openrouter_key_present,
+            tool_validation_next,
         ),
     )
 }
@@ -2146,12 +2150,17 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     for tool in &args.selected_tools {
         enable_tool(&mut cfg, tool);
     }
-    cfg.preferences.onboarding_completed = true;
 
-    let cfg = cfg.sanitize();
+    let mut cfg = cfg.sanitize();
     cfg.validate()?;
+    bootstrap::ensure_workspace(&cfg).with_context(|| {
+        format!(
+            "failed to prepare workspace '{}'; choose a writable project folder such as ./workspace or ~/Quant-M/workspace",
+            cfg.workspace_dir.display()
+        )
+    })?;
+    cfg.preferences.onboarding_completed = true;
     cfg.save(config_path)?;
-    bootstrap::ensure_workspace(&cfg)?;
     Ok(SetupReport {
         status: if args.non_interactive {
             "ok_non_interactive".to_string()
@@ -2484,13 +2493,11 @@ fn run_interactive_setup(
     }
 
     println!();
-    println!("{}{}✓ Setup complete.{}", ANSI_BOLD, ANSI_GREEN, ANSI_RESET);
+    println!(
+        "{}{}✓ Review accepted.{} Preparing workspace and saving profile...",
+        ANSI_BOLD, ANSI_GREEN, ANSI_RESET
+    );
     println!("Config will be written to: {}", config_path.display());
-    println!("{}Next:{}", ANSI_UNDERLINE, ANSI_RESET);
-    let command = quant_m_command_hint();
-    println!("  {command} agent");
-    println!("  {command} doctor");
-    println!("  {command} demo");
     Ok(args)
 }
 
@@ -4866,6 +4873,48 @@ mod tests {
         assert!(cfg.llm.enabled);
         assert_eq!(cfg.llm.api_key.as_deref(), Some("test-key"));
         assert!(!cfg.context_guardian.enabled);
+    }
+
+    #[test]
+    fn setup_does_not_complete_when_workspace_cannot_be_created() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        run_init_flow(&config_path, true).expect("init");
+        let blocked_parent = tmp.path().join("not-a-directory");
+        std::fs::write(&blocked_parent, "file blocks directory creation").expect("write blocker");
+
+        let err = run_setup_flow(
+            &config_path,
+            SetupArgs {
+                non_interactive: true,
+                force_interactive: false,
+                advanced: false,
+                local_model_provider: None,
+                local_model: None,
+                local_models: Vec::new(),
+                remote_model_provider: None,
+                remote_model: None,
+                openrouter_models: Vec::new(),
+                openrouter_api_key: None,
+                enable_openrouter: false,
+                channel: Some("none".to_string()),
+                channel_value: None,
+                runtime_profile: Some("laptop".to_string()),
+                workspace_path: Some(blocked_parent.join("workspace")),
+                state_path: None,
+                session_path: None,
+                external_network: Some("disabled".to_string()),
+                context_guardian: Some("enabled".to_string()),
+                selected_tools: vec!["codex".to_string()],
+                replace_tools: true,
+            },
+        )
+        .expect_err("setup should fail before saving completed onboarding");
+
+        assert!(err.to_string().contains("failed to prepare workspace"));
+        let cfg = Config::load_existing(&config_path).expect("load config");
+        assert!(!cfg.preferences.onboarding_completed);
+        assert!(!cfg.tools.get("codex").expect("codex").enabled);
     }
 
     #[test]
