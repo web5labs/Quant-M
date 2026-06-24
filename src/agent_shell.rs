@@ -10,7 +10,7 @@ use crate::workflow_registry::{self, WorkflowId};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -25,6 +25,40 @@ const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
 const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
 const ANSI_YELLOW: &str = "\x1b[38;2;255;210;90m";
 const ANSI_RED: &str = "\x1b[38;2;255;95;95m";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CliSandbox {
+    ReadOnly,
+    WorkspaceWrite,
+}
+
+impl CliSandbox {
+    pub(crate) fn as_codex_arg(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        self.as_codex_arg()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CliChatOptions {
+    pub(crate) sandbox: CliSandbox,
+    pub(crate) add_dirs: Vec<PathBuf>,
+}
+
+impl Default for CliChatOptions {
+    fn default() -> Self {
+        Self {
+            sandbox: CliSandbox::ReadOnly,
+            add_dirs: Vec::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AgentShellCommand {
@@ -564,10 +598,15 @@ fn enabled_label(value: bool) -> &'static str {
 }
 
 pub(crate) fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
-    run_codex_chat_command(cfg, "codex", prompt)
+    run_codex_chat_command(cfg, "codex", prompt, &CliChatOptions::default())
 }
 
-fn run_codex_chat_command(cfg: &Config, command: &str, prompt: &str) -> Result<String> {
+fn run_codex_chat_command(
+    cfg: &Config,
+    command: &str,
+    prompt: &str,
+    options: &CliChatOptions,
+) -> Result<String> {
     if !command_present(command) {
         return Ok(format!(
             "{ANSI_RED}Codex CLI is not on PATH.{ANSI_RESET}\nRun `codex login`, then retry from this shell."
@@ -585,20 +624,31 @@ fn run_codex_chat_command(cfg: &Config, command: &str, prompt: &str) -> Result<S
     let harness_prompt = format!(
         "You are Codex running through the Quant-M local agent harness.\n\
          Keep the answer concise and practical.\n\
+         Codex sandbox: {}\n\
+         Extra writable directories: {}\n\
          Quant-M workspace: {}\n\n\
          User prompt:\n{}",
+        options.sandbox.label(),
+        format_add_dirs(&options.add_dirs),
         cfg.workspace_dir.display(),
         prompt
     );
-    let output = Command::new(command)
+    let mut command_builder = Command::new(command);
+    command_builder
         .arg("exec")
         .arg("--color")
         .arg("never")
         .arg("--sandbox")
-        .arg("read-only")
+        .arg(options.sandbox.as_codex_arg())
         .arg("--skip-git-repo-check")
         .arg("--cd")
-        .arg(cwd)
+        .arg(cwd);
+    if options.sandbox == CliSandbox::WorkspaceWrite {
+        for dir in &options.add_dirs {
+            command_builder.arg("--add-dir").arg(dir);
+        }
+    }
+    let output = command_builder
         .arg("--output-last-message")
         .arg(&last_message_path)
         .arg(harness_prompt)
@@ -640,7 +690,17 @@ fn run_codex_chat_command(cfg: &Config, command: &str, prompt: &str) -> Result<S
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn run_cli_chat(cfg: &Config, tool_id: &str, prompt: &str) -> Result<String> {
+    run_cli_chat_with_options(cfg, tool_id, prompt, &CliChatOptions::default())
+}
+
+pub(crate) fn run_cli_chat_with_options(
+    cfg: &Config,
+    tool_id: &str,
+    prompt: &str,
+    options: &CliChatOptions,
+) -> Result<String> {
     let id = tool_id.trim().to_ascii_lowercase();
     let Some(tool) = cfg.tools.get(&id) else {
         return Ok(format!(
@@ -662,7 +722,7 @@ pub(crate) fn run_cli_chat(cfg: &Config, tool_id: &str, prompt: &str) -> Result<
     }
 
     match tool.kind {
-        ToolKind::Codex => run_codex_chat_command(cfg, &tool.command, prompt),
+        ToolKind::Codex => run_codex_chat_command(cfg, &tool.command, prompt, options),
         ToolKind::Claude | ToolKind::Anthropic => {
             run_prompt_arg_chat(cfg, &tool.command, &id, "Claude", &["-p"], prompt)
         }
@@ -674,6 +734,18 @@ pub(crate) fn run_cli_chat(cfg: &Config, tool_id: &str, prompt: &str) -> Result<
             "{ANSI_YELLOW}{} is enabled, but Quant-M does not yet have a safe chat adapter for this CLI kind ({:?}).{ANSI_RESET}\nUse `quant-m tool validate {}` to verify the command, or choose Codex, Claude, or Gemini for direct TUI chat.",
             tool.command, tool.kind, id
         )),
+    }
+}
+
+fn format_add_dirs(add_dirs: &[PathBuf]) -> String {
+    if add_dirs.is_empty() {
+        "none".to_string()
+    } else {
+        add_dirs
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -1138,10 +1210,79 @@ printf 'codex\ntranscript text that should not win\n'
         perms.set_mode(0o755);
         std::fs::set_permissions(&fake_codex, perms).expect("chmod fake codex");
 
-        let output = run_codex_chat_command(&cfg, fake_codex.to_str().expect("path"), "hello")
-            .expect("codex chat");
+        let output = run_codex_chat_command(
+            &cfg,
+            fake_codex.to_str().expect("path"),
+            "hello",
+            &CliChatOptions::default(),
+        )
+        .expect("codex chat");
 
         assert_eq!(output, "ACTUAL_CODEX_RESPONSE\nsecond line");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_chat_passes_workspace_write_and_add_dir_flags() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (tmp, _config_path, cfg) = temp_cfg();
+        let fake_codex = tmp.path().join("codex");
+        let extra_dir = tmp.path().join("Desktop");
+        std::fs::create_dir_all(&extra_dir).expect("extra dir");
+        std::fs::write(
+            &fake_codex,
+            format!(
+                r#"#!/bin/sh
+expected_add_dir='{}'
+out=""
+saw_sandbox=0
+saw_add_dir=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --sandbox)
+      shift
+      [ "$1" = "workspace-write" ] && saw_sandbox=1
+      ;;
+    --add-dir)
+      shift
+      [ "$1" = "$expected_add_dir" ] && saw_add_dir=1
+      ;;
+    --output-last-message)
+      shift
+      out="$1"
+      ;;
+  esac
+  shift || true
+done
+if [ "$saw_sandbox" != "1" ] || [ "$saw_add_dir" != "1" ]; then
+  echo "missing expected sandbox/add-dir flags" >&2
+  exit 7
+fi
+printf 'WRITE_MODE_OK\n' > "$out"
+"#,
+                extra_dir.display()
+            ),
+        )
+        .expect("write fake codex");
+        let mut perms = std::fs::metadata(&fake_codex)
+            .expect("fake metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, perms).expect("chmod fake codex");
+
+        let output = run_codex_chat_command(
+            &cfg,
+            fake_codex.to_str().expect("path"),
+            "create a folder",
+            &CliChatOptions {
+                sandbox: CliSandbox::WorkspaceWrite,
+                add_dirs: vec![extra_dir],
+            },
+        )
+        .expect("codex chat");
+
+        assert_eq!(output, "WRITE_MODE_OK");
     }
 
     #[test]

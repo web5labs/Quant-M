@@ -14,14 +14,13 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_VISIBLE_ITEMS: usize = 8;
 const MOCK_RESEARCH_WORKFLOW: &str = "workflow:mock-research-brief";
-const CHAT_INPUT_HINT: &str =
-    "/help /state [domain] /cost [session] /replay <session> /ask <question> /refresh /quit";
+const CHAT_INPUT_HINT: &str = "/help /read /write /add-dir <path> /state [domain] /cost [session] /replay <session> /ask <question> /refresh /quit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TuiView {
@@ -94,6 +93,9 @@ enum TuiAction {
     Replay { session_id: String },
     AskInspect { question: String },
     ConsensusDryRun { prompt: String },
+    SetCliSandbox { sandbox: agent_shell::CliSandbox },
+    AddWriteDir { path: String },
+    ShowWriteDirs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +105,7 @@ enum TuiStorageMode {
     StateWritesAllowed,
     RequiresApproval,
     ReadOnlyToolCall,
+    WorkspaceWriteToolCall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +139,8 @@ struct ChatMessage {
 struct ChatApp {
     inspect_only: bool,
     chat_tool: Option<String>,
+    cli_sandbox: agent_shell::CliSandbox,
+    add_dirs: Vec<PathBuf>,
     messages: Vec<ChatMessage>,
     input: String,
     notice: String,
@@ -148,9 +153,19 @@ pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> 
     let mut app = ChatApp {
         inspect_only,
         chat_tool,
-        messages: initial_chat_messages(inspect_only, selected_chat_tool(cfg).as_deref()),
+        cli_sandbox: agent_shell::CliSandbox::ReadOnly,
+        add_dirs: Vec::new(),
+        messages: initial_chat_messages(
+            inspect_only,
+            selected_chat_tool(cfg).as_deref(),
+            agent_shell::CliSandbox::ReadOnly,
+        ),
         input: String::new(),
-        notice: initial_chat_notice(inspect_only, selected_chat_tool(cfg).as_deref()),
+        notice: initial_chat_notice(
+            inspect_only,
+            selected_chat_tool(cfg).as_deref(),
+            agent_shell::CliSandbox::ReadOnly,
+        ),
         snapshot: collect_snapshot(cfg)?,
     };
 
@@ -160,25 +175,35 @@ pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> 
     result
 }
 
-fn initial_chat_messages(inspect: bool, chat_tool: Option<&str>) -> Vec<ChatMessage> {
+fn initial_chat_messages(
+    inspect: bool,
+    chat_tool: Option<&str>,
+    sandbox: agent_shell::CliSandbox,
+) -> Vec<ChatMessage> {
     vec![ChatMessage {
         kind: ChatMessageKind::DisplayOnlyNote,
         storage_mode: TuiStorageMode::InspectOnly,
         body: format!(
-            "You are now talking with Quant-M, the local governed evidence agent. This chat is an evidence cockpit, not an authority surface. mode={}",
-            chat_mode_label(inspect, chat_tool)
+            "You are now talking with Quant-M, the local governed evidence agent. This chat is an evidence cockpit, not an authority surface. mode={} sandbox={}",
+            chat_mode_label(inspect, chat_tool),
+            sandbox.label()
         ),
     }]
 }
 
-fn initial_chat_notice(inspect: bool, chat_tool: Option<&str>) -> String {
+fn initial_chat_notice(
+    inspect: bool,
+    chat_tool: Option<&str>,
+    sandbox: agent_shell::CliSandbox,
+) -> String {
     if inspect {
         "Inspect-only cockpit. /ask records navigation text; no provider or CLI call is made."
             .to_string()
     } else {
         format!(
-            "{} cockpit. /ask and plain text call the selected CLI through a bounded adapter.",
-            chat_mode_label(false, chat_tool)
+            "{} cockpit. sandbox={}. Use /write for workspace writes and /read to return to read-only.",
+            chat_mode_label(false, chat_tool),
+            sandbox.label()
         )
     }
 }
@@ -208,7 +233,7 @@ fn run_chat_app(terminal: &mut DefaultTerminal, cfg: &Config, app: &mut ChatApp)
                             continue;
                         }
                         let action = parse_tui_action(&input);
-                        let input_storage_mode = storage_mode_for_action(&action);
+                        let input_storage_mode = storage_mode_for_action(&action, app.cli_sandbox);
                         app.messages.push(ChatMessage {
                             kind: ChatMessageKind::HumanInput,
                             storage_mode: input_storage_mode,
@@ -246,6 +271,22 @@ fn parse_tui_action(input: &str) -> TuiAction {
         "/quit" | "/exit" => return TuiAction::Quit,
         "/help" | "?" => return TuiAction::Help,
         "/refresh" => return TuiAction::Refresh,
+        "/read" | "/readonly" | "/read-only" => {
+            return TuiAction::SetCliSandbox {
+                sandbox: agent_shell::CliSandbox::ReadOnly,
+            };
+        }
+        "/write" | "/read-write" | "/workspace-write" => {
+            return TuiAction::SetCliSandbox {
+                sandbox: agent_shell::CliSandbox::WorkspaceWrite,
+            };
+        }
+        "/add-dir" | "/adddir" => {
+            return TuiAction::AddWriteDir {
+                path: rest.trim().to_string(),
+            };
+        }
+        "/dirs" | "/write-dirs" => return TuiAction::ShowWriteDirs,
         "/state" => {
             let domain = rest.trim();
             return TuiAction::ShowState {
@@ -280,21 +321,27 @@ fn parse_tui_action(input: &str) -> TuiAction {
     }
 }
 
-fn storage_mode_for_action(action: &TuiAction) -> TuiStorageMode {
+fn storage_mode_for_action(action: &TuiAction, sandbox: agent_shell::CliSandbox) -> TuiStorageMode {
     match action {
         TuiAction::Help
         | TuiAction::Quit
         | TuiAction::Refresh
+        | TuiAction::SetCliSandbox { .. }
+        | TuiAction::AddWriteDir { .. }
+        | TuiAction::ShowWriteDirs
         | TuiAction::ShowState { .. }
         | TuiAction::ShowCost { .. }
         | TuiAction::Replay { .. } => TuiStorageMode::InspectOnly,
-        TuiAction::AskInspect { .. } => TuiStorageMode::ReadOnlyToolCall,
+        TuiAction::AskInspect { .. } => match sandbox {
+            agent_shell::CliSandbox::ReadOnly => TuiStorageMode::ReadOnlyToolCall,
+            agent_shell::CliSandbox::WorkspaceWrite => TuiStorageMode::WorkspaceWriteToolCall,
+        },
         TuiAction::ConsensusDryRun { .. } => TuiStorageMode::DryRunWritesAllowed,
     }
 }
 
 fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
-    let storage_mode = storage_mode_for_action(&action);
+    let storage_mode = storage_mode_for_action(&action, app.cli_sandbox);
     if app.inspect_only && storage_mode != TuiStorageMode::InspectOnly {
         if let TuiAction::AskInspect { question } = action {
             app.messages.push(ChatMessage {
@@ -322,9 +369,53 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
             kind: ChatMessageKind::DisplayOnlyNote,
             storage_mode,
             body: format!(
-                "Typed actions only. {CHAT_INPUT_HINT}. Chat text is evidence input, not runtime authority. In CLI mode, /ask and plain text call the selected tool through a bounded adapter.\nstorage modes: {}\nmessage provenance: {}",
+                "Typed actions only. {CHAT_INPUT_HINT}. Chat text is evidence input, not runtime authority. In CLI mode, /ask and plain text call the selected tool through a bounded adapter.\npermissions: /read uses Codex read-only; /write uses Codex workspace-write; /add-dir <path> grants an extra writable directory for this chat session.\nstorage modes: {}\nmessage provenance: {}",
                 known_storage_modes_label(),
                 known_message_kinds_label()
+            ),
+        },
+        TuiAction::SetCliSandbox { sandbox } => {
+            app.cli_sandbox = sandbox;
+            ChatMessage {
+                kind: ChatMessageKind::PolicyDecision,
+                storage_mode,
+                body: match sandbox {
+                    agent_shell::CliSandbox::ReadOnly => {
+                        "Codex chat sandbox set to read-only. Codex can inspect and answer, but not create or edit files.".to_string()
+                    }
+                    agent_shell::CliSandbox::WorkspaceWrite => {
+                        "Codex chat sandbox set to workspace-write. Codex may create and edit files inside the Quant-M workspace. Use /add-dir <path> before asking it to write somewhere else, such as ~/Desktop.".to_string()
+                    }
+                },
+            }
+        }
+        TuiAction::AddWriteDir { path } => match resolve_add_dir_path(&path) {
+            Ok(path) => {
+                if !app.add_dirs.contains(&path) {
+                    app.add_dirs.push(path.clone());
+                }
+                ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: format!(
+                        "Added writable directory for Codex chat: {}\nUse /write before asking Codex to create or edit files there.",
+                        path.display()
+                    ),
+                }
+            }
+            Err(err) => ChatMessage {
+                kind: ChatMessageKind::Error,
+                storage_mode,
+                body: err,
+            },
+        },
+        TuiAction::ShowWriteDirs => ChatMessage {
+            kind: ChatMessageKind::DisplayOnlyNote,
+            storage_mode,
+            body: format!(
+                "Codex sandbox: {}\nExtra writable directories: {}",
+                app.cli_sandbox.label(),
+                format_chat_add_dirs(&app.add_dirs)
             ),
         },
         TuiAction::Refresh => match collect_snapshot(cfg) {
@@ -412,7 +503,11 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                 }
             } else {
                 let tool_id = app.chat_tool.as_deref().unwrap_or("codex");
-                match agent_shell::run_cli_chat(cfg, tool_id, &question) {
+                let options = agent_shell::CliChatOptions {
+                    sandbox: app.cli_sandbox,
+                    add_dirs: app.add_dirs.clone(),
+                };
+                match agent_shell::run_cli_chat_with_options(cfg, tool_id, &question, &options) {
                     Ok(output) => ChatMessage {
                         kind: ChatMessageKind::ToolCliResponse,
                         storage_mode,
@@ -448,11 +543,58 @@ fn known_storage_modes_label() -> String {
         TuiStorageMode::StateWritesAllowed,
         TuiStorageMode::RequiresApproval,
         TuiStorageMode::ReadOnlyToolCall,
+        TuiStorageMode::WorkspaceWriteToolCall,
     ]
     .into_iter()
     .map(|mode| format!("{mode:?}"))
     .collect::<Vec<_>>()
     .join(", ")
+}
+
+fn resolve_add_dir_path(raw: &str) -> std::result::Result<PathBuf, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("Usage: /add-dir <existing-directory>".to_string());
+    }
+    let expanded = if raw == "~" {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| "Could not resolve ~ because HOME is not set.".to_string())?
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| "Could not resolve ~/ because HOME is not set.".to_string())?
+            .join(rest)
+    } else {
+        PathBuf::from(raw)
+    };
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()
+            .map_err(|err| format!("Could not resolve current directory: {err}"))?
+            .join(expanded)
+    };
+    if !path.is_dir() {
+        return Err(format!(
+            "Writable add-dir must already exist and be a directory: {}",
+            path.display()
+        ));
+    }
+    path.canonicalize()
+        .map_err(|err| format!("Could not canonicalize {}: {err}", path.display()))
+}
+
+fn format_chat_add_dirs(add_dirs: &[PathBuf]) -> String {
+    if add_dirs.is_empty() {
+        "none".to_string()
+    } else {
+        add_dirs
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn known_message_kinds_label() -> String {
@@ -524,7 +666,8 @@ fn render_chat_header(frame: &mut Frame, area: Rect, app: &ChatApp, compact: boo
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            "mode={mode} sessions={} state={} local_model={} openrouter={} layout={}",
+            "mode={mode} sandbox={} sessions={} state={} local_model={} openrouter={} layout={}",
+            app.cli_sandbox.label(),
             app.snapshot.session_count,
             app.snapshot.shared_state_count,
             app.snapshot.preferred_local_model,
@@ -598,6 +741,8 @@ fn render_chat_evidence_rail(frame: &mut Frame, area: Rect, app: &ChatApp) {
             "network: {}",
             app.snapshot.external_network_posture
         )),
+        ListItem::new(format!("sandbox: {}", app.cli_sandbox.label())),
+        ListItem::new(format!("add dirs: {}", format_chat_add_dirs(&app.add_dirs))),
         ListItem::new(format!("sessions: {}", app.snapshot.session_count)),
         ListItem::new(format!("state rows: {}", app.snapshot.shared_state_count)),
         ListItem::new(format!(
@@ -1177,6 +1322,8 @@ mod tests {
         ChatApp {
             inspect_only,
             chat_tool: None,
+            cli_sandbox: agent_shell::CliSandbox::ReadOnly,
+            add_dirs: Vec::new(),
             messages: Vec::new(),
             input: String::new(),
             notice: String::new(),
@@ -1222,6 +1369,25 @@ mod tests {
                 question: "what evidence exists?".to_string()
             }
         );
+        assert_eq!(
+            parse_tui_action("/write"),
+            TuiAction::SetCliSandbox {
+                sandbox: agent_shell::CliSandbox::WorkspaceWrite
+            }
+        );
+        assert_eq!(
+            parse_tui_action("/read"),
+            TuiAction::SetCliSandbox {
+                sandbox: agent_shell::CliSandbox::ReadOnly
+            }
+        );
+        assert_eq!(
+            parse_tui_action("/add-dir ~/Desktop"),
+            TuiAction::AddWriteDir {
+                path: "~/Desktop".to_string()
+            }
+        );
+        assert_eq!(parse_tui_action("/dirs"), TuiAction::ShowWriteDirs);
     }
 
     #[test]
@@ -1237,23 +1403,42 @@ mod tests {
     #[test]
     fn chat_action_storage_modes_are_explicit() {
         assert_eq!(
-            storage_mode_for_action(&TuiAction::ShowState { domain: None }),
+            storage_mode_for_action(
+                &TuiAction::ShowState { domain: None },
+                agent_shell::CliSandbox::ReadOnly,
+            ),
             TuiStorageMode::InspectOnly
         );
         assert_eq!(
-            storage_mode_for_action(&TuiAction::ConsensusDryRun {
-                prompt: "test".to_string()
-            }),
+            storage_mode_for_action(
+                &TuiAction::ConsensusDryRun {
+                    prompt: "test".to_string()
+                },
+                agent_shell::CliSandbox::ReadOnly,
+            ),
             TuiStorageMode::DryRunWritesAllowed
         );
         assert_eq!(
-            storage_mode_for_action(&TuiAction::AskInspect {
-                question: "what model are you?".to_string()
-            }),
+            storage_mode_for_action(
+                &TuiAction::AskInspect {
+                    question: "what model are you?".to_string()
+                },
+                agent_shell::CliSandbox::ReadOnly,
+            ),
             TuiStorageMode::ReadOnlyToolCall
+        );
+        assert_eq!(
+            storage_mode_for_action(
+                &TuiAction::AskInspect {
+                    question: "create a file".to_string()
+                },
+                agent_shell::CliSandbox::WorkspaceWrite,
+            ),
+            TuiStorageMode::WorkspaceWriteToolCall
         );
         assert!(known_storage_modes_label().contains("RequiresApproval"));
         assert!(known_storage_modes_label().contains("ReadOnlyToolCall"));
+        assert!(known_storage_modes_label().contains("WorkspaceWriteToolCall"));
         assert!(known_message_kinds_label().contains("WorkerProposal"));
         assert!(known_message_kinds_label().contains("ToolCliResponse"));
     }
@@ -1278,6 +1463,48 @@ mod tests {
         assert!(message.body.contains("Blocked in inspect mode"));
         assert!(!cost_ledger::cost_ledger_path(&cfg).exists());
         assert!(!cfg.runtime.session_dir.exists());
+    }
+
+    #[test]
+    fn write_command_switches_chat_to_workspace_write() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp);
+        let mut app = test_chat_app(false);
+
+        handle_tui_action(
+            &cfg,
+            &mut app,
+            TuiAction::SetCliSandbox {
+                sandbox: agent_shell::CliSandbox::WorkspaceWrite,
+            },
+        );
+
+        assert_eq!(app.cli_sandbox, agent_shell::CliSandbox::WorkspaceWrite);
+        let message = app.messages.last().expect("mode message");
+        assert_eq!(message.kind, ChatMessageKind::PolicyDecision);
+        assert!(message.body.contains("workspace-write"));
+    }
+
+    #[test]
+    fn add_dir_command_registers_canonical_write_dir() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp);
+        let mut app = test_chat_app(false);
+        let extra = tmp.path().join("extra");
+        std::fs::create_dir_all(&extra).expect("extra dir");
+
+        handle_tui_action(
+            &cfg,
+            &mut app,
+            TuiAction::AddWriteDir {
+                path: extra.display().to_string(),
+            },
+        );
+
+        assert_eq!(app.add_dirs, vec![extra.canonicalize().expect("canon")]);
+        let message = app.messages.last().expect("add-dir message");
+        assert_eq!(message.kind, ChatMessageKind::PolicyDecision);
+        assert!(message.body.contains("Added writable directory"));
     }
 
     #[test]

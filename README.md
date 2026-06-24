@@ -96,11 +96,24 @@ Inside the Quant-M chat cockpit, try:
 
 ```text
 /help
+/write
+/add-dir ~/Desktop
 /state
 /cost
 /ask what should I inspect first?
 /quit
 ```
+
+Chat starts in read-only mode. Use `/write` when you want Codex to create or edit files inside the Quant-M workspace. To let Codex write somewhere outside the workspace, grant that directory for the current chat session first:
+
+```text
+/write
+/add-dir ~/Desktop
+create a folder on my Desktop named quantm-test
+/read
+```
+
+`/read` returns the chat to read-only mode. Quant-M uses Codex `workspace-write` for `/write`; it does not use unrestricted `danger-full-access`.
 
 The classic text shell remains available:
 
