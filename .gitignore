@@ -49,6 +49,7 @@ Thumbs.db
 # Local env/config overrides
 .env
 .env.*
+quant-m.toml
 *.local.toml
 *.secret
 *.secrets
