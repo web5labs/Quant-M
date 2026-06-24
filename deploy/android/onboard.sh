@@ -54,6 +54,48 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+profile_dir() {
+  case "$PROFILE" in
+    base-runtime)
+      printf '%s\n' "$REPO_ROOT/android-node-kit/bundles/profiles/base-runtime"
+      ;;
+    dev-builder)
+      printf '%s\n' "$REPO_ROOT/android-node-kit/bundles/quant-m-edge-bundle"
+      ;;
+    *)
+      printf '%s\n' "$REPO_ROOT/android-node-kit/bundles/profiles/$PROFILE"
+      ;;
+  esac
+}
+
+check_prepared_payload() {
+  local bundle_dir
+  bundle_dir="$(profile_dir)"
+
+  missing=()
+  [[ -f "$REPO_ROOT/android-node-kit/apks/termux/termux-app.apk" ]] || missing+=("android-node-kit/apks/termux/termux-app.apk")
+  [[ -f "$REPO_ROOT/android-node-kit/apks/termux/termux-api.apk" ]] || missing+=("android-node-kit/apks/termux/termux-api.apk")
+  [[ -d "$bundle_dir" ]] || missing+=("${bundle_dir#$REPO_ROOT/}")
+  [[ -f "$bundle_dir/offline-install-termux.sh" ]] || missing+=("${bundle_dir#$REPO_ROOT/}/offline-install-termux.sh")
+  [[ -d "$bundle_dir/offline" ]] || missing+=("${bundle_dir#$REPO_ROOT/}/offline")
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    cat >&2 <<'EOF'
+This checkout is not prepared for offline Android provisioning yet.
+
+Missing local-only artifacts:
+EOF
+    printf '  - %s\n' "${missing[@]}" >&2
+    cat >&2 <<'EOF'
+
+These files are intentionally ignored by git so the public repo stays small.
+Prepare them on the laptop first, then rerun:
+  bash deploy/android/onboard.sh
+EOF
+    exit 1
+  fi
+}
+
 adb_for_device() {
   if [[ -n "$ADB_SERIAL" ]]; then
     adb -s "$ADB_SERIAL" "$@"
@@ -198,6 +240,7 @@ say "Using ADB device: $ADB_SERIAL"
 adb_for_device get-state >/dev/null
 
 if [[ "$SKIP_PROVISION" != "1" ]]; then
+  check_prepared_payload
   run_step "Installing Termux, Termux:API, and staging the offline $PROFILE bundle" \
     "$SCRIPT_DIR/adb-provision.sh" "$ADB_SERIAL"
   adb_for_device shell monkey -p com.termux 1 >/dev/null 2>&1 || true

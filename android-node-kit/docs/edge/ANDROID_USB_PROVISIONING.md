@@ -168,7 +168,7 @@ After installing the runtime profile:
 1. Copy the correct prebuilt Quant-M binary into `~/quant-m-node/bin/quant-m`.
 2. Copy the device config into `~/quant-m-node`.
 3. Run Quant-M init/status commands.
-4. Record the device in `android-node-kit/inventory/nodes.csv`.
+4. Record the device in private local `android-node-kit/inventory/nodes.csv`; use `android-node-kit/inventory/nodes.example.csv` as the public column template.
 5. Start SSH only after the device has a known identity and local PIN.
 
 Host-side helper scripts:
@@ -188,7 +188,7 @@ curl --version
 sshd -h 2>&1 | head
 termux-battery-status
 termux-camera-info
-termux-open-url https://example.com
+termux-open-url about:blank
 ```
 
 Camera and microphone commands may require Android runtime permissions from the Termux:API app.

@@ -8,7 +8,7 @@ version = "0.1.0"
 created_for = "android-edge-devices"
 transport = "usb-adb"
 owner = "android-node-kit"
-status = "offline-dependencies-staged"
+status = "dev-builder-profile-template"
 
 [targets]
 primary_arch = "aarch64-linux-android"
@@ -19,7 +19,7 @@ min_android_notes = "Termux APK variants are present for modern Android and Andr
 adb = true
 rustup = true
 android_ndk = true
-quant_m_source = "quant-m/Quant-M"
+quant_m_source = "."
 
 [[apk_payloads]]
 name = "Termux"
@@ -70,7 +70,7 @@ file_count = 275
 install_script = "android-node-kit/bundles/quant-m-edge-bundle/offline-install-termux.sh"
 staged_for_arches = ["aarch64", "arm"]
 root_packages = ["openssh", "git", "curl", "termux-tools", "termux-api", "rust", "rsync"]
-notes = "The on-device installer chooses termux-main-21 automatically for Android SDK 21-23 when present; otherwise it uses termux-main."
+notes = "Offline mirrors are local-only ignored artifacts in a prepared checkout. The on-device installer chooses termux-main-21 automatically for Android SDK 21-23 when present; otherwise it uses termux-main."
 
 [[offline_mirror.repos]]
 name = "termux-main"
@@ -87,8 +87,8 @@ aarch64_package_count = 55
 arm_package_count = 55
 
 [quant_m]
-source_dir = "quant-m/Quant-M"
-default_config = "quant-m/Quant-M/configs/nodes/android-default.toml"
+source_dir = "."
+default_config = "configs/nodes/android-default.toml"
 binary_name = "quant-m"
 expected_bundle_paths = [
   "android-node-kit/bundles/quant-m-edge-bundle/bin/aarch64-linux-android/quant-m",
@@ -112,9 +112,11 @@ steps = [
 
 [inventory]
 current_nodes_csv = "android-node-kit/inventory/nodes.csv"
+public_template_csv = "android-node-kit/inventory/nodes.example.csv"
 record_new_devices = true
 required_columns = ["name", "label", "host", "port", "user", "serial", "model"]
-known_device_count = 5
+known_device_count = 0
+private_inventory = true
 
 [verification]
 termux_api_checks = [
@@ -123,7 +125,7 @@ termux_api_checks = [
   "termux-camera-info",
   "termux-camera-photo -c 0 /sdcard/Download/quant-m-camera-test.jpg",
   "termux-microphone-record -f /sdcard/Download/quant-m-mic-test.wav -l 3",
-  "termux-open-url https://example.com",
+  "termux-open-url about:blank",
 ]
 quant_m_checks = [
   "~/quant-m-node/bin/quant-m --version",

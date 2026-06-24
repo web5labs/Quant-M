@@ -21,12 +21,10 @@ This wiki tracks the USB/ADB install bundle for Quant-M edge devices.
 
 ## Current State
 
-- Recorded devices: 5 in `android-node-kit/inventory/nodes.csv`.
-- Bundle manifest: `android-node-kit/bundles/quant-m-edge-bundle/manifest.toml`.
-- Bundle README: `android-node-kit/bundles/quant-m-edge-bundle/README.md`.
-- Termux APKs: present under `android-node-kit/apks/termux/`.
-- Termux:API APK: present and checksum-verified.
-- Offline Termux packages: staged under `android-node-kit/bundles/quant-m-edge-bundle/offline/`.
+- Public inventory template: `android-node-kit/inventory/nodes.example.csv`.
+- Local private inventory: `android-node-kit/inventory/nodes.csv` (ignored by git).
+- Optional dev-builder profile notes: `android-node-kit/bundles/profiles/dev-builder`.
+- Termux APKs and offline mirrors are local prepared-checkout artifacts and are intentionally not committed.
 - Default slim runtime profile: `android-node-kit/bundles/profiles/base-runtime`.
 - USB provisioning doc: `android-node-kit/docs/edge/ANDROID_USB_PROVISIONING.md`.
 - Runtime milestone doc: `android-node-kit/docs/edge/ANDROID_USB_RUNTIME_NODE_01.md`.

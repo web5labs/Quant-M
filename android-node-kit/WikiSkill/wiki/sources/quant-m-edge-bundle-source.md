@@ -11,23 +11,23 @@ Source: `android-node-kit/WikiSkill/raw/quant-m-edge-bundle-source.md`
 
 ## Summary
 
-The workspace already has a small Android node kit with Termux APKs, a Termux bootstrap script, and a five-device inventory. Quant-M has Android deployment notes and a conservative Android node config.
+The public repo has a small Android node kit with manifest files, install scripts, a Termux bootstrap script, and an example inventory template. Private device inventory, Termux APKs, and offline package mirrors live only in a prepared local checkout.
 
-The new bundle manifest lives at `android-node-kit/bundles/quant-m-edge-bundle/manifest.toml`. The bundle quickstart lives at `android-node-kit/bundles/quant-m-edge-bundle/README.md`. Together they define the intended ADB install flow, required Termux packages, expected Quant-M binary locations, verification checks, and current missing artifacts.
+The default runtime profile lives at `android-node-kit/bundles/profiles/base-runtime`. The optional heavy dev-builder notes live under `android-node-kit/bundles/profiles/dev-builder`. Together they define the intended ADB install flow, required Termux packages, expected Quant-M binary locations, verification checks, and current missing artifacts.
 
 ## Confirmed Assets
 
-- Termux APKs are present under `android-node-kit/apks/termux/`.
-- Termux:API APK is present at `android-node-kit/apks/termux/termux-api.apk`.
+- Termux APKs are required local artifacts under ignored `android-node-kit/apks/termux/`.
+- Termux:API APK is required locally at ignored `android-node-kit/apks/termux/termux-api.apk`.
 - Bootstrap script exists at `android-node-kit/bootstrap/bootstrap-termux.sh`.
 - Offline installer exists at `android-node-kit/bundles/quant-m-edge-bundle/offline-install-termux.sh`.
 - Offline package mirrors exist for `termux-main` and `termux-main-21`, both with `aarch64` and `arm`.
-- Quant-M source exists at `quant-m/Quant-M`.
-- Android default config exists at `quant-m/Quant-M/configs/nodes/android-default.toml`.
+- Quant-M source exists at the repository root.
+- Android default config exists at `configs/nodes/android-default.toml`.
 
 ## Gaps
 
-- Prebuilt Android Quant-M binaries are not staged under the bundle.
+- Prebuilt Android Quant-M binaries are not committed and must be supplied locally.
 - Android NDK/linker build configuration is not documented in the bundle yet.
 
 ## Links

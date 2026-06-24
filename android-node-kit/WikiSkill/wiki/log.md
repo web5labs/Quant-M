@@ -12,9 +12,9 @@ Created the Android Node Kit wiki for the USB/ADB Quant-M edge-device bundle. Ad
 
 Added bundle README quickstart beside the manifest and updated source/index pages to reference it.
 
-Downloaded Termux:API `v0.53.0` APK from the official GitHub release, saved its checksum file, verified SHA-256 `ecf916ff80ae751e65c092f51c055cce4de417ebeea8e449cd0f294afdbde39a`, added `termux-tools`, and added `android-node-kit/scripts/adb-stage-device.sh` for repeatable USB/ADB staging.
+Prepared Termux:API `v0.53.0` APK locally from the official GitHub release, saved its checksum file, verified SHA-256 `ecf916ff80ae751e65c092f51c055cce4de417ebeea8e449cd0f294afdbde39a`, added `termux-tools`, and added `android-node-kit/scripts/adb-stage-device.sh` for repeatable USB/ADB staging. APK files are local-only and intentionally ignored in the public repo.
 
-Built offline Termux apt mirrors under `android-node-kit/bundles/quant-m-edge-bundle/offline/`: modern `termux-main` for `aarch64` and `arm` with 78 packages per architecture, plus legacy `termux-main-21` for Android SDK 21-23 with 55 packages per architecture. Added `offline-install-termux.sh` and made ADB staging push the full bundle.
+Built offline Termux apt mirrors locally under ignored `offline/` directories: modern `termux-main` for `aarch64` and `arm`, plus legacy `termux-main-21` for Android SDK 21-23. Added `offline-install-termux.sh` and made ADB staging push the selected local bundle.
 
 Added slim `base-runtime` profile under `android-node-kit/bundles/profiles/base-runtime`, excluding Git, Rust/Cargo, LLVM/Clang, and rsync. The ADB staging script now defaults to `PROFILE=base-runtime`; `PROFILE=dev-builder` points to the heavier Rust/Cargo bundle.
 

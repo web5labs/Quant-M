@@ -22,6 +22,7 @@ Thumbs.db
 
 # Android edge provisioning artifacts generated locally
 /android-node-kit/apks/
+/android-node-kit/inventory/nodes.csv
 /android-node-kit/bundles/**/offline/
 /android-node-kit/bundles/**/*.apk
 /android-node-kit/bundles/**/*.deb

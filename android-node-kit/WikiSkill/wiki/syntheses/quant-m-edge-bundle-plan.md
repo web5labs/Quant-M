@@ -19,11 +19,11 @@ The default bundle should prepare Android devices as USB-provisioned Quant-M wor
 
 The active manifest is:
 
-- `android-node-kit/bundles/quant-m-edge-bundle/manifest.toml`
+- `android-node-kit/bundles/profiles/base-runtime/manifest.toml`
 
 The quickstart is:
 
-- `android-node-kit/bundles/quant-m-edge-bundle/README.md`
+- `android-node-kit/bundles/profiles/base-runtime/README.md`
 
 The host staging script is:
 
@@ -83,7 +83,7 @@ It intentionally excludes npm, Node.js, Git, Rust/Cargo, LLVM/Clang, and rsync.
 - `android-node-kit/bundles/quant-m-edge-bundle/bin/aarch64-linux-android/quant-m`
 - `android-node-kit/bundles/quant-m-edge-bundle/bin/armv7-linux-androideabi/quant-m`
 - Build notes for the Android NDK and linker setup used to produce those binaries.
-- Worker registration script or checklist that appends new nodes to `android-node-kit/inventory/nodes.csv`.
+- Worker registration script or checklist that appends new nodes to private local `android-node-kit/inventory/nodes.csv`.
 - Final Quant-M CLI args for `deploy/android/start-worker.sh` once the worker command is locked.
 
 ## Offline Mirror State
