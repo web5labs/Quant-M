@@ -56,7 +56,13 @@ Builder-only payload:
 
 ## Deploy Commands
 
-The deploy lane is:
+The preferred deploy lane is the guided one-command launcher:
+
+```text
+deploy/android/onboard.sh
+```
+
+The lower-level deploy lane is still available for step-by-step troubleshooting:
 
 ```text
 deploy/android/adb-provision.sh
