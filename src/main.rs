@@ -635,8 +635,8 @@ enum LlmCommand {
 enum TuiCommand {
     /// Open the governed chat-shaped evidence cockpit.
     Chat {
-        /// Keep chat mode inspect-only. This is the default and only MVP posture.
-        #[arg(long, default_value_t = true)]
+        /// Keep chat mode inspect-only. This prevents Codex CLI calls from /ask or plain text.
+        #[arg(long)]
         inspect: bool,
     },
 }
@@ -1836,7 +1836,7 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
 
     print_quant_m_brand_banner();
     println!("{}", start_chat_message(&cfg.workspace_dir));
-    tui_shell::run_chat(&cfg, config_path, true)
+    tui_shell::run_chat(&cfg, config_path, !tui_shell::codex_chat_enabled(&cfg))
 }
 
 fn start_chat_message(workspace: &Path) -> String {
@@ -5073,6 +5073,13 @@ mod tests {
             cli.command,
             Some(Commands::Tui {
                 command: Some(TuiCommand::Chat { inspect: true })
+            })
+        ));
+        let cli = Cli::try_parse_from(["quant-m", "tui", "chat"]).expect("parse tui chat");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Tui {
+                command: Some(TuiCommand::Chat { inspect: false })
             })
         ));
         assert_eq!(

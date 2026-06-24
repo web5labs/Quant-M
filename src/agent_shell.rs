@@ -562,7 +562,7 @@ fn enabled_label(value: bool) -> &'static str {
     if value { "enabled" } else { "disabled" }
 }
 
-fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
+pub(crate) fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
     if !command_present("codex") {
         return Ok(format!(
             "{ANSI_RED}Codex CLI is not on PATH.{ANSI_RESET}\nRun `codex login`, then retry from this shell."

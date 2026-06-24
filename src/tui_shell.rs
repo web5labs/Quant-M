@@ -1,3 +1,4 @@
+use crate::agent_shell;
 use crate::config::{ChannelPreference, Config, ModelPreference};
 use crate::cost_ledger;
 use crate::domain;
@@ -101,6 +102,7 @@ enum TuiStorageMode {
     DryRunWritesAllowed,
     StateWritesAllowed,
     RequiresApproval,
+    ReadOnlyToolCall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +115,7 @@ enum ChatMessageKind {
     StateRecord,
     CostRecord,
     WorkerProposal,
+    CodexCliResponse,
     Error,
 }
 
@@ -143,7 +146,7 @@ pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> 
         inspect_only: inspect,
         messages: initial_chat_messages(inspect),
         input: String::new(),
-        notice: "Inspect-first chat cockpit. No provider calls, worker writes, or hidden session mutation.".to_string(),
+        notice: initial_chat_notice(inspect),
         snapshot: collect_snapshot(cfg)?,
     };
 
@@ -159,13 +162,19 @@ fn initial_chat_messages(inspect: bool) -> Vec<ChatMessage> {
         storage_mode: TuiStorageMode::InspectOnly,
         body: format!(
             "You are now talking with Quant-M, the local governed evidence agent. This chat is an evidence cockpit, not an authority surface. mode={}",
-            if inspect {
-                "inspect"
-            } else {
-                "inspect-default"
-            }
+            if inspect { "inspect" } else { "codex-readonly" }
         ),
     }]
+}
+
+fn initial_chat_notice(inspect: bool) -> String {
+    if inspect {
+        "Inspect-only cockpit. /ask records navigation text; no provider or CLI call is made."
+            .to_string()
+    } else {
+        "Codex read-only cockpit. /ask and plain text call Codex CLI through read-only exec."
+            .to_string()
+    }
 }
 
 fn run_chat_app(terminal: &mut DefaultTerminal, cfg: &Config, app: &mut ChatApp) -> Result<()> {
@@ -184,12 +193,13 @@ fn run_chat_app(terminal: &mut DefaultTerminal, cfg: &Config, app: &mut ChatApp)
                         if input.is_empty() {
                             continue;
                         }
+                        let action = parse_tui_action(&input);
+                        let input_storage_mode = storage_mode_for_action(&action);
                         app.messages.push(ChatMessage {
                             kind: ChatMessageKind::HumanInput,
-                            storage_mode: TuiStorageMode::InspectOnly,
+                            storage_mode: input_storage_mode,
                             body: input.clone(),
                         });
-                        let action = parse_tui_action(&input);
                         if action == TuiAction::Quit {
                             break Ok(());
                         }
@@ -263,8 +273,8 @@ fn storage_mode_for_action(action: &TuiAction) -> TuiStorageMode {
         | TuiAction::Refresh
         | TuiAction::ShowState { .. }
         | TuiAction::ShowCost { .. }
-        | TuiAction::Replay { .. }
-        | TuiAction::AskInspect { .. } => TuiStorageMode::InspectOnly,
+        | TuiAction::Replay { .. } => TuiStorageMode::InspectOnly,
+        TuiAction::AskInspect { .. } => TuiStorageMode::ReadOnlyToolCall,
         TuiAction::ConsensusDryRun { .. } => TuiStorageMode::DryRunWritesAllowed,
     }
 }
@@ -272,6 +282,16 @@ fn storage_mode_for_action(action: &TuiAction) -> TuiStorageMode {
 fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
     let storage_mode = storage_mode_for_action(&action);
     if app.inspect_only && storage_mode != TuiStorageMode::InspectOnly {
+        if let TuiAction::AskInspect { question } = action {
+            app.messages.push(ChatMessage {
+                kind: ChatMessageKind::DisplayOnlyNote,
+                storage_mode: TuiStorageMode::InspectOnly,
+                body: format!(
+                    "Inspect question recorded as display-only navigation text. No provider or CLI call was made.\nquestion: {question}\nnext: use /state, /cost, or /replay <session_id> to inspect structured truth."
+                ),
+            });
+            return;
+        }
         app.messages.push(ChatMessage {
             kind: ChatMessageKind::PolicyDecision,
             storage_mode,
@@ -288,7 +308,7 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
             kind: ChatMessageKind::DisplayOnlyNote,
             storage_mode,
             body: format!(
-                "Typed actions only. {CHAT_INPUT_HINT}. Chat text is display/navigation input, not runtime authority.\nstorage modes: {}\nmessage provenance: {}",
+                "Typed actions only. {CHAT_INPUT_HINT}. Chat text is evidence input, not runtime authority. In codex-readonly mode, /ask and plain text call Codex CLI with a read-only sandbox.\nstorage modes: {}\nmessage provenance: {}",
                 known_storage_modes_label(),
                 known_message_kinds_label()
             ),
@@ -367,13 +387,30 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                 "Ask inspect needs text. Example: /ask what evidence exists for the last decision?"
                     .to_string(),
         },
-        TuiAction::AskInspect { question } => ChatMessage {
-            kind: ChatMessageKind::DisplayOnlyNote,
-            storage_mode,
-            body: format!(
-                "Inspect question recorded as display-only navigation text. No provider call was made.\nquestion: {question}\nnext: use /state, /cost, or /replay <session_id> to inspect structured truth."
-            ),
-        },
+        TuiAction::AskInspect { question } => {
+            if !codex_chat_enabled(cfg) {
+                ChatMessage {
+                    kind: ChatMessageKind::DisplayOnlyNote,
+                    storage_mode,
+                    body: format!(
+                        "Codex CLI is not enabled in this Quant-M profile, so no provider or CLI call was made.\nquestion: {question}\nnext: run `quant-m onboard` or `quant-m setup --tool codex`, then validate with `quant-m tool validate codex`."
+                    ),
+                }
+            } else {
+                match agent_shell::run_codex_chat(cfg, &question) {
+                    Ok(output) => ChatMessage {
+                        kind: ChatMessageKind::CodexCliResponse,
+                        storage_mode,
+                        body: output,
+                    },
+                    Err(err) => ChatMessage {
+                        kind: ChatMessageKind::Error,
+                        storage_mode,
+                        body: format!("Codex CLI call failed: {err}"),
+                    },
+                }
+            }
+        }
         TuiAction::ConsensusDryRun { .. } => ChatMessage {
             kind: ChatMessageKind::PolicyDecision,
             storage_mode,
@@ -395,6 +432,7 @@ fn known_storage_modes_label() -> String {
         TuiStorageMode::DryRunWritesAllowed,
         TuiStorageMode::StateWritesAllowed,
         TuiStorageMode::RequiresApproval,
+        TuiStorageMode::ReadOnlyToolCall,
     ]
     .into_iter()
     .map(|mode| format!("{mode:?}"))
@@ -412,6 +450,7 @@ fn known_message_kinds_label() -> String {
         ChatMessageKind::StateRecord,
         ChatMessageKind::CostRecord,
         ChatMessageKind::WorkerProposal,
+        ChatMessageKind::CodexCliResponse,
         ChatMessageKind::Error,
     ]
     .into_iter()
@@ -460,7 +499,7 @@ fn render_chat_header(frame: &mut Frame, area: Rect, app: &ChatApp, compact: boo
     let mode = if app.inspect_only {
         "inspect"
     } else {
-        "inspect-default"
+        "codex-readonly"
     };
     let text = Line::from(vec![
         Span::styled(
@@ -592,6 +631,7 @@ fn chat_message_prefix(kind: ChatMessageKind) -> &'static str {
         ChatMessageKind::StateRecord => "State:",
         ChatMessageKind::CostRecord => "Cost:",
         ChatMessageKind::WorkerProposal => "Proposal:",
+        ChatMessageKind::CodexCliResponse => "Codex:",
         ChatMessageKind::Error => "Error:",
     }
 }
@@ -606,8 +646,16 @@ fn chat_message_style(kind: ChatMessageKind) -> Style {
         ChatMessageKind::StateRecord => Style::default().fg(Color::Cyan),
         ChatMessageKind::CostRecord => Style::default().fg(Color::LightMagenta),
         ChatMessageKind::WorkerProposal => Style::default().fg(Color::Magenta),
+        ChatMessageKind::CodexCliResponse => Style::default().fg(Color::Cyan),
         ChatMessageKind::Error => Style::default().fg(Color::Red),
     }
+}
+
+pub(crate) fn codex_chat_enabled(cfg: &Config) -> bool {
+    cfg.tools
+        .get("codex")
+        .map(|tool| tool.enabled)
+        .unwrap_or(false)
 }
 
 fn run_app(
@@ -1142,8 +1190,16 @@ mod tests {
             }),
             TuiStorageMode::DryRunWritesAllowed
         );
+        assert_eq!(
+            storage_mode_for_action(&TuiAction::AskInspect {
+                question: "what model are you?".to_string()
+            }),
+            TuiStorageMode::ReadOnlyToolCall
+        );
         assert!(known_storage_modes_label().contains("RequiresApproval"));
+        assert!(known_storage_modes_label().contains("ReadOnlyToolCall"));
         assert!(known_message_kinds_label().contains("WorkerProposal"));
+        assert!(known_message_kinds_label().contains("CodexCliResponse"));
     }
 
     #[test]
@@ -1189,7 +1245,7 @@ mod tests {
     }
 
     #[test]
-    fn ask_inspect_never_calls_provider_or_writes() {
+    fn ask_inspect_mode_never_calls_provider_cli_or_writes() {
         let tmp = TempDir::new().expect("tempdir");
         let mut cfg = test_config(&tmp);
         cfg.llm.enabled = true;
@@ -1208,8 +1264,40 @@ mod tests {
         let message = app.messages.last().expect("ask response");
         assert_eq!(message.kind, ChatMessageKind::DisplayOnlyNote);
         assert_eq!(message.storage_mode, TuiStorageMode::InspectOnly);
-        assert!(message.body.contains("No provider call was made"));
+        assert!(message.body.contains("No provider or CLI call was made"));
         assert!(!cost_ledger::cost_ledger_path(&cfg).exists());
         assert!(!cfg.runtime.session_dir.exists());
+    }
+
+    #[test]
+    fn ask_codex_mode_reports_disabled_tool_without_calling_cli() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cfg = test_config(&tmp);
+        let mut app = test_chat_app(false);
+
+        handle_tui_action(
+            &cfg,
+            &mut app,
+            TuiAction::AskInspect {
+                question: "what model are you?".to_string(),
+            },
+        );
+
+        let message = app.messages.last().expect("ask response");
+        assert_eq!(message.kind, ChatMessageKind::DisplayOnlyNote);
+        assert_eq!(message.storage_mode, TuiStorageMode::ReadOnlyToolCall);
+        assert!(message.body.contains("Codex CLI is not enabled"));
+        assert!(!cost_ledger::cost_ledger_path(&cfg).exists());
+        assert!(!cfg.runtime.session_dir.exists());
+    }
+
+    #[test]
+    fn codex_chat_enabled_follows_onboarding_tool_flag() {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = test_config(&tmp);
+
+        assert!(!codex_chat_enabled(&cfg));
+        cfg.tools.get_mut("codex").expect("codex tool").enabled = true;
+        assert!(codex_chat_enabled(&cfg));
     }
 }
