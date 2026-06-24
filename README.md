@@ -205,19 +205,31 @@ Accepted state can be replayed. Blocked actions remain visible. Pending actions 
 
 ## Context Continuity
 
-Long AI sessions degrade. Quant-M treats context continuity as a first-class runtime problem.
+Long AI sessions drift, lose details, and eventually force the next model to guess what mattered. Quant-M treats that as a runtime problem, not just a prompt-writing problem.
 
-```mermaid
-flowchart TD
-    S[Long-running session] --> E[Session evidence]
-    E --> R[Replay record]
-    E --> C[Compact packet]
-    C --> G[Context Guardian]
-    G --> H[Continuation handoff]
-    H --> N[New agent resumes from accepted facts]
+The continuity path is:
+
+```text
+Long session
+  -> session evidence
+  -> replay record
+  -> compact packet
+  -> Context Guardian report
+  -> continuation handoff
+  -> next agent resumes from accepted facts
 ```
 
-A long session can produce evidence, replay records, compact packets, Context Guardian output, and a continuation handoff. A future model or session can resume from accepted facts instead of re-reading a giant chat history or guessing what mattered.
+What each piece means:
+
+| Piece | Purpose |
+| --- | --- |
+| Session evidence | The durable record of what happened, what was observed, and what was accepted or blocked. |
+| Replay record | A way to inspect the session later without repeating side effects. |
+| Compact packet | A smaller continuation summary built from accepted facts, not raw chat sprawl. |
+| Context Guardian report | A typed status check that says whether the current context is healthy, stale, needs compaction, needs review, or should be blocked. |
+| Continuation handoff | The packet a future model or session can use to resume safely. |
+
+The goal is simple: a future model should not need to reread a giant chat history or invent missing context. It should resume from the facts Quant-M accepted, the actions Quant-M blocked, and the next step Quant-M recommends.
 
 ## Authority Snapshot
 
