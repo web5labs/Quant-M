@@ -4,8 +4,10 @@ mod boil;
 mod bootstrap;
 mod capabilities;
 mod channels;
+mod cluster;
 mod cluster_boundary;
 mod compaction;
+mod compute;
 mod config;
 mod consensus;
 mod context_decay;
@@ -16,6 +18,8 @@ mod cost_ledger;
 mod daemon;
 mod demo_flow;
 mod desk_registry;
+mod device;
+mod device_telemetry;
 mod domain;
 mod execution_runtime;
 mod forex;
@@ -27,6 +31,10 @@ mod llm;
 mod logutil;
 mod loop_dry_run;
 mod memory;
+mod model_router;
+mod numeric_hotpath;
+mod pairing;
+mod playbook;
 mod policy_registry;
 mod question;
 mod scheduler_registry;
@@ -41,6 +49,7 @@ mod state_sql;
 mod strategist;
 mod telegram;
 mod terminal_cockpit;
+mod timing;
 mod truth_files;
 mod tui_shell;
 mod worker;
@@ -199,6 +208,46 @@ enum Commands {
     Worker {
         #[command(subcommand)]
         command: WorkerCommand,
+    },
+    Cluster {
+        #[command(subcommand)]
+        command: ClusterCommand,
+    },
+    Pair {
+        #[command(subcommand)]
+        command: PairCommand,
+    },
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
+    Child {
+        #[command(subcommand)]
+        command: ChildCommand,
+    },
+    Timing {
+        #[command(subcommand)]
+        command: TimingCommand,
+    },
+    Numeric {
+        #[command(subcommand)]
+        command: NumericCommand,
+    },
+    Compute {
+        #[command(subcommand)]
+        command: ComputeCommand,
+    },
+    Playbook {
+        #[command(subcommand)]
+        command: PlaybookCommand,
+    },
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
+    },
+    SharedState {
+        #[command(subcommand)]
+        command: SharedStateCommand,
     },
     Memory {
         #[command(subcommand)]
@@ -381,6 +430,617 @@ enum WorkerProposalCommand {
         surface: Option<String>,
         #[arg(long)]
         status: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterCommand {
+    Init,
+    Device {
+        #[command(subcommand)]
+        command: ClusterDeviceCommand,
+    },
+    Desk {
+        #[command(subcommand)]
+        command: ClusterDeskCommand,
+    },
+    Node {
+        #[command(subcommand)]
+        command: ClusterNodeCommand,
+    },
+    Role {
+        #[command(subcommand)]
+        command: ClusterRoleCommand,
+    },
+    Lease {
+        #[command(subcommand)]
+        command: ClusterLeaseCommand,
+    },
+    Nodes {
+        #[arg(long)]
+        json: bool,
+    },
+    Heartbeat {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        surface: Option<String>,
+    },
+    Job {
+        #[command(subcommand)]
+        command: ClusterJobCommand,
+    },
+    Child {
+        #[command(subcommand)]
+        command: ClusterChildCommand,
+    },
+    Report {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterDeviceCommand {
+    Options {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterDeskCommand {
+    Rails {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterNodeCommand {
+    Register {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        surface: String,
+        #[arg(long)]
+        capabilities: String,
+        #[arg(long)]
+        json: bool,
+    },
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterRoleCommand {
+    Assign {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long, default_value = "30m")]
+        ttl: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterLeaseCommand {
+    Grant {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long, default_value = "30m")]
+        ttl: String,
+        #[arg(long, default_value = "observe")]
+        authority: String,
+        #[arg(long, default_value = "operator")]
+        created_by: String,
+        #[arg(long)]
+        playbook: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Inspect {
+        #[arg(long)]
+        lease: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Check {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Revoke {
+        #[arg(long)]
+        lease: Option<String>,
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long, default_value = "operator revoked lease")]
+        reason: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PairCommand {
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        bind: String,
+    },
+    Doctor {
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        bind: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Invite {
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        desk: Option<String>,
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long, default_value = "10m")]
+        ttl: String,
+        #[arg(long, default_value = "http://127.0.0.1:8787")]
+        core: String,
+        #[arg(long)]
+        qr: bool,
+        #[arg(long)]
+        link: bool,
+        #[arg(long)]
+        png: Option<PathBuf>,
+        #[arg(long)]
+        dev_auto_accept: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Invites {
+        #[arg(long)]
+        json: bool,
+    },
+    Requests {
+        #[arg(long)]
+        json: bool,
+    },
+    Approve {
+        #[arg(long)]
+        request: String,
+        #[arg(long, default_value = "operator")]
+        accepted_by: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Reject {
+        #[arg(long)]
+        request: String,
+        #[arg(long, default_value = "operator rejected pairing request")]
+        reason: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Revoke {
+        #[arg(long)]
+        invite: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Events {
+        #[arg(long)]
+        json: bool,
+    },
+    Fingerprint {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ChildCommand {
+    Pair {
+        #[arg(long)]
+        core: String,
+        #[arg(long)]
+        invite: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, default_value = "termux_worker")]
+        surface: String,
+        #[arg(long, default_value = "echo,sleep")]
+        capabilities: String,
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long, default_value = "observe")]
+        authority: String,
+        #[arg(long)]
+        json: bool,
+    },
+    PairScan {
+        #[arg(long)]
+        image: PathBuf,
+    },
+    Identity {
+        #[arg(long)]
+        json: bool,
+    },
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
+    Unpair,
+}
+
+#[derive(Subcommand, Debug)]
+enum DeviceCommand {
+    Add {
+        name: String,
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long, default_value = "10m")]
+        ttl: String,
+        #[arg(long, default_value = "http://127.0.0.1:8787")]
+        core: String,
+        #[arg(long)]
+        qr: bool,
+        #[arg(long)]
+        link: bool,
+        #[arg(long)]
+        png: Option<PathBuf>,
+        #[arg(long)]
+        watch: bool,
+        #[arg(long)]
+        bind: Option<String>,
+        #[arg(long)]
+        serve: bool,
+        #[arg(long, default_value_t = 60)]
+        watch_timeout: u64,
+        #[arg(long, default_value_t = 1)]
+        watch_poll: u64,
+        #[arg(long)]
+        auto_approve_observe: bool,
+        #[arg(long)]
+        grant_observe_lease: bool,
+        #[arg(long, default_value = "30m")]
+        lease_ttl: String,
+        #[arg(long)]
+        no_server: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterJobCommand {
+    Submit {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        payload: String,
+        #[arg(long)]
+        fixture: Option<String>,
+        #[arg(long)]
+        backend: Option<String>,
+        #[arg(long, default_value = "5m")]
+        ttl: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterChildCommand {
+    Run {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TimingCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Inspect {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Next {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Check {
+        #[arg(long)]
+        desk: Option<String>,
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Cooldowns {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum NumericCommand {
+    Bench {
+        #[command(subcommand)]
+        command: NumericBenchCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum NumericBenchCommand {
+    StablecoinPeg {
+        #[arg(long, default_value_t = 1024)]
+        samples: usize,
+        #[arg(long, default_value = "auto")]
+        backend: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ComputeCommand {
+    Capabilities {
+        #[arg(long)]
+        json: bool,
+    },
+    Validate {
+        #[arg(long)]
+        node: String,
+        #[arg(long, default_value = "scalar")]
+        backend: String,
+        #[arg(long, default_value = "evidence_freshness")]
+        fixture: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Validations {
+        #[arg(long)]
+        json: bool,
+    },
+    Mismatches {
+        #[arg(long)]
+        json: bool,
+    },
+    Quarantine {
+        #[arg(long)]
+        json: bool,
+    },
+    FreshnessScan {
+        #[arg(long, default_value = "evidence_freshness")]
+        fixture: String,
+        #[arg(long, default_value = "scalar")]
+        backend: String,
+        #[arg(long)]
+        json: bool,
+    },
+    PegDeviation {
+        #[arg(long, default_value = "stablecoin_peg_deviation")]
+        fixture: String,
+        #[arg(long, default_value = "scalar")]
+        backend: String,
+        #[arg(long, default_value_t = 10.0)]
+        threshold_bps: f64,
+        #[arg(long, default_value_t = 0.01)]
+        threshold_epsilon_bps: f64,
+        #[arg(long)]
+        json: bool,
+    },
+    Bench {
+        #[arg(long, default_value = "peg-deviation")]
+        workload: String,
+        #[arg(long, default_value_t = 10_000)]
+        samples: u64,
+        #[arg(long)]
+        manual: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PlaybookCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Inspect {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Validate {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        role: String,
+    },
+    Bundle {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Hash {
+        #[arg(long)]
+        playbook: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ModelCommand {
+    Handoff {
+        #[command(subcommand)]
+        command: ModelHandoffCommand,
+    },
+    Call {
+        #[arg(long)]
+        provider: String,
+        #[arg(long, default_value = "local-stub")]
+        model: String,
+        #[arg(long)]
+        handoff: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ModelHandoffCommand {
+    Create {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        playbook: String,
+        #[arg(long, default_value = "latest")]
+        snapshot: String,
+        #[arg(long)]
+        task: String,
+        #[arg(long)]
+        evidence: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Inspect {
+        #[arg(long)]
+        handoff: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Export {
+        #[arg(long)]
+        handoff: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SharedStateCommand {
+    Updates {
+        #[arg(long)]
+        json: bool,
+    },
+    Update {
+        #[command(subcommand)]
+        command: SharedStateUpdateCommand,
+    },
+    Facts {
+        #[arg(long)]
+        json: bool,
+    },
+    Fact {
+        #[command(subcommand)]
+        command: SharedStateFactCommand,
+    },
+    Snapshots {
+        #[arg(long)]
+        json: bool,
+    },
+    Snapshot {
+        #[command(subcommand)]
+        command: SharedStateSnapshotCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SharedStateUpdateCommand {
+    Inspect {
+        #[arg(long)]
+        update: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Validate {
+        #[arg(long)]
+        update: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Accept {
+        #[arg(long)]
+        update: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Reject {
+        #[arg(long)]
+        update: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SharedStateFactCommand {
+    Inspect {
+        #[arg(long)]
+        fact: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SharedStateSnapshotCommand {
+    Create {
+        #[arg(long)]
+        desk: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Inspect {
+        #[arg(long)]
+        snapshot: String,
         #[arg(long)]
         json: bool,
     },
@@ -1002,6 +1662,1151 @@ async fn main() -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&listed)?);
                     } else {
                         print!("{}", worker_proposals::render_list_summary(&listed));
+                    }
+                }
+            },
+        },
+        Commands::Cluster { command } => match command {
+            ClusterCommand::Init => {
+                cluster::init_cluster(&cfg)?;
+                println!("cluster initialized");
+            }
+            ClusterCommand::Device { command } => match command {
+                ClusterDeviceCommand::Options { json } => {
+                    let options = cluster::edge_device_options();
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&options)?);
+                    } else {
+                        print!("{}", cluster::render_edge_device_options(&options));
+                    }
+                }
+            },
+            ClusterCommand::Desk { command } => match command {
+                ClusterDeskCommand::Rails { json } => {
+                    let rails = cluster::desk_rails();
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rails)?);
+                    } else {
+                        print!("{}", cluster::render_desk_rails(&rails));
+                    }
+                }
+            },
+            ClusterCommand::Node { command } => match command {
+                ClusterNodeCommand::Register {
+                    name,
+                    surface,
+                    capabilities,
+                    json,
+                } => {
+                    let node = cluster::register_node(
+                        &cfg,
+                        &name,
+                        surface.parse()?,
+                        cluster::parse_capabilities(&capabilities)?,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&node)?);
+                    } else {
+                        println!(
+                            "cluster node registered\nnode_id: {}\nsurface: {}\ncapabilities: {}",
+                            node.node_id,
+                            node.surface,
+                            node.capabilities
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
+                    }
+                }
+                ClusterNodeCommand::List { json } => {
+                    let nodes = cluster::list_nodes(&cfg)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&nodes)?);
+                    } else {
+                        for node in nodes {
+                            println!(
+                                "{} surface={} state={} capabilities={}",
+                                node.node_id,
+                                node.surface,
+                                node.state,
+                                node.capabilities
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            );
+                        }
+                    }
+                }
+            },
+            ClusterCommand::Nodes { json } => {
+                let statuses = cluster::node_statuses(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&statuses)?);
+                } else {
+                    print!("{}", cluster::render_node_statuses(&statuses));
+                }
+            }
+            ClusterCommand::Role { command } => match command {
+                ClusterRoleCommand::Assign {
+                    node,
+                    role,
+                    ttl,
+                    json,
+                } => {
+                    let lease = cluster::assign_role(
+                        &cfg,
+                        &node.parse()?,
+                        &role.parse()?,
+                        cluster::parse_ttl(&ttl)?,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                    } else {
+                        println!(
+                            "cluster role assigned\nnode_id: {}\nrole_id: {}\nlease_id: {}\nexpires_at: {}",
+                            lease.node_id, lease.role_id, lease.lease_id, lease.expires_at
+                        );
+                    }
+                }
+            },
+            ClusterCommand::Lease { command } => match command {
+                ClusterLeaseCommand::Grant {
+                    node,
+                    desk: _desk,
+                    role,
+                    ttl,
+                    authority,
+                    created_by,
+                    playbook,
+                    json,
+                } => {
+                    let authority: cluster::LeaseAuthority = authority.parse()?;
+                    let lease = match authority {
+                        cluster::LeaseAuthority::Observe => {
+                            let node = node.parse()?;
+                            let role = role.parse()?;
+                            let ttl = cluster::parse_ttl(&ttl)?;
+                            if let Some(playbook) = playbook.as_deref() {
+                                cluster::grant_observe_lease_with_playbook(
+                                    &cfg,
+                                    &node,
+                                    &role,
+                                    ttl,
+                                    &created_by,
+                                    playbook,
+                                )?
+                            } else {
+                                cluster::grant_observe_lease(&cfg, &node, &role, ttl, &created_by)?
+                            }
+                        }
+                    };
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                    } else {
+                        println!(
+                            "Lease granted.\nNode: {}\nDesk: {}\nRole: {}\nAuthority: {}\nExpires: {}\nExecution: disabled\nApproval: disabled\nCanonical write: disabled\nJobs: disabled in this checkpoint",
+                            lease.node_id,
+                            lease.desk_id,
+                            lease.role_id,
+                            lease.authority,
+                            lease.expires_at
+                        );
+                    }
+                }
+                ClusterLeaseCommand::List { json } => {
+                    let leases = cluster::list_leases(&cfg)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&leases)?);
+                    } else {
+                        print!("{}", cluster::render_leases(&leases));
+                    }
+                }
+                ClusterLeaseCommand::Inspect { lease, json } => {
+                    let lease = cluster::inspect_lease(&cfg, &lease)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                    } else {
+                        print!("{}", cluster::render_leases(&[lease]));
+                    }
+                }
+                ClusterLeaseCommand::Check { node, json } => {
+                    let result = cluster::check_lease(&cfg, &node.parse()?)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!("{result:?}");
+                    }
+                }
+                ClusterLeaseCommand::Revoke {
+                    lease,
+                    node,
+                    reason,
+                    json,
+                } => {
+                    let parsed_node = node.as_deref().map(str::parse).transpose()?;
+                    let revoked = cluster::revoke_lease(
+                        &cfg,
+                        lease.as_deref(),
+                        parsed_node.as_ref(),
+                        &reason,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&revoked)?);
+                    } else {
+                        println!(
+                            "cluster lease revoked\nlease_id: {}\nnode_id: {}\nreason: {}",
+                            revoked.lease_id, revoked.node_id, reason
+                        );
+                    }
+                }
+            },
+            ClusterCommand::Heartbeat { node, surface } => {
+                let heartbeat = if let Some(surface) = surface {
+                    cluster::heartbeat_with_input(
+                        &cfg,
+                        cluster::ClusterHeartbeatInput {
+                            node_id: node.parse()?,
+                            surface: Some(surface.parse()?),
+                            claimed_capabilities: vec![],
+                            execution_enabled: false,
+                            approval_enabled: false,
+                            canonical_write_enabled: false,
+                            source: cluster::HeartbeatSource::ChildCli,
+                            device_telemetry: None,
+                        },
+                    )?
+                } else {
+                    cluster::heartbeat(&cfg, &node.parse()?)?
+                };
+                println!("{}", serde_json::to_string_pretty(&heartbeat)?);
+            }
+            ClusterCommand::Job { command } => match command {
+                ClusterJobCommand::Submit {
+                    node,
+                    desk,
+                    kind,
+                    payload,
+                    fixture,
+                    backend,
+                    ttl,
+                    json,
+                } => {
+                    let mut payload = serde_json::from_str::<serde_json::Value>(&payload)
+                        .context("cluster job payload must be valid JSON")?;
+                    if fixture.is_some() || backend.is_some() {
+                        let object = payload
+                            .as_object_mut()
+                            .ok_or_else(|| anyhow::anyhow!("cluster job payload must be a JSON object when --fixture/--backend are used"))?;
+                        if let Some(fixture) = fixture {
+                            object
+                                .insert("fixture".to_string(), serde_json::Value::String(fixture));
+                        }
+                        if let Some(backend) = backend {
+                            object
+                                .insert("backend".to_string(), serde_json::Value::String(backend));
+                        }
+                    }
+                    let job = cluster::submit_job(
+                        &cfg,
+                        &node.parse()?,
+                        &desk,
+                        kind.parse()?,
+                        payload,
+                        cluster::parse_ttl(&ttl)?,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&job)?);
+                    } else {
+                        println!(
+                            "cluster job submitted\njob_id: {}\nnode_id: {}\ndesk_id: {}\nkind: {}",
+                            job.job_id, job.node_id, job.desk_id, job.job_kind
+                        );
+                    }
+                }
+            },
+            ClusterCommand::Child { command } => match command {
+                ClusterChildCommand::Run { node, json } => {
+                    let receipt = cluster::child_run_once(&cfg, &node.parse()?)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&receipt)?);
+                    } else if let Some(receipt) = receipt {
+                        println!(
+                            "cluster child job complete\nreceipt_id: {}\njob_id: {}\nreplay_safe: {}",
+                            receipt.receipt_id, receipt.job_id, receipt.replay_safe
+                        );
+                    } else {
+                        println!("cluster child idle");
+                    }
+                }
+            },
+            ClusterCommand::Report { json } => {
+                let report = cluster::report(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", cluster::render_report(&report));
+                }
+            }
+        },
+        Commands::Pair { command } => match command {
+            PairCommand::Serve { bind } => {
+                pairing::serve_pairing_server(&cfg, &bind)?;
+            }
+            PairCommand::Doctor { bind, json } => {
+                let report = pairing::pair_doctor(&cfg, &bind)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_pair_doctor(&report));
+                }
+            }
+            PairCommand::Invite {
+                name,
+                desk,
+                role,
+                ttl,
+                core,
+                qr,
+                link: _link,
+                png,
+                dev_auto_accept,
+                json,
+            } => {
+                let view = pairing::create_invite(
+                    &cfg,
+                    pairing::PairingInviteOptions {
+                        name: name.as_deref(),
+                        desk: desk.as_deref(),
+                        role: role.as_deref(),
+                        ttl: cluster::parse_ttl(&ttl)?,
+                        core_url: &core,
+                        dev_auto_accept,
+                    },
+                )?;
+                if let Some(path) = png.as_deref() {
+                    pairing::save_qr_png(&view.qr_payload, path)?;
+                }
+                let qr_text = if qr {
+                    Some(pairing::render_qr_to_terminal(&view.qr_payload)?)
+                } else {
+                    None
+                };
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&view)?);
+                } else {
+                    print!(
+                        "{}",
+                        pairing::render_invite(&view, qr_text.as_deref(), png.as_deref())
+                    );
+                }
+            }
+            PairCommand::Invites { json } => {
+                let invites = pairing::list_invites(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&invites)?);
+                } else {
+                    for invite in invites {
+                        println!(
+                            "{} desk={} role={} authority={} expires_at={} used={} revoked={}",
+                            invite.invite_id,
+                            invite
+                                .desk_id
+                                .as_ref()
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| "none".to_string()),
+                            invite.requested_role.as_deref().unwrap_or("none"),
+                            invite.max_authority,
+                            invite.expires_at,
+                            invite.used,
+                            invite.revoked
+                        );
+                    }
+                }
+            }
+            PairCommand::Requests { json } => {
+                let requests = pairing::list_requests(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&requests)?);
+                } else {
+                    for request in requests {
+                        println!(
+                            "{} node={} role={} authority={} status={:?} compute_claims_present={}",
+                            request.request_id,
+                            request.node_display_name,
+                            request.requested_role.as_deref().unwrap_or("none"),
+                            request.requested_authority,
+                            request.status,
+                            request.compute_claims_present
+                        );
+                    }
+                }
+            }
+            PairCommand::Approve {
+                request,
+                accepted_by,
+                json,
+            } => {
+                let accepted = pairing::approve_request(&cfg, &request, &accepted_by)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&accepted)?);
+                } else {
+                    println!(
+                        "pairing request approved\nnode_id: {}\nauthority: {}\nexecution: disabled\ncanonical_write: disabled",
+                        accepted.node_id, accepted.authority_level
+                    );
+                }
+            }
+            PairCommand::Reject {
+                request,
+                reason,
+                json,
+            } => {
+                let rejected = pairing::reject_request(&cfg, &request, &reason)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&rejected)?);
+                } else {
+                    println!("pairing request rejected\nrequest_id: {request}");
+                }
+            }
+            PairCommand::Revoke { invite, json } => {
+                let revoked = pairing::revoke_invite(&cfg, &invite)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&revoked)?);
+                } else {
+                    println!("pairing invite revoked\ninvite_id: {}", revoked.invite_id);
+                }
+            }
+            PairCommand::Events { json } => {
+                let events = pairing::list_events(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&events)?);
+                } else {
+                    for event in events {
+                        println!(
+                            "{} kind={} invite={} request={} node={} replay_safe={}",
+                            event.event_id,
+                            event.kind,
+                            event.invite_id.as_deref().unwrap_or("none"),
+                            event.request_id.as_deref().unwrap_or("none"),
+                            event.node_id.as_deref().unwrap_or("none"),
+                            event.replay_safe
+                        );
+                    }
+                }
+            }
+            PairCommand::Fingerprint { json } => {
+                let fingerprint = pairing::core_fingerprint(&cfg)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "core_fingerprint": fingerprint
+                        }))?
+                    );
+                } else {
+                    println!("{fingerprint}");
+                }
+            }
+        },
+        Commands::Device { command } => match command {
+            DeviceCommand::Add {
+                name,
+                desk,
+                role,
+                ttl,
+                core,
+                qr,
+                link: _link,
+                png,
+                watch,
+                bind,
+                serve,
+                watch_timeout,
+                watch_poll,
+                auto_approve_observe,
+                grant_observe_lease,
+                lease_ttl,
+                no_server,
+                json,
+            } => {
+                let result = device::add_device(
+                    &cfg,
+                    device::DeviceAddOptions {
+                        name,
+                        desk,
+                        role,
+                        ttl: cluster::parse_ttl(&ttl)?,
+                        core_url: core,
+                        qr,
+                        png,
+                        watch,
+                        auto_approve_observe,
+                        grant_observe_lease,
+                        lease_ttl: cluster::parse_ttl(&lease_ttl)?,
+                        no_server,
+                        serve,
+                        bind: bind.unwrap_or_else(|| "127.0.0.1:8787".to_string()),
+                        watch_timeout_seconds: watch_timeout,
+                        watch_poll_seconds: watch_poll,
+                        approval_mode: if watch && !auto_approve_observe {
+                            device::DeviceApprovalMode::Prompt
+                        } else {
+                            device::DeviceApprovalMode::NoPrompt
+                        },
+                    },
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    print!("{}", device::render_add_device(&result));
+                }
+            }
+        },
+        Commands::Child { command } => match command {
+            ChildCommand::Pair {
+                core,
+                invite,
+                name,
+                surface,
+                capabilities,
+                role,
+                authority,
+                json,
+            } => {
+                let capabilities = parse_csv(&capabilities);
+                let request = pairing::submit_child_pair_request(
+                    &cfg,
+                    pairing::ChildPairRequestInput {
+                        core_url: &core,
+                        invite_token: &invite,
+                        node_name: name.as_deref(),
+                        surface: &surface,
+                        capabilities: &capabilities,
+                        requested_role: role.as_deref(),
+                        requested_authority: authority.parse()?,
+                    },
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&request)?);
+                } else {
+                    println!(
+                        "child pairing request submitted\nrequest_id: {}\nstatus: {:?}\nauthority: {}\nexecution: disabled",
+                        request.request_id, request.status, request.requested_authority
+                    );
+                }
+            }
+            ChildCommand::PairScan { image } => {
+                let request = pairing::pair_scan_image(&cfg, &image)?;
+                println!("{}", serde_json::to_string_pretty(&request)?);
+            }
+            ChildCommand::Identity { json } => {
+                let identity = pairing::child_identity(&cfg)?;
+                let pairing = pairing::child_pairing(&cfg)?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "identity": identity,
+                            "pairing": pairing
+                        }))?
+                    );
+                } else {
+                    if let Some(identity) = identity {
+                        println!(
+                            "child identity\nname: {}\npublic_key: {}",
+                            identity.node_display_name, identity.node_public_key
+                        );
+                    } else {
+                        println!("child identity not created");
+                    }
+                    if let Some(pairing) = pairing {
+                        println!(
+                            "paired core\ncore_url: {}\ncore_fingerprint: {}\nrequest_id: {}\nstatus: {:?}",
+                            pairing.core_url,
+                            pairing.core_fingerprint,
+                            pairing.request_id,
+                            pairing.status
+                        );
+                    }
+                }
+            }
+            ChildCommand::Doctor { json } => {
+                let report = pairing::child_doctor(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_child_doctor(&report));
+                }
+            }
+            ChildCommand::Unpair => {
+                pairing::unpair_child(&cfg)?;
+                println!("child pairing metadata removed");
+            }
+        },
+        Commands::Timing { command } => match command {
+            TimingCommand::List { json } => {
+                let policies = timing::load_policies(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&policies)?);
+                } else {
+                    print!("{}", timing::render_policy_list(&policies));
+                }
+            }
+            TimingCommand::Inspect { desk, json } => {
+                let desk_id = desk.parse::<desk_registry::DeskId>()?;
+                let policies = timing::policies_for_desk(&cfg, &desk_id)?;
+                if policies.is_empty() {
+                    anyhow::bail!("no timing policies found for desk '{}'", desk_id);
+                }
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&policies)?);
+                } else {
+                    print!("{}", timing::render_policy_list(&policies));
+                }
+            }
+            TimingCommand::Next { desk, json } => {
+                let desk_id = desk.parse::<desk_registry::DeskId>()?;
+                let next = timing::next_summary(&cfg, &desk_id)?;
+                if next.is_empty() {
+                    anyhow::bail!("no timing policies found for desk '{}'", desk_id);
+                }
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&next)?);
+                } else {
+                    print!("{}", timing::render_next(&next));
+                }
+            }
+            TimingCommand::Check {
+                desk,
+                role,
+                node,
+                dry_run,
+                json,
+            } => {
+                if !dry_run {
+                    anyhow::bail!(
+                        "timing check is inspect-only in this checkpoint; pass --dry-run"
+                    );
+                }
+                let desk_id = desk
+                    .as_deref()
+                    .unwrap_or("forex")
+                    .parse::<desk_registry::DeskId>()?;
+                let decision = timing::check_timing(
+                    &cfg,
+                    timing::TimingCheckRequest {
+                        desk_id,
+                        role_id: role,
+                        child_node_id: node,
+                        trigger: None,
+                        evidence_timestamp: Some(chrono::Utc::now()),
+                        proposal_requested: false,
+                    },
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&decision)?);
+                } else {
+                    print!("{}", timing::render_decision(&decision));
+                }
+            }
+            TimingCommand::Cooldowns { json } => {
+                let cooldowns = timing::cooldowns(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&cooldowns)?);
+                } else {
+                    print!("{}", timing::render_cooldowns(&cooldowns));
+                }
+            }
+        },
+        Commands::Numeric { command } => match command {
+            NumericCommand::Bench { command } => match command {
+                NumericBenchCommand::StablecoinPeg {
+                    samples,
+                    backend,
+                    json,
+                } => {
+                    let backend = parse_numeric_backend(&backend)?;
+                    let report = numeric_hotpath::run_peg_scan_benchmark(samples, backend)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print!("{}", numeric_hotpath::render_peg_scan_report(&report));
+                    }
+                }
+            },
+        },
+        Commands::Compute { command } => match command {
+            ComputeCommand::Capabilities { json } => {
+                let report = compute::capability_report();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", compute::render_capability_report(&report));
+                }
+            }
+            ComputeCommand::Validate {
+                node,
+                backend,
+                fixture,
+                json,
+            } => {
+                let backend = parse_compute_backend(&backend)?;
+                let record = compute::validate_backend_roundtrip(&cfg, &node, backend, &fixture)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&record)?);
+                } else {
+                    println!(
+                        "compute validation\nnode: {}\nbackend: {}\noutcome: {:?}\nscalar_equivalence_verified: {}\n",
+                        record.node_id,
+                        record.backend,
+                        record.validation_outcome,
+                        record.scalar_equivalence_verified
+                    );
+                }
+            }
+            ComputeCommand::Validations { json } => {
+                let records = compute::read_validation_records(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&records)?);
+                } else {
+                    println!("compute validations\nrecords: {}", records.len());
+                    for record in records {
+                        println!(
+                            "{} node={} backend={} outcome={:?}",
+                            record.validation_id,
+                            record.node_id,
+                            record.backend,
+                            record.validation_outcome
+                        );
+                    }
+                }
+            }
+            ComputeCommand::Mismatches { json } => {
+                let records = compute::read_mismatch_records(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&records)?);
+                } else {
+                    println!("compute mismatches\nrecords: {}", records.len());
+                    for record in records {
+                        println!(
+                            "{} node={} backend={} reason={}",
+                            record.mismatch_id, record.node_id, record.backend, record.reason
+                        );
+                    }
+                }
+            }
+            ComputeCommand::Quarantine { json } => {
+                let records = compute::read_quarantine(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&records)?);
+                } else {
+                    println!("compute quarantine\nrecords: {}", records.len());
+                    for record in records {
+                        println!(
+                            "node={} backend={} reason={}",
+                            record.node_id, record.backend, record.reason
+                        );
+                    }
+                }
+            }
+            ComputeCommand::FreshnessScan {
+                fixture,
+                backend,
+                json,
+            } => {
+                let backend = parse_compute_backend(&backend)?;
+                ensure_scalar_compute_backend(backend)?;
+                let input = compute::fixtures::evidence_freshness_fixture(&fixture)?;
+                let output = compute::evidence_freshness_scan(&input)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else {
+                    println!(
+                        "compute freshness scan\nbackend: {}\nfresh_count: {}\nstale_count: {}\n",
+                        backend, output.fresh_count, output.stale_count
+                    );
+                }
+            }
+            ComputeCommand::PegDeviation {
+                fixture,
+                backend,
+                threshold_bps,
+                threshold_epsilon_bps,
+                json,
+            } => {
+                let backend = parse_compute_backend(&backend)?;
+                ensure_scalar_compute_backend(backend)?;
+                let input = compute::fixtures::peg_deviation_fixture(&fixture)?;
+                let output =
+                    compute::peg_deviation_scan(&input, threshold_bps, threshold_epsilon_bps)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else {
+                    println!(
+                        "compute peg deviation\nbackend: {}\nmax_deviation_bps: {}\nstale_count: {}\nnumeric_confidence: {:?}\n",
+                        backend,
+                        output.max_deviation_bps,
+                        output.stale_count,
+                        output.numeric_confidence
+                    );
+                }
+            }
+            ComputeCommand::Bench {
+                workload,
+                samples,
+                manual,
+                json,
+            } => {
+                if workload != "peg-deviation" {
+                    anyhow::bail!("unsupported compute bench workload '{}'", workload);
+                }
+                let policy = compute::BenchmarkPolicy::tablet_default();
+                compute::bench_policy::validate_benchmark_policy(
+                    &policy, None, false, manual, samples,
+                )?;
+                let report = numeric_hotpath::run_peg_scan_benchmark(
+                    samples as usize,
+                    numeric_hotpath::NumericBackend::Scalar,
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", numeric_hotpath::render_peg_scan_report(&report));
+                }
+            }
+        },
+        Commands::Playbook { command } => match command {
+            PlaybookCommand::List { json } => {
+                let playbooks = playbook::list_playbooks(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&playbooks)?);
+                } else {
+                    for playbook in playbooks {
+                        println!(
+                            "{} desk={} role={} version={} authority={:?}",
+                            playbook.playbook_id,
+                            playbook.desk_id,
+                            playbook.role_id,
+                            playbook.version,
+                            playbook.authority
+                        );
+                    }
+                }
+            }
+            PlaybookCommand::Inspect { desk, role, json } => {
+                let playbook = playbook::load_playbook(&cfg, &desk, &role)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&playbook)?);
+                } else {
+                    println!(
+                        "playbook {}\ndesk: {}\nrole: {}\nversion: {}\nhash: {}\noutput_schema: {}",
+                        playbook.playbook_id,
+                        playbook.desk_id,
+                        playbook.role_id,
+                        playbook.version,
+                        playbook.hash,
+                        playbook.output_schema_id
+                    );
+                }
+            }
+            PlaybookCommand::Validate { desk, role } => {
+                let playbook = playbook::load_playbook(&cfg, &desk, &role)?;
+                playbook::validate_playbook(&playbook)?;
+                println!(
+                    "playbook valid\nplaybook_id: {}\nhash: {}",
+                    playbook.playbook_id, playbook.hash
+                );
+            }
+            PlaybookCommand::Bundle { desk, role, json } => {
+                let bundle = playbook::bundle_playbook(&cfg, &desk, &role)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&bundle)?);
+                } else {
+                    println!(
+                        "playbook bundle written\nbundle_id: {}\nplaybook_id: {}\nhash: {}",
+                        bundle.bundle_id, bundle.playbook.playbook_id, bundle.bundle_hash
+                    );
+                }
+            }
+            PlaybookCommand::Hash { playbook } => {
+                let playbook = playbook::load_playbook_by_id(&cfg, &playbook)?;
+                playbook::validate_playbook(&playbook)?;
+                println!("{}", playbook.hash);
+            }
+        },
+        Commands::Model { command } => match command {
+            ModelCommand::Handoff { command } => match command {
+                ModelHandoffCommand::Create {
+                    desk,
+                    role,
+                    playbook,
+                    snapshot: _snapshot,
+                    task,
+                    evidence,
+                    json,
+                } => {
+                    let handoff = model_router::create_handoff_packet(
+                        &cfg,
+                        &desk,
+                        &role,
+                        &playbook,
+                        task.parse()?,
+                        evidence,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&handoff)?);
+                    } else {
+                        println!(
+                            "model handoff created\nhandoff_id: {}\nplaybook_hash: {}\nsnapshot_hash: {}\nreplay_safe: {}",
+                            handoff.handoff_id,
+                            handoff.playbook_hash,
+                            handoff.shared_state_snapshot_hash,
+                            handoff.replay_safe
+                        );
+                    }
+                }
+                ModelHandoffCommand::Inspect { handoff, json } => {
+                    let handoff = model_router::inspect_handoff(&cfg, &handoff)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&handoff)?);
+                    } else {
+                        println!(
+                            "handoff {}\ndesk: {}\nrole: {}\nplaybook: {}\nsnapshot: {}\nreplay_safe: {}",
+                            handoff.handoff_id,
+                            handoff.desk_id,
+                            handoff.role_id,
+                            handoff.playbook_id,
+                            handoff.shared_state_snapshot_id,
+                            handoff.replay_safe
+                        );
+                    }
+                }
+                ModelHandoffCommand::Export { handoff, out } => {
+                    model_router::export_handoff(&cfg, &handoff, out.clone())?;
+                    println!(
+                        "handoff exported\nhandoff_id: {}\nout: {}",
+                        handoff,
+                        out.display()
+                    );
+                }
+            },
+            ModelCommand::Call {
+                provider,
+                model: _model,
+                handoff,
+                json,
+            } => {
+                let provider: model_router::ModelProviderKind = provider.parse()?;
+                match provider {
+                    model_router::ModelProviderKind::LocalStub => {
+                        let proposal = model_router::call_local_stub(&cfg, &handoff)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&proposal)?);
+                        } else {
+                            println!(
+                                "local stub model call complete\nupdate_id: {}\nstatus: {:?}\nshared_state_mutated: false",
+                                proposal.update_id, proposal.validation_status
+                            );
+                        }
+                    }
+                    model_router::ModelProviderKind::OpenRouter
+                    | model_router::ModelProviderKind::OpenAiDirect => {
+                        anyhow::bail!(
+                            "provider calls are feature-gated and disabled in this checkpoint"
+                        );
+                    }
+                }
+            }
+        },
+        Commands::SharedState { command } => match command {
+            SharedStateCommand::Updates { json } => {
+                let updates = model_router::list_update_proposals(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&updates)?);
+                } else {
+                    for update in updates {
+                        let accepted = matches!(
+                            update.validation_status,
+                            model_router::UpdateValidationStatus::AcceptedToSharedState
+                        );
+                        let label = if accepted {
+                            "accepted_typed_fact"
+                        } else {
+                            "candidate/unvalidated"
+                        };
+                        println!(
+                            "{} desk={} role={} status={:?} label={} shared_state={} action_authority=none execution=false fsm=false",
+                            update.update_id,
+                            update.desk_id,
+                            update.role_id,
+                            update.validation_status,
+                            label,
+                            accepted
+                        );
+                    }
+                }
+            }
+            SharedStateCommand::Update { command } => match command {
+                SharedStateUpdateCommand::Inspect { update, json } => {
+                    let update = model_router::inspect_update_proposal(&cfg, &update)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&update)?);
+                    } else {
+                        let accepted = matches!(
+                            update.validation_status,
+                            model_router::UpdateValidationStatus::AcceptedToSharedState
+                        );
+                        let label = if accepted {
+                            "accepted_typed_fact"
+                        } else {
+                            "candidate"
+                        };
+                        println!(
+                            "update {}\ndesk: {}\nrole: {}\nstatus: {:?}\nlabel: {}\nshared_state: {}\naction_authority: none\nexecution: false\nfsm: false",
+                            update.update_id,
+                            update.desk_id,
+                            update.role_id,
+                            update.validation_status,
+                            label,
+                            accepted
+                        );
+                    }
+                }
+                SharedStateUpdateCommand::Validate { update, json } => {
+                    let update = model_router::validate_update_proposal(&cfg, &update)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&update)?);
+                    } else {
+                        println!(
+                            "update validation complete\nupdate_id: {}\nstatus: {:?}\nshared_state_mutated: false\naction_authority: none\nexecution: false\nfsm: false",
+                            update.update_id, update.validation_status
+                        );
+                    }
+                }
+                SharedStateUpdateCommand::Accept {
+                    update,
+                    reason,
+                    json,
+                } => {
+                    let facts = model_router::accept_update_proposal(&cfg, &update, &reason)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&facts)?);
+                    } else {
+                        println!(
+                            "update accepted into typed shared-state fact ledger\nupdate_id: {}\nfacts_written: {}\naction_authority: none\nexecution: false\nfsm: false",
+                            update,
+                            facts.len()
+                        );
+                    }
+                }
+                SharedStateUpdateCommand::Reject {
+                    update,
+                    reason,
+                    json,
+                } => {
+                    model_router::reject_update_proposal(&cfg, &update, &reason)?;
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "update_id": update,
+                                "status": "rejected_policy",
+                                "shared_state_mutated": false,
+                                "action_authority": "none",
+                                "execution": false,
+                                "fsm": false
+                            }))?
+                        );
+                    } else {
+                        println!(
+                            "update rejected\nupdate_id: {}\nshared_state_mutated: false\naction_authority: none\nexecution: false\nfsm: false",
+                            update
+                        );
+                    }
+                }
+            },
+            SharedStateCommand::Facts { json } => {
+                let facts = model_router::list_accepted_facts(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&facts)?);
+                } else {
+                    for fact in facts {
+                        println!(
+                            "{} desk={} role={} decay={:?} score={:.6}",
+                            fact.fact_id,
+                            fact.desk_id,
+                            fact.role_id,
+                            fact.decay_class,
+                            fact.score.final_score
+                        );
+                    }
+                }
+            }
+            SharedStateCommand::Fact { command } => match command {
+                SharedStateFactCommand::Inspect { fact, json } => {
+                    let fact = model_router::inspect_accepted_fact(&cfg, &fact)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&fact)?);
+                    } else {
+                        println!(
+                            "fact {}\ndesk: {}\nrole: {}\ndecay: {:?}\nscore: {:.6}",
+                            fact.fact_id,
+                            fact.desk_id,
+                            fact.role_id,
+                            fact.decay_class,
+                            fact.score.final_score
+                        );
+                    }
+                }
+            },
+            SharedStateCommand::Snapshots { json } => {
+                let snapshots = model_router::list_shared_state_snapshots(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&snapshots)?);
+                } else {
+                    for snapshot in snapshots {
+                        println!(
+                            "{} desk={} facts={} contradictions={} hash={}",
+                            snapshot.snapshot_id,
+                            snapshot.desk_id,
+                            snapshot.accepted_fact_ids.len(),
+                            snapshot.contradiction_ids.len(),
+                            snapshot.snapshot_hash.value
+                        );
+                    }
+                }
+            }
+            SharedStateCommand::Snapshot { command } => match command {
+                SharedStateSnapshotCommand::Create { desk, json } => {
+                    let snapshot = model_router::create_shared_state_snapshot(&cfg, &desk)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                    } else {
+                        println!(
+                            "shared-state snapshot created\nsnapshot_id: {}\ndesk: {}\nfacts: {}\ncontradictions: {}\nhash: {}",
+                            snapshot.snapshot_id,
+                            snapshot.desk_id,
+                            snapshot.accepted_fact_ids.len(),
+                            snapshot.contradiction_ids.len(),
+                            snapshot.snapshot_hash.value
+                        );
+                    }
+                }
+                SharedStateSnapshotCommand::Inspect { snapshot, json } => {
+                    let snapshot = model_router::inspect_shared_state_snapshot(&cfg, &snapshot)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                    } else {
+                        println!(
+                            "snapshot {}\ndesk: {}\nfacts: {}\ncontradictions: {}\nhash: {}",
+                            snapshot.snapshot_id,
+                            snapshot.desk_id,
+                            snapshot.accepted_fact_ids.len(),
+                            snapshot.contradiction_ids.len(),
+                            snapshot.snapshot_hash.value
+                        );
                     }
                 }
             },
@@ -4398,6 +6203,47 @@ fn operator_identity(cfg: &Config) -> String {
         .unwrap_or_else(|_| format!("operator:{}", cfg.node_id))
 }
 
+fn parse_numeric_backend(value: &str) -> Result<numeric_hotpath::NumericBackend> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "scalar" => Ok(numeric_hotpath::NumericBackend::Scalar),
+        "auto" => Ok(numeric_hotpath::NumericBackend::Auto),
+        other => anyhow::bail!("unsupported numeric backend '{other}'"),
+    }
+}
+
+fn parse_compute_backend(value: &str) -> Result<compute::ComputeBackend> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "scalar" => Ok(compute::ComputeBackend::Scalar),
+        "auto_vectorized_scalar" | "auto-vectorized-scalar" | "auto" => {
+            Ok(compute::ComputeBackend::AutoVectorizedScalar)
+        }
+        "experimental_portable_simd" | "experimental-portable-simd" => {
+            Ok(compute::ComputeBackend::ExperimentalPortableSimd)
+        }
+        "arm_neon" | "arm-neon" | "neon" => Ok(compute::ComputeBackend::ArmNeon),
+        "x86_sse2" | "x86-sse2" | "sse2" => Ok(compute::ComputeBackend::X86Sse2),
+        "x86_avx2" | "x86-avx2" | "avx2" => Ok(compute::ComputeBackend::X86Avx2),
+        other => anyhow::bail!("unsupported compute backend '{other}'"),
+    }
+}
+
+fn parse_csv(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn ensure_scalar_compute_backend(backend: compute::ComputeBackend) -> Result<()> {
+    if backend == compute::ComputeBackend::Scalar {
+        Ok(())
+    } else {
+        anyhow::bail!("only scalar compute backend is executable in this checkpoint")
+    }
+}
+
 fn run_boil_cli(
     cfg: &Config,
     args: Vec<String>,
@@ -4467,7 +6313,45 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         | Commands::ContextStatus { .. }
         | Commands::Replay { .. }
         | Commands::Cost { .. }
-        | Commands::InitTruth { .. } => StorageMode::Inspect,
+        | Commands::InitTruth { .. }
+        | Commands::Timing { .. }
+        | Commands::Numeric { .. } => StorageMode::Inspect,
+        Commands::Compute { command } => match command {
+            ComputeCommand::Validate { .. } => StorageMode::SessionWrite,
+            ComputeCommand::Capabilities { .. }
+            | ComputeCommand::Validations { .. }
+            | ComputeCommand::Mismatches { .. }
+            | ComputeCommand::Quarantine { .. }
+            | ComputeCommand::FreshnessScan { .. }
+            | ComputeCommand::PegDeviation { .. }
+            | ComputeCommand::Bench { .. } => StorageMode::Inspect,
+        },
+        Commands::Playbook { command } => match command {
+            PlaybookCommand::Bundle { .. } => StorageMode::SessionWrite,
+            PlaybookCommand::List { .. }
+            | PlaybookCommand::Inspect { .. }
+            | PlaybookCommand::Validate { .. }
+            | PlaybookCommand::Hash { .. } => StorageMode::Inspect,
+        },
+        Commands::Model { command } => match command {
+            ModelCommand::Handoff { .. } | ModelCommand::Call { .. } => StorageMode::SessionWrite,
+        },
+        Commands::SharedState { command } => match command {
+            SharedStateCommand::Update { command } => match command {
+                SharedStateUpdateCommand::Validate { .. }
+                | SharedStateUpdateCommand::Accept { .. }
+                | SharedStateUpdateCommand::Reject { .. } => StorageMode::SessionWrite,
+                SharedStateUpdateCommand::Inspect { .. } => StorageMode::Inspect,
+            },
+            SharedStateCommand::Snapshot { command } => match command {
+                SharedStateSnapshotCommand::Create { .. } => StorageMode::SessionWrite,
+                SharedStateSnapshotCommand::Inspect { .. } => StorageMode::Inspect,
+            },
+            SharedStateCommand::Updates { .. }
+            | SharedStateCommand::Facts { .. }
+            | SharedStateCommand::Fact { .. }
+            | SharedStateCommand::Snapshots { .. } => StorageMode::Inspect,
+        },
         Commands::Capabilities { .. } => StorageMode::Inspect,
         Commands::Boil { args, dry_run, .. } => {
             if args.first().is_some_and(|value| value == "evidence") || *dry_run {
@@ -4512,6 +6396,55 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
             } => StorageMode::SessionWrite,
             WorkerCommand::Submit { .. } | WorkerCommand::Once { .. } | WorkerCommand::Run => {
                 StorageMode::WorkerRun
+            }
+        },
+        Commands::Cluster { command } => match command {
+            ClusterCommand::Device {
+                command: ClusterDeviceCommand::Options { .. },
+            }
+            | ClusterCommand::Desk {
+                command: ClusterDeskCommand::Rails { .. },
+            }
+            | ClusterCommand::Node {
+                command: ClusterNodeCommand::List { .. },
+            }
+            | ClusterCommand::Nodes { .. }
+            | ClusterCommand::Lease {
+                command:
+                    ClusterLeaseCommand::List { .. }
+                    | ClusterLeaseCommand::Inspect { .. }
+                    | ClusterLeaseCommand::Check { .. },
+            }
+            | ClusterCommand::Report { .. } => StorageMode::Inspect,
+            ClusterCommand::Init
+            | ClusterCommand::Node {
+                command: ClusterNodeCommand::Register { .. },
+            }
+            | ClusterCommand::Role { .. }
+            | ClusterCommand::Lease {
+                command: ClusterLeaseCommand::Grant { .. } | ClusterLeaseCommand::Revoke { .. },
+            }
+            | ClusterCommand::Heartbeat { .. }
+            | ClusterCommand::Job { .. }
+            | ClusterCommand::Child { .. } => StorageMode::SessionWrite,
+        },
+        Commands::Pair { command } => match command {
+            PairCommand::Invites { .. }
+            | PairCommand::Requests { .. }
+            | PairCommand::Events { .. }
+            | PairCommand::Fingerprint { .. }
+            | PairCommand::Doctor { .. } => StorageMode::Inspect,
+            PairCommand::Serve { .. }
+            | PairCommand::Invite { .. }
+            | PairCommand::Approve { .. }
+            | PairCommand::Reject { .. }
+            | PairCommand::Revoke { .. } => StorageMode::SessionWrite,
+        },
+        Commands::Device { .. } => StorageMode::SessionWrite,
+        Commands::Child { command } => match command {
+            ChildCommand::Identity { .. } | ChildCommand::Doctor { .. } => StorageMode::Inspect,
+            ChildCommand::Pair { .. } | ChildCommand::PairScan { .. } | ChildCommand::Unpair => {
+                StorageMode::SessionWrite
             }
         },
         Commands::Init { .. }
@@ -5663,6 +7596,252 @@ mod tests {
             }
             other => panic!("unexpected command: {other:?}"),
         }
+    }
+
+    #[test]
+    fn cluster_commands_parse_and_use_safe_storage_modes() {
+        let register = Cli::try_parse_from([
+            "quant-m",
+            "cluster",
+            "node",
+            "register",
+            "--name",
+            "tablet-01",
+            "--surface",
+            "termux_worker",
+            "--capabilities",
+            "echo,sleep",
+        ])
+        .expect("parse cluster node register");
+        assert!(matches!(
+            register.command,
+            Some(Commands::Cluster {
+                command: ClusterCommand::Node {
+                    command: ClusterNodeCommand::Register { .. }
+                }
+            })
+        ));
+
+        let options = Cli::try_parse_from(["quant-m", "cluster", "device", "options", "--json"])
+            .expect("parse cluster device options");
+        assert!(matches!(
+            options.command,
+            Some(Commands::Cluster {
+                command: ClusterCommand::Device {
+                    command: ClusterDeviceCommand::Options { json: true }
+                }
+            })
+        ));
+
+        let rails = Cli::try_parse_from(["quant-m", "cluster", "desk", "rails", "--json"])
+            .expect("parse cluster desk rails");
+        assert!(matches!(
+            rails.command,
+            Some(Commands::Cluster {
+                command: ClusterCommand::Desk {
+                    command: ClusterDeskCommand::Rails { json: true }
+                }
+            })
+        ));
+
+        assert_eq!(
+            storage_mode_for_command(&Commands::Cluster {
+                command: ClusterCommand::Device {
+                    command: ClusterDeviceCommand::Options { json: false }
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Cluster {
+                command: ClusterCommand::Desk {
+                    command: ClusterDeskCommand::Rails { json: false }
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Cluster {
+                command: ClusterCommand::Report { json: false }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Cluster {
+                command: ClusterCommand::Child {
+                    command: ClusterChildCommand::Run {
+                        node: "node:tablet-01".to_string(),
+                        json: false,
+                    }
+                }
+            }),
+            StorageMode::SessionWrite
+        );
+    }
+
+    #[test]
+    fn timing_commands_parse_and_use_inspect_storage_mode() {
+        let list = Cli::try_parse_from(["quant-m", "timing", "list"]).expect("parse timing list");
+        assert!(matches!(
+            list.command,
+            Some(Commands::Timing {
+                command: TimingCommand::List { .. }
+            })
+        ));
+
+        let check = Cli::try_parse_from([
+            "quant-m",
+            "timing",
+            "check",
+            "--desk",
+            "forex",
+            "--role",
+            "forex_calendar_watcher",
+            "--dry-run",
+        ])
+        .expect("parse timing check");
+        assert!(matches!(
+            check.command,
+            Some(Commands::Timing {
+                command: TimingCommand::Check { dry_run: true, .. }
+            })
+        ));
+
+        assert_eq!(
+            storage_mode_for_command(&Commands::Timing {
+                command: TimingCommand::List { json: false }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Timing {
+                command: TimingCommand::Check {
+                    desk: Some("forex".to_string()),
+                    role: Some("forex_calendar_watcher".to_string()),
+                    node: None,
+                    dry_run: true,
+                    json: false,
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn numeric_commands_parse_and_use_inspect_storage_mode() {
+        let bench = Cli::try_parse_from([
+            "quant-m",
+            "numeric",
+            "bench",
+            "stablecoin-peg",
+            "--samples",
+            "128",
+            "--backend",
+            "scalar",
+        ])
+        .expect("parse numeric bench");
+        assert!(matches!(
+            bench.command,
+            Some(Commands::Numeric {
+                command: NumericCommand::Bench {
+                    command: NumericBenchCommand::StablecoinPeg { samples: 128, .. }
+                }
+            })
+        ));
+        assert_eq!(
+            storage_mode_for_command(&Commands::Numeric {
+                command: NumericCommand::Bench {
+                    command: NumericBenchCommand::StablecoinPeg {
+                        samples: 128,
+                        backend: "scalar".to_string(),
+                        json: false,
+                    }
+                }
+            }),
+            StorageMode::Inspect
+        );
+    }
+
+    #[test]
+    fn compute_commands_parse_and_use_inspect_storage_mode() {
+        let capabilities = Cli::try_parse_from(["quant-m", "compute", "capabilities"])
+            .expect("parse compute capabilities");
+        assert!(matches!(
+            capabilities.command,
+            Some(Commands::Compute {
+                command: ComputeCommand::Capabilities { .. }
+            })
+        ));
+
+        let peg = Cli::try_parse_from([
+            "quant-m",
+            "compute",
+            "peg-deviation",
+            "--fixture",
+            "stablecoin_peg_deviation",
+            "--backend",
+            "scalar",
+        ])
+        .expect("parse compute peg deviation");
+        assert!(matches!(
+            peg.command,
+            Some(Commands::Compute {
+                command: ComputeCommand::PegDeviation { .. }
+            })
+        ));
+
+        let validate = Cli::try_parse_from([
+            "quant-m",
+            "compute",
+            "validate",
+            "--node",
+            "node:tablet-01",
+            "--backend",
+            "scalar",
+            "--fixture",
+            "evidence_freshness",
+        ])
+        .expect("parse compute validate");
+        assert!(matches!(
+            validate.command,
+            Some(Commands::Compute {
+                command: ComputeCommand::Validate { .. }
+            })
+        ));
+
+        assert_eq!(
+            storage_mode_for_command(&Commands::Compute {
+                command: ComputeCommand::Capabilities { json: false }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Compute {
+                command: ComputeCommand::FreshnessScan {
+                    fixture: "evidence_freshness".to_string(),
+                    backend: "scalar".to_string(),
+                    json: false,
+                }
+            }),
+            StorageMode::Inspect
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Compute {
+                command: ComputeCommand::Validate {
+                    node: "node:tablet-01".to_string(),
+                    backend: "scalar".to_string(),
+                    fixture: "evidence_freshness".to_string(),
+                    json: false,
+                }
+            }),
+            StorageMode::SessionWrite
+        );
+        assert_eq!(
+            storage_mode_for_command(&Commands::Compute {
+                command: ComputeCommand::Validations { json: false }
+            }),
+            StorageMode::Inspect
+        );
     }
 
     #[test]

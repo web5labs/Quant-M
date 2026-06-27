@@ -1,0 +1,11 @@
+{
+  "prices": [
+    0.999,
+    1.001
+  ],
+  "target_peg": 1.0,
+  "stale_flags": [
+    false,
+    false
+  ]
+}

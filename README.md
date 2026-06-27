@@ -22,7 +22,59 @@ Quant-M is not a chatbot, broker, hosted agent platform, or trading bot. It is t
 
 > `v0.1.0-alpha`: public developer preview. CLI-first, local-first, intentionally conservative, and not a production trading system.
 
-[Five-Minute Proof](#five-minute-proof) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Release Notes](docs/release/v0.1.0-alpha.md)
+[Five-Minute Proof](#five-minute-proof) | [Local Alpha Edge Cluster](#local-alpha-edge-cluster) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Release Notes](docs/release/v0.1.0-alpha.md)
+
+## Local Alpha Edge Cluster
+
+Quant-M Edge Cluster Local Alpha is an experimental local-lab core/child worker runtime. It is suitable for a trusted LAN or fresh-device lab test, not for public beta, production deployment, autonomous trading, or autonomous betting.
+
+What this local alpha can demonstrate:
+
+- core CLI and `quant-m-child`
+- QR/link child pairing with manual approval
+- heartbeat visibility and device telemetry
+- explicit observe-only leases
+- echo evidence and scalar compute evidence
+- desk observation evidence
+- playbook-bound local model handoff stubs
+- shared-state update validation
+
+What remains disabled:
+
+- live trading and live betting
+- broker, exchange, or sportsbook execution
+- provider calls from children
+- automatic proposal approval
+- child canonical writes
+- production remote orchestration
+
+Build the core and tiny child locally:
+
+```bash
+cargo build --features core-full
+cargo build --bin quant-m-child --profile release-child --no-default-features --features child-min
+```
+
+Start a local pairing flow from the core:
+
+```bash
+cargo run --features core-full -- device add tablet-01 --desk crypto --role stablecoin_peg_watcher --link --watch --no-server
+```
+
+On the child device, use the printed link or command from the core. After operator approval, keep the child observe-only and verify heartbeat/telemetry from the core:
+
+```bash
+cargo run --features core-full -- cluster nodes
+cargo run --features core-full -- cluster report
+```
+
+Release-candidate docs:
+
+- [Local Alpha Release Notes](docs/local-alpha-release-notes.md)
+- [Known Limitations](docs/known-limitations.md)
+- [Security Boundaries](docs/security-boundaries.md)
+- [Feature Matrix](docs/release/local-alpha-feature-matrix.md)
+- [Release Checklist](docs/release/local-alpha-checklist.md)
 
 ## What Quant-M Is
 

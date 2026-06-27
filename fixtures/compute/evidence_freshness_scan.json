@@ -1,0 +1,14 @@
+{
+  "evidence_ids": [
+    "evidence:fresh-01",
+    "evidence:stale-01",
+    "evidence:fresh-02"
+  ],
+  "evidence_timestamps": [
+    1700000000,
+    1699999000,
+    1699999950
+  ],
+  "now_timestamp": 1700000000,
+  "stale_after_seconds": 120
+}
