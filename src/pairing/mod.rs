@@ -205,6 +205,23 @@ pub struct PairingServerRequestPayload {
     pub approval_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClusterHeartbeatServerPayload {
+    pub node_id: String,
+    #[serde(default)]
+    pub surface: Option<String>,
+    #[serde(default)]
+    pub claimed_capabilities: Vec<String>,
+    #[serde(default)]
+    pub execution_enabled: bool,
+    #[serde(default)]
+    pub canonical_write_enabled: bool,
+    #[serde(default)]
+    pub approval_enabled: bool,
+    #[serde(default)]
+    pub device_telemetry: Option<crate::device_telemetry::DeviceTelemetry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PairingStatusResponse {
     pub request_id: String,
@@ -1135,6 +1152,25 @@ fn route_pairing_http_request(
                 serde_json::to_string_pretty(&status)?,
             ))
         }
+        ("POST", "/cluster/heartbeat") => {
+            let payload: ClusterHeartbeatServerPayload =
+                serde_json::from_str(&request.body).context("failed to parse cluster heartbeat")?;
+            let heartbeat = submit_server_cluster_heartbeat(cfg, payload)?;
+            Ok(http_response(
+                200,
+                "OK",
+                "application/json",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "heartbeat_id": heartbeat.heartbeat_id,
+                    "node_id": heartbeat.node_id,
+                    "paired": heartbeat.paired,
+                    "approved": heartbeat.approved,
+                    "execution_enabled": false,
+                    "canonical_write_enabled": false,
+                    "approval_enabled": false
+                }))?,
+            ))
+        }
         _ => Ok(http_response(
             404,
             "Not Found",
@@ -1142,6 +1178,37 @@ fn route_pairing_http_request(
             "pairing route not found".to_string(),
         )),
     }
+}
+
+fn submit_server_cluster_heartbeat(
+    cfg: &Config,
+    payload: ClusterHeartbeatServerPayload,
+) -> Result<cluster::ClusterHeartbeat> {
+    if payload.execution_enabled || payload.canonical_write_enabled || payload.approval_enabled {
+        return Err(anyhow!(
+            "heartbeat cannot claim execution, approval, or canonical write authority"
+        ));
+    }
+    let node_id = payload.node_id.parse()?;
+    let surface = payload.surface.as_deref().map(str::parse).transpose()?;
+    let claimed_capabilities = payload
+        .claimed_capabilities
+        .iter()
+        .map(|capability| capability.parse())
+        .collect::<Result<Vec<_>>>()?;
+    cluster::heartbeat_with_input(
+        cfg,
+        cluster::ClusterHeartbeatInput {
+            node_id,
+            surface,
+            claimed_capabilities,
+            execution_enabled: false,
+            approval_enabled: false,
+            canonical_write_enabled: false,
+            source: cluster::HeartbeatSource::ChildCli,
+            device_telemetry: payload.device_telemetry,
+        },
+    )
 }
 
 fn write_http_response(
@@ -1663,6 +1730,24 @@ mod tests {
         )
     }
 
+    fn post_cluster_heartbeat(node_id: &str) -> String {
+        let body = serde_json::to_string(&serde_json::json!({
+            "node_id": node_id,
+            "surface": "termux_worker",
+            "claimed_capabilities": ["echo", "sleep", "heartbeat", "compute_scalar"],
+            "execution_enabled": false,
+            "canonical_write_enabled": false,
+            "approval_enabled": false,
+            "device_telemetry": null
+        }))
+        .expect("heartbeat json");
+        format!(
+            "POST /cluster/heartbeat HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+    }
+
     #[test]
     fn pairing_invite_generates_short_lived_token() {
         let (_tmp, cfg) = test_config();
@@ -1978,6 +2063,33 @@ mod tests {
         let requests = list_requests(&cfg).expect("requests");
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].status, PairingRequestStatus::Pending);
+    }
+
+    #[test]
+    fn pair_server_cluster_heartbeat_marks_node_online_without_authority() {
+        let (_tmp, cfg) = test_config();
+        let view = invite(&cfg);
+        let response =
+            handle_pairing_http_request(&cfg, &post_pair_request(&server_payload(&view)), None);
+        assert_eq!(response.status_code, 200);
+        let request = list_requests(&cfg).expect("requests").remove(0);
+        let accepted = approve_request(&cfg, &request.request_id, "operator").expect("approve");
+        let response = handle_pairing_http_request(
+            &cfg,
+            &post_cluster_heartbeat(&accepted.node_id.to_string()),
+            None,
+        );
+        assert_eq!(response.status_code, 200);
+        assert!(response.body.contains("\"paired\": true"));
+        assert!(response.body.contains("\"approved\": true"));
+        assert!(response.body.contains("\"execution_enabled\": false"));
+        let node_id = accepted.node_id.parse().expect("node id");
+        let status = cluster::node_status(&cfg, &node_id).expect("status");
+        assert!(status.online);
+        assert!(!status.stale);
+        assert!(!status.execution_enabled);
+        assert!(!status.approval_enabled);
+        assert!(!status.canonical_write_enabled);
     }
 
     #[test]

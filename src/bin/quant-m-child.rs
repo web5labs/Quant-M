@@ -72,6 +72,7 @@ struct ChildCore {
     invite_token_hint: String,
     request_id: Option<String>,
     pairing_status: Option<String>,
+    node_id: Option<String>,
     paired_at: String,
     authority: String,
     execution_enabled: bool,
@@ -112,6 +113,27 @@ struct ChildHeartbeat {
 struct PairingServerResponse {
     request_id: String,
     status: String,
+    execution_enabled: bool,
+    canonical_write_enabled: bool,
+    approval_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct PairingStatusResponse {
+    request_id: String,
+    status: String,
+    node_id: Option<String>,
+    execution_enabled: bool,
+    canonical_write_enabled: bool,
+    approval_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct HeartbeatServerResponse {
+    heartbeat_id: String,
+    node_id: String,
+    paired: bool,
+    approved: bool,
     execution_enabled: bool,
     canonical_write_enabled: bool,
     approval_enabled: bool,
@@ -191,6 +213,7 @@ fn main() -> Result<()> {
                 invite_token_hint: invite.chars().take(8).collect(),
                 request_id: Some(response.request_id.clone()),
                 pairing_status: Some(response.status.clone()),
+                node_id: None,
                 paired_at: now(),
                 authority: "observe".to_string(),
                 execution_enabled: response.execution_enabled,
@@ -364,8 +387,12 @@ fn main() -> Result<()> {
                 canonical_write_enabled: false,
             };
             append_jsonl(&paths.heartbeats, &heartbeat)?;
+            let core_sync = sync_heartbeat_with_core(&paths, &heartbeat)?;
             if json {
-                print_json(&heartbeat)?;
+                print_json(&serde_json::json!({
+                    "heartbeat": heartbeat,
+                    "core_sync": core_sync
+                }))?;
             } else {
                 println!(
                     "child heartbeat recorded\nheartbeat_id: {}\ndevice: {}/{}\nauthority: observe\nexecution: disabled",
@@ -373,6 +400,12 @@ fn main() -> Result<()> {
                     heartbeat.device_telemetry.os,
                     heartbeat.device_telemetry.arch
                 );
+                if let Some(core_sync) = core_sync {
+                    println!(
+                        "core heartbeat synced\nnode_id: {}\npaired: {}\napproved: {}\nexecution: disabled\napproval: disabled\ncanonical_write: disabled",
+                        core_sync.node_id, core_sync.paired, core_sync.approved
+                    );
+                }
             }
         }
         Command::RunOnce { job, json } => {
@@ -510,6 +543,104 @@ fn parse_pairing_response(raw: &str) -> Result<PairingServerResponse> {
         ));
     }
     Ok(response)
+}
+
+fn sync_heartbeat_with_core(
+    paths: &ChildPaths,
+    heartbeat: &ChildHeartbeat,
+) -> Result<Option<HeartbeatServerResponse>> {
+    let Some(mut core) = load_core(paths)? else {
+        return Ok(None);
+    };
+    let Some(request_id) = core.request_id.clone() else {
+        return Ok(None);
+    };
+    let status = fetch_pairing_status(&core.core_url, &request_id)?;
+    if status.execution_enabled || status.approval_enabled || status.canonical_write_enabled {
+        return Err(anyhow!("pairing status enabled forbidden child authority"));
+    }
+    core.pairing_status = Some(status.status.clone());
+    core.node_id = status.node_id.clone();
+    write_toml(&paths.core, &core)?;
+    if status.status != "approved" {
+        return Ok(None);
+    }
+    let Some(node_id) = status.node_id else {
+        return Ok(None);
+    };
+    let response = submit_heartbeat(&core.core_url, &node_id, heartbeat)?;
+    Ok(Some(response))
+}
+
+fn fetch_pairing_status(core_url: &str, request_id: &str) -> Result<PairingStatusResponse> {
+    let response = send_local_http(core_url, "GET", &format!("/pair/status/{request_id}"), None)?;
+    parse_json_http_response(&response, "pairing status")
+}
+
+fn submit_heartbeat(
+    core_url: &str,
+    node_id: &str,
+    heartbeat: &ChildHeartbeat,
+) -> Result<HeartbeatServerResponse> {
+    let payload = serde_json::json!({
+        "node_id": node_id,
+        "surface": "termux_worker",
+        "claimed_capabilities": ["echo", "sleep", "heartbeat", "compute_scalar"],
+        "execution_enabled": false,
+        "canonical_write_enabled": false,
+        "approval_enabled": false,
+        "device_telemetry": heartbeat.device_telemetry
+    });
+    let body = serde_json::to_string(&payload)?;
+    let response = send_local_http(core_url, "POST", "/cluster/heartbeat", Some(&body))?;
+    let response: HeartbeatServerResponse =
+        parse_json_http_response(&response, "cluster heartbeat")?;
+    if response.execution_enabled || response.approval_enabled || response.canonical_write_enabled {
+        return Err(anyhow!(
+            "heartbeat response enabled forbidden child authority"
+        ));
+    }
+    Ok(response)
+}
+
+fn send_local_http(core_url: &str, method: &str, path: &str, body: Option<&str>) -> Result<String> {
+    let endpoint = parse_local_http_core(core_url)?;
+    let body = body.unwrap_or("");
+    let request = if method == "GET" {
+        format!(
+            "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            endpoint.host_header
+        )
+    } else {
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            endpoint.host_header,
+            body.len(),
+            body
+        )
+    };
+    let mut stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port))
+        .with_context(|| format!("failed to connect to pairing server at {core_url}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    stream.write_all(request.as_bytes())?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+fn parse_json_http_response<T: for<'de> Deserialize<'de>>(raw: &str, label: &str) -> Result<T> {
+    let (head, body) = raw
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| anyhow!("{label} returned malformed HTTP response"))?;
+    let status_line = head
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow!("{label} returned empty HTTP response"))?;
+    if !status_line.contains(" 200 ") {
+        return Err(anyhow!("{label} rejected request: {}", status_line.trim()));
+    }
+    serde_json::from_str(body).with_context(|| format!("failed to parse {label} response"))
 }
 
 fn run_one_job(paths: &ChildPaths, job_path: &Path) -> Result<Option<ChildReceipt>> {

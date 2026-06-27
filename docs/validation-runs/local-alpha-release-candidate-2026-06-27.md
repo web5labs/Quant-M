@@ -73,7 +73,7 @@ The first `cargo test cluster --features core-full` attempt hit temporary disk p
 Latest recorded child-min release-child size:
 
 ```text
-quant-m-child: 669,728 bytes
+quant-m-child: 720,112 bytes
 ```
 
 Measured with:

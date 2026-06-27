@@ -1042,6 +1042,7 @@ Guardrails:
 Measured child impact:
 - release-child before telemetry: `653,120` bytes
 - release-child after telemetry: `669,728` bytes
+- release-child after LAN pairing and heartbeat sync: `720,112` bytes
 - delta: `16,608` bytes
 
 ## 3.61) REAL_DEVICE_LAN_SMOKE_14A

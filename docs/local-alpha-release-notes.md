@@ -86,9 +86,9 @@ Latest child-min size recorded during checkpoint work:
 
 | binary | profile | features | size |
 | --- | --- | --- | --- |
-| `quant-m-child` | `release-child` | `--no-default-features --features child-min` | `669,728` bytes |
+| `quant-m-child` | `release-child` | `--no-default-features --features child-min` | `720,112` bytes |
 
-Telemetry increased the child binary from `653,120` bytes to `669,728` bytes, a delta of `16,608` bytes.
+Telemetry increased the child binary from `653,120` bytes to `669,728` bytes. LAN pairing and heartbeat sync increased the current local-alpha child binary to `720,112` bytes.
 
 ## Safety Record
 

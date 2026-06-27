@@ -149,6 +149,7 @@ Current binary sizes:
 | `quant-m-child` child-min dev before pruning | `4,233,888` |
 | `quant-m-child` release-child after pruning | `653,120` |
 | `quant-m-child` release-child after device telemetry | `669,728` |
+| `quant-m-child` release-child after LAN pairing and heartbeat sync | `720,112` |
 | `quant-m` core CLI dev before pruning | `34,693,752` |
 | `quant-m` core-full dev after explicit feature split | `53,214,040` |
 
