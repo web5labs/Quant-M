@@ -4,8 +4,10 @@ use clap::{Parser, Subcommand};
 use quant_m::device_telemetry::{self, DeviceTelemetry};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(name = "quant-m-child")]
@@ -68,6 +70,8 @@ struct ChildIdentity {
 struct ChildCore {
     core_url: String,
     invite_token_hint: String,
+    request_id: Option<String>,
+    pairing_status: Option<String>,
     paired_at: String,
     authority: String,
     execution_enabled: bool,
@@ -102,6 +106,15 @@ struct ChildHeartbeat {
     execution_enabled: bool,
     approval_enabled: bool,
     canonical_write_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct PairingServerResponse {
+    request_id: String,
+    status: String,
+    execution_enabled: bool,
+    canonical_write_enabled: bool,
+    approval_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,22 +185,32 @@ fn main() -> Result<()> {
         } => {
             paths.ensure()?;
             let identity = load_or_create_identity(&paths, &name)?;
+            let response = submit_pairing_request(&core, &invite, &identity)?;
             let core = ChildCore {
                 core_url: core,
                 invite_token_hint: invite.chars().take(8).collect(),
+                request_id: Some(response.request_id.clone()),
+                pairing_status: Some(response.status.clone()),
                 paired_at: now(),
                 authority: "observe".to_string(),
-                execution_enabled: false,
-                approval_enabled: false,
-                canonical_write_enabled: false,
+                execution_enabled: response.execution_enabled,
+                approval_enabled: response.approval_enabled,
+                canonical_write_enabled: response.canonical_write_enabled,
             };
+            if core.execution_enabled || core.approval_enabled || core.canonical_write_enabled {
+                return Err(anyhow!(
+                    "pairing server response claimed forbidden child authority"
+                ));
+            }
             write_toml(&paths.core, &core)?;
             if json {
-                print_json(&serde_json::json!({ "identity": identity, "core": core }))?;
+                print_json(
+                    &serde_json::json!({ "identity": identity, "core": core, "request": response }),
+                )?;
             } else {
                 println!(
-                    "child pairing metadata stored\nname: {}\nauthority: observe\nexecution: disabled\napproval: disabled\ncanonical_write: disabled",
-                    identity.node_display_name
+                    "child pairing request submitted\nname: {}\nrequest_id: {}\nstatus: {}\nauthority: observe\nexecution: disabled\napproval: disabled\ncanonical_write: disabled",
+                    identity.node_display_name, response.request_id, response.status
                 );
             }
         }
@@ -372,6 +395,121 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn submit_pairing_request(
+    core_url: &str,
+    invite_token: &str,
+    identity: &ChildIdentity,
+) -> Result<PairingServerResponse> {
+    let endpoint = parse_local_http_core(core_url)?;
+    let payload = serde_json::json!({
+        "invite_token": invite_token,
+        "node_display_name": identity.node_display_name,
+        "node_public_key": identity.node_public_key,
+        "surface": "termux_worker",
+        "claimed_capabilities": ["echo", "sleep", "compute_scalar"],
+        "requested_role": "stablecoin_peg_watcher",
+        "requested_authority": "observe",
+        "execution_enabled": false,
+        "canonical_write_enabled": false,
+        "approval_enabled": false
+    });
+    let body = serde_json::to_string(&payload)?;
+    let request = format!(
+        "POST /pair/request HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.host_header,
+        body.len(),
+        body
+    );
+    let mut stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port))
+        .with_context(|| format!("failed to connect to pairing server at {core_url}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    stream.write_all(request.as_bytes())?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    parse_pairing_response(&response)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalHttpEndpoint {
+    host: String,
+    port: u16,
+    host_header: String,
+}
+
+fn parse_local_http_core(core_url: &str) -> Result<LocalHttpEndpoint> {
+    let trimmed = core_url.trim().trim_end_matches('/');
+    let without_scheme = trimmed
+        .strip_prefix("http://")
+        .ok_or_else(|| anyhow!("child pairing only supports http:// local core URLs"))?;
+    let authority = without_scheme
+        .split('/')
+        .next()
+        .ok_or_else(|| anyhow!("core URL missing host"))?;
+    let (host, port) = if let Some((host, port)) = authority.rsplit_once(':') {
+        let port = port
+            .parse::<u16>()
+            .context("core URL contains invalid port")?;
+        (host.to_string(), port)
+    } else {
+        (authority.to_string(), 80)
+    };
+    let allowed = host == "localhost"
+        || host == "127.0.0.1"
+        || host.starts_with("192.168.")
+        || host.starts_with("10.")
+        || is_private_172(&host);
+    if !allowed {
+        return Err(anyhow!(
+            "child pairing refuses non-local/non-LAN core URL; use a trusted LAN address"
+        ));
+    }
+    Ok(LocalHttpEndpoint {
+        host_header: if port == 80 {
+            host.clone()
+        } else {
+            format!("{host}:{port}")
+        },
+        host,
+        port,
+    })
+}
+
+fn is_private_172(host: &str) -> bool {
+    let mut parts = host.split('.');
+    matches!(
+        (
+            parts.next(),
+            parts.next().and_then(|part| part.parse::<u8>().ok())
+        ),
+        (Some("172"), Some(16..=31))
+    )
+}
+
+fn parse_pairing_response(raw: &str) -> Result<PairingServerResponse> {
+    let (head, body) = raw
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| anyhow!("pairing server returned malformed HTTP response"))?;
+    let status_line = head
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow!("pairing server returned empty HTTP response"))?;
+    if !status_line.contains(" 200 ") {
+        return Err(anyhow!(
+            "pairing server rejected request: {}",
+            status_line.trim()
+        ));
+    }
+    let response: PairingServerResponse =
+        serde_json::from_str(body).context("failed to parse pairing server response")?;
+    if response.execution_enabled || response.approval_enabled || response.canonical_write_enabled {
+        return Err(anyhow!(
+            "pairing server response enabled forbidden child authority"
+        ));
+    }
+    Ok(response)
 }
 
 fn run_one_job(paths: &ChildPaths, job_path: &Path) -> Result<Option<ChildReceipt>> {
