@@ -94,6 +94,14 @@ git pull origin release/v0-local-alpha
 ./quantm core pair doctor --bind 0.0.0.0:8787
 ```
 
+On Raspberry Pi, `./quantm onboard` does not need to compile the Rust core first. If `target/debug/quant-m` is missing, the launcher runs a fast shell onboarding flow, writes safe local-alpha config/workspace files, and lets the core compile happen later.
+
+Compile the core only after onboarding is complete:
+
+```bash
+./quantm core-build
+```
+
 Find the core LAN IP:
 
 ```bash

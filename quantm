@@ -44,6 +44,288 @@ provider calls, proposals, execution, trading, betting, or canonical writes.
 EOF
 }
 
+prompt_with_default() {
+  local prompt="$1"
+  local default="$2"
+  local answer=""
+  if [[ "${QUANTM_ONBOARD_NONINTERACTIVE:-}" == "1" ]]; then
+    printf "%s\n" "$default"
+    return 0
+  fi
+  printf "%s [%s]: " "$prompt" "$default" >&2
+  read -r answer || answer=""
+  if [[ -z "$answer" ]]; then
+    answer="$default"
+  fi
+  printf "%s\n" "$answer"
+}
+
+prompt_choice() {
+  local prompt="$1"
+  local default="$2"
+  shift 2
+  local answer=""
+  if [[ "${QUANTM_ONBOARD_NONINTERACTIVE:-}" == "1" ]]; then
+    printf "%s\n" "$default"
+    return 0
+  fi
+  printf "%s\n" "$prompt" >&2
+  local index=1
+  for choice in "$@"; do
+    printf "  %s) %s\n" "$index" "$choice" >&2
+    index=$((index + 1))
+  done
+  printf "Choose [%s]: " "$default" >&2
+  read -r answer || answer=""
+  if [[ -z "$answer" ]]; then
+    answer="$default"
+  fi
+  printf "%s\n" "$answer"
+}
+
+normalize_workspace_path() {
+  local value="$1"
+  if [[ "$value" == "/" || "$value" =~ ^/[^/]+$ ]]; then
+    echo "Refusing workspace '$value'. Use ./workspace or an app-owned path like /root/Quant-M/workspace." >&2
+    exit 2
+  fi
+  printf "%s\n" "$value"
+}
+
+write_fast_onboarding_config() {
+  local workspace="$1"
+  local profile="$2"
+  local external_network="$3"
+  local codex_enabled="$4"
+  local guardian_enabled="$5"
+
+  cat > "$APP_DIR/quant-m.toml" <<EOF
+node_id = "quant-m-node"
+workspace_dir = "$workspace"
+
+[memory]
+sqlite_path = "$workspace/memory/brain.db"
+core_markdown = "$workspace/MEMORY.md"
+daily_dir = "$workspace/daily"
+vector_weight = 0.7
+keyword_weight = 0.3
+vector_dims = 64
+
+[state_sql]
+sqlite_path = "$workspace/state/shared-state.db"
+
+[heartbeat]
+enabled = true
+interval_seconds = 1800
+tasks_file = "$workspace/HEARTBEAT.md"
+
+[worker]
+inbox_path = "$workspace/queue/inbox.ndjson"
+outbox_path = "$workspace/queue/outbox.ndjson"
+inflight_path = "$workspace/queue/inflight.json"
+state_path = "$workspace/state/worker_state.json"
+dead_letter_path = "$workspace/queue/dead-letter.ndjson"
+poll_interval_seconds = 3
+command_timeout_seconds = 60
+concurrency = 1
+max_retries = 1
+max_inbox_depth = 2000
+allow_shell_commands = false
+allow_http_get = false
+allow_insecure_https = false
+http_get_mode = "dry_run"
+http_get_sandbox_hosts = []
+
+[adapters]
+terminal_enabled = true
+webhook_timeout_seconds = 10
+
+[logging]
+file = "$workspace/logs/quant-m.log"
+max_bytes = 1048576
+keep_files = 3
+
+[skills]
+dir = "$workspace/skills"
+allow_shell_commands = false
+
+[llm]
+enabled = false
+api_base = "https://openrouter.ai/api/v1"
+model = "qwen/qwen3-coder"
+api_key_env = "OPENROUTER_API_KEY"
+temperature = 0.3
+max_tokens = 512
+request_timeout_seconds = 60
+
+[telegram]
+enabled = false
+poll_interval_seconds = 3
+
+[chat_channels]
+enabled = false
+allowed_channels = ["telegram", "discord", "slack", "signal", "whatsapp", "ichat", "email"]
+default_channel = "none"
+
+[forex]
+redb_path = "$workspace/state/forex.redb"
+
+[runtime]
+profile = "$profile"
+session_dir = "$workspace/state/sessions"
+external_network_enabled = $external_network
+multi_model_enabled = false
+search_enabled = false
+browser_harness_enabled = false
+
+[context_guardian]
+enabled = $guardian_enabled
+interval_seconds = 300
+min_event_count = 1
+high_risk_event_count = 40
+branch_packet_path = "$workspace/state/context-guardian/continuity-handoff.md"
+
+[preferences]
+onboarding_completed = true
+preferred_openrouter_model = "qwen/qwen3-coder"
+
+[preferences.preferred_remote_model]
+provider = "openrouter"
+model = "qwen/qwen3-coder"
+
+[preferences.preferred_channel]
+channel = "none"
+
+[providers.openrouter]
+enabled = false
+kind = "open_router"
+api_base = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+preferred_models = ["qwen/qwen3-coder"]
+live_validation_allowed = false
+
+[providers.openai]
+enabled = false
+kind = "open_ai"
+api_base = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+preferred_models = ["gpt-5-codex", "gpt-5"]
+live_validation_allowed = false
+
+[providers.ollama]
+enabled = false
+kind = "ollama"
+api_base = "http://127.0.0.1:11434"
+api_key_env = ""
+preferred_models = ["qwen3-coder:7b"]
+live_validation_allowed = false
+
+[providers.lmstudio]
+enabled = false
+kind = "lm_studio"
+api_base = "http://127.0.0.1:1234/v1"
+api_key_env = ""
+preferred_models = []
+live_validation_allowed = false
+
+[tools.codex]
+enabled = $codex_enabled
+kind = "codex"
+command = "codex"
+validation_args = ["--version"]
+
+[tools.openai]
+enabled = false
+kind = "open_ai"
+command = "openai"
+validation_args = ["--version"]
+
+[tools.gemini]
+enabled = false
+kind = "gemini"
+command = "gemini"
+validation_args = ["--version"]
+
+[tools.claude]
+enabled = false
+kind = "claude"
+command = "claude"
+validation_args = ["--version"]
+
+[tools.ollama]
+enabled = false
+kind = "ollama"
+command = "ollama"
+validation_args = ["--version"]
+
+[tools.lmstudio]
+enabled = false
+kind = "lm_studio"
+command = "lms"
+validation_args = ["--version"]
+EOF
+}
+
+fast_core_onboard() {
+  echo "Quant-M fast core onboarding"
+  echo "No Rust core compile is required for this setup step."
+  echo
+
+  local workspace
+  workspace="$(prompt_with_default "Workspace path" "./workspace")"
+  workspace="$(normalize_workspace_path "$workspace")"
+
+  local profile_choice profile
+  profile_choice="$(prompt_choice "Device profile" "1" "Raspberry Pi / edge core" "Laptop/desktop core" "VPS/server core")"
+  case "$profile_choice" in
+    1) profile="edge" ;;
+    2) profile="laptop" ;;
+    3) profile="vps" ;;
+    *) profile="edge" ;;
+  esac
+
+  local network_choice external_network
+  network_choice="$(prompt_choice "Network posture" "1" "Local only" "Ask before network/live checks" "Allow provider checks")"
+  case "$network_choice" in
+    3) external_network=true ;;
+    *) external_network=false ;;
+  esac
+
+  local codex_choice codex_enabled
+  codex_choice="$(prompt_choice "Recognize Codex CLI if installed?" "2" "Yes" "No")"
+  case "$codex_choice" in
+    1) codex_enabled=true ;;
+    *) codex_enabled=false ;;
+  esac
+
+  local guardian_choice guardian_enabled
+  guardian_choice="$(prompt_choice "Enable context guardian handoff files?" "1" "Yes" "No")"
+  case "$guardian_choice" in
+    2) guardian_enabled=false ;;
+    *) guardian_enabled=true ;;
+  esac
+
+  mkdir -p "$APP_DIR/$workspace"/{memory,daily,queue,logs,skills,state/sessions,state/context-guardian,state/shared}
+  touch "$APP_DIR/$workspace/MEMORY.md" "$APP_DIR/$workspace/HEARTBEAT.md"
+  write_fast_onboarding_config "$workspace" "$profile" "$external_network" "$codex_enabled" "$guardian_enabled"
+
+  cat <<EOF
+
+Fast onboarding complete.
+config: $APP_DIR/quant-m.toml
+workspace: $APP_DIR/$workspace
+runtime_profile: $profile
+external_network_enabled: $external_network
+codex_tool_enabled: $codex_enabled
+
+Next, when you are ready to compile the core:
+  ./quantm core-build
+
+Then start the pairing server:
+  ./quantm core pair serve --bind 0.0.0.0:8787
+EOF
+}
+
 ensure_release_child_feature() {
   if ! grep -q '^child-min =' "$APP_DIR/Cargo.toml"; then
     cat >&2 <<'EOF'
@@ -92,6 +374,12 @@ build_core() {
 }
 
 case "${1:-}" in
+  onboard)
+    if [[ ! -x "$CORE_BIN" || "${QUANTM_FAST_ONBOARD:-}" == "1" ]]; then
+      fast_core_onboard
+      exit 0
+    fi
+    ;;
   core-build)
     build_core
     echo "Core binary ready: $CORE_BIN"

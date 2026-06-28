@@ -66,6 +66,12 @@ git pull origin release/v0-local-alpha
 ./quantm onboard
 ```
 
+On small devices, `./quantm onboard` uses a fast shell onboarding path when the core binary is not built yet. It asks the essential setup questions and writes `quant-m.toml` plus `workspace/` without compiling the Rust core first. Compile the core later with:
+
+```bash
+./quantm core-build
+```
+
 To inspect the packages and tools used during Pi setup:
 
 ```bash

@@ -65,6 +65,24 @@ Those tools are useful for install, updates, or remote administration, not for c
 
 For a Pi core node, `quant-m` itself can run after build, but keeping `git`, `rustup`, and build tools is useful while local-alpha is still moving quickly.
 
+## Fast Onboarding Before Compile
+
+On Raspberry Pi, first-run onboarding must not require a 30+ minute Rust core compile.
+
+If the core binary is not built, the launcher supports:
+
+```bash
+./quantm onboard
+```
+
+This runs a fast shell onboarding flow, writes `quant-m.toml`, creates `workspace/`, and marks onboarding complete without compiling `quant-m` first.
+
+Compile the core later:
+
+```bash
+./quantm core-build
+```
+
 ## Cargo Feature Boundary
 
 Child-min is intentionally small.
@@ -161,4 +179,3 @@ Removing build tools must not enable:
 - trading
 - betting
 - canonical child writes
-
