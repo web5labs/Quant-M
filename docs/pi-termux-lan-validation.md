@@ -87,9 +87,11 @@ On the Pi/DietPi core or laptop fallback:
 ```bash
 git clone <repo-url> quantm
 cd quantm
-cargo build --bin quant-m --features core-full
-./target/debug/quant-m init
-./target/debug/quant-m pair doctor --bind 0.0.0.0:8787
+git fetch origin
+git checkout release/v0-local-alpha
+git pull origin release/v0-local-alpha
+./quantm onboard
+./quantm core pair doctor --bind 0.0.0.0:8787
 ```
 
 Find the core LAN IP:
@@ -107,7 +109,7 @@ CORE_URL=http://<core-lan-ip>:8787
 Start the pairing server in a dedicated terminal:
 
 ```bash
-./target/debug/quant-m pair serve --bind 0.0.0.0:8787
+./quantm core pair serve --bind 0.0.0.0:8787
 ```
 
 Expected:
@@ -142,7 +144,7 @@ Expected:
 - `model_router_compiled: false`
 - `provider_adapters_compiled: false`
 
-Do not run bare `./quantm` on an edge child. Bare `./quantm` is the full core/onboarding launcher; edge devices should use `./quantm child ...`.
+Do not run bare `./quantm` on an edge child. Bare `./quantm` on edge devices prints the role guide; core setup uses `./quantm onboard`, and child setup uses `./quantm child ...`.
 - `shared_state_accept_compiled: false`
 - `pairing_server_compiled: false`
 

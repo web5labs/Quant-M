@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CORE_BIN="$APP_DIR/target/release/quant-m"
+CORE_BIN="$APP_DIR/target/debug/quant-m"
 CHILD_BIN="$APP_DIR/target/release-child/quant-m-child"
 
 is_edge_device() {
@@ -25,19 +25,19 @@ print_edge_help() {
   cat <<'EOF'
 Quant-M edge-device setup detected.
 
-For v0.local-alpha hardware smoke, this device should run the child binary.
-The core/onboarding wizard should run on your laptop or chosen core node.
+For v0.local-alpha hardware smoke, decide whether this device is the core
+or a child worker.
 
-Recommended edge commands:
+Core/onboarding commands:
+  ./quantm onboard
+  ./quantm core pair serve --bind 0.0.0.0:8787
+
+Child/worker commands:
   ./quantm child-build
   ./quantm child --help
   ./quantm child doctor
   ./quantm child pair --core http://<core-lan-ip>:8787 --invite <invite-token>
   ./quantm child heartbeat
-
-If this device is intentionally the core, run:
-  ./quantm core onboard
-  ./quantm core pair serve --bind 0.0.0.0:8787
 
 Safety: child mode builds quant-m-child with child-min only. It does not enable
 provider calls, proposals, execution, trading, betting, or canonical writes.
@@ -83,12 +83,24 @@ build_child() {
 
 build_core() {
   if core_needs_build; then
-    echo "Building Quant-M core locally..."
-    cargo build --release --manifest-path "$APP_DIR/Cargo.toml" --features core-full
+    echo "Building Quant-M core locally with core-full..."
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo build \
+      --manifest-path "$APP_DIR/Cargo.toml" \
+      --bin quant-m \
+      --features core-full
   fi
 }
 
 case "${1:-}" in
+  core-build)
+    build_core
+    echo "Core binary ready: $CORE_BIN"
+    exit 0
+    ;;
+  core-onboard)
+    build_core
+    exec "$CORE_BIN" onboard
+    ;;
   child-build|edge-build)
     build_child
     echo "Child binary ready: $CHILD_BIN"
@@ -116,7 +128,7 @@ case "${1:-}" in
     ;;
 esac
 
-if is_edge_device && [[ "$#" -eq 0 || "${1:-}" == "onboard" ]]; then
+if is_edge_device && [[ "$#" -eq 0 ]]; then
   print_edge_help
   exit 0
 fi

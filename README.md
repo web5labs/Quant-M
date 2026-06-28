@@ -55,7 +55,18 @@ cargo build --features core-full
 cargo build --bin quant-m-child --profile release-child --no-default-features --features child-min
 ```
 
-On Raspberry Pi, DietPi, Termux, or other edge devices, use the launcher child path instead of bare `./quantm`:
+On Raspberry Pi, DietPi, Termux, or other edge devices, choose the device role explicitly.
+
+For a Raspberry Pi core node:
+
+```bash
+git fetch origin
+git checkout release/v0-local-alpha
+git pull origin release/v0-local-alpha
+./quantm onboard
+```
+
+For a child/worker node:
 
 ```bash
 git fetch origin
@@ -65,7 +76,7 @@ git pull origin release/v0-local-alpha
 ./quantm child doctor
 ```
 
-Bare `./quantm` is the full core/onboarding launcher. On edge devices it prints the child setup guide so the device does not accidentally try to build the full core.
+Bare `./quantm` on an edge device prints the role guide. Explicit `./quantm onboard` always starts core onboarding.
 
 Start a local pairing flow from the core:
 
