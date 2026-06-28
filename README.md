@@ -66,6 +66,13 @@ git pull origin release/v0-local-alpha
 ./quantm onboard
 ```
 
+To inspect the packages and tools used during Pi setup:
+
+```bash
+bash scripts/pi_dependency_audit.sh
+bash scripts/pi_lean_cleanup.sh --dry-run
+```
+
 For a child/worker node:
 
 ```bash
@@ -96,6 +103,7 @@ Release-candidate docs:
 - [Local Alpha Release Notes](docs/local-alpha-release-notes.md)
 - [Known Limitations](docs/known-limitations.md)
 - [Security Boundaries](docs/security-boundaries.md)
+- [Raspberry Pi Edge Dependency Audit](docs/pi-edge-dependency-audit.md)
 - [Feature Matrix](docs/release/local-alpha-feature-matrix.md)
 - [Release Checklist](docs/release/local-alpha-checklist.md)
 

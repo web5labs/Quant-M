@@ -735,6 +735,7 @@ Implementation:
   - `release-core`
   - `release-child`
 - documentation: `docs/edge-runtime-minimization.md`
+- Raspberry Pi dependency audit: `docs/pi-edge-dependency-audit.md`, `scripts/pi_dependency_audit.sh`, `scripts/pi_lean_cleanup.sh`
 
 Child command surface:
 - `quant-m-child pair`

@@ -118,6 +118,15 @@ Expected:
 - no execution authority is granted
 - no provider call is made
 
+To inspect install/build dependencies and cleanup candidates on the Pi:
+
+```bash
+bash scripts/pi_dependency_audit.sh
+bash scripts/pi_lean_cleanup.sh --dry-run
+```
+
+The cleanup script defaults to dry-run. Use `--apply` only after the needed core or child binary has been built and tested.
+
 ## Child Setup
 
 On Termux:
