@@ -432,7 +432,7 @@ Doctor checks:
 Guardrails:
 - pairing approval still creates no role lease
 - pairing approval still grants no execution, approval, canonical write, provider-call, compute-trust, scheduling, trading, or betting authority
-- heartbeat freshness is telemetry only
+- heartbeat freshness is telemetry only and LAN ingest requires the approved paired-node heartbeat auth token
 - `pair doctor` reads fingerprint state and does not create one implicitly
 - no provider calls
 - no scheduling authority

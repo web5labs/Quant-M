@@ -34,7 +34,7 @@ Included local-alpha surfaces:
 - core-side `device add` wizard
 - QR/link pairing and manual fallback
 - manual operator approval
-- heartbeat visibility
+- heartbeat visibility with paired-node auth-token verification
 - device telemetry
 - observe-only lease management
 - echo evidence

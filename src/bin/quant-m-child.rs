@@ -73,6 +73,7 @@ struct ChildCore {
     request_id: Option<String>,
     pairing_status: Option<String>,
     node_id: Option<String>,
+    node_auth_token: Option<String>,
     paired_at: String,
     authority: String,
     execution_enabled: bool,
@@ -123,6 +124,7 @@ struct PairingStatusResponse {
     request_id: String,
     status: String,
     node_id: Option<String>,
+    node_auth_token: Option<String>,
     execution_enabled: bool,
     canonical_write_enabled: bool,
     approval_enabled: bool,
@@ -214,6 +216,7 @@ fn main() -> Result<()> {
                 request_id: Some(response.request_id.clone()),
                 pairing_status: Some(response.status.clone()),
                 node_id: None,
+                node_auth_token: None,
                 paired_at: now(),
                 authority: "observe".to_string(),
                 execution_enabled: response.execution_enabled,
@@ -561,6 +564,9 @@ fn sync_heartbeat_with_core(
     }
     core.pairing_status = Some(status.status.clone());
     core.node_id = status.node_id.clone();
+    if let Some(node_auth_token) = status.node_auth_token {
+        core.node_auth_token = Some(node_auth_token);
+    }
     write_toml(&paths.core, &core)?;
     if status.status != "approved" {
         return Ok(None);
@@ -568,7 +574,10 @@ fn sync_heartbeat_with_core(
     let Some(node_id) = status.node_id else {
         return Ok(None);
     };
-    let response = submit_heartbeat(&core.core_url, &node_id, heartbeat)?;
+    let Some(node_auth_token) = core.node_auth_token.as_deref() else {
+        return Ok(None);
+    };
+    let response = submit_heartbeat(&core.core_url, &node_id, node_auth_token, heartbeat)?;
     Ok(Some(response))
 }
 
@@ -580,10 +589,12 @@ fn fetch_pairing_status(core_url: &str, request_id: &str) -> Result<PairingStatu
 fn submit_heartbeat(
     core_url: &str,
     node_id: &str,
+    node_auth_token: &str,
     heartbeat: &ChildHeartbeat,
 ) -> Result<HeartbeatServerResponse> {
     let payload = serde_json::json!({
         "node_id": node_id,
+        "node_auth_token": node_auth_token,
         "surface": "termux_worker",
         "claimed_capabilities": ["echo", "sleep", "heartbeat", "compute_scalar"],
         "execution_enabled": false,

@@ -14,6 +14,8 @@ Pairing enrolls a known device. It does not assign a role lease, approve proposa
 
 Heartbeat makes a child visible as online or stale. It does not create leases, extend leases, change authority, or mark evidence as trusted.
 
+LAN heartbeat ingest requires the paired child heartbeat auth token issued after operator approval. A node id alone is not enough to mark a child online.
+
 ## Lease
 
 A lease is temporary, explicit, bounded permission. Local alpha leases are observe-only. A child cannot create, modify, extend, or revoke its own lease.
@@ -46,4 +48,3 @@ Replay must prefer scalar truth even when metadata says accelerated compute was 
 - child proposal approval
 - automatic shared-state acceptance
 - public internet pairing exposure
-

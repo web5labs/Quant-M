@@ -125,6 +125,8 @@ pub struct AcceptedPairedNode {
     pub node_id: String,
     pub node_display_name: String,
     pub node_public_key: String,
+    #[serde(default)]
+    pub node_auth_token_hash: String,
     pub accepted_at: String,
     pub accepted_by: String,
     pub initial_desk_id: Option<DeskId>,
@@ -209,6 +211,8 @@ pub struct PairingServerRequestPayload {
 pub struct ClusterHeartbeatServerPayload {
     pub node_id: String,
     #[serde(default)]
+    pub node_auth_token: String,
+    #[serde(default)]
     pub surface: Option<String>,
     #[serde(default)]
     pub claimed_capabilities: Vec<String>,
@@ -227,6 +231,8 @@ pub struct PairingStatusResponse {
     pub request_id: String,
     pub status: PairingRequestStatus,
     pub node_id: Option<String>,
+    #[serde(default)]
+    pub node_auth_token: Option<String>,
     pub execution_enabled: bool,
     pub canonical_write_enabled: bool,
     pub approval_enabled: bool,
@@ -658,10 +664,12 @@ pub fn approve_request(
         .context("invalid paired node surface")?;
     let capabilities = parse_claimed_capabilities(&request.claimed_capabilities)?;
     let node = cluster::register_node(cfg, &request.node_display_name, surface, capabilities)?;
+    let node_auth_token = make_node_auth_token(&request.request_id, &request.node_public_key);
     let accepted = AcceptedPairedNode {
         node_id: node.node_id.to_string(),
         node_display_name: request.node_display_name.clone(),
         node_public_key: request.node_public_key.clone(),
+        node_auth_token_hash: token::hash_token(&node_auth_token),
         accepted_at: now(),
         accepted_by: accepted_by.to_string(),
         initial_desk_id: invite.desk_id,
@@ -1196,6 +1204,7 @@ fn submit_server_cluster_heartbeat(
         .iter()
         .map(|capability| capability.parse())
         .collect::<Result<Vec<_>>>()?;
+    verify_node_auth_token(cfg, &payload.node_id, &payload.node_auth_token)?;
     cluster::heartbeat_with_input(
         cfg,
         cluster::ClusterHeartbeatInput {
@@ -1209,6 +1218,23 @@ fn submit_server_cluster_heartbeat(
             device_telemetry: payload.device_telemetry,
         },
     )
+}
+
+fn verify_node_auth_token(cfg: &Config, node_id: &str, node_auth_token: &str) -> Result<()> {
+    if node_auth_token.trim().is_empty() {
+        return Err(anyhow!("heartbeat missing paired node auth token"));
+    }
+    let accepted = read_jsonl::<AcceptedPairedNode>(PairingPaths::new(cfg).accepted_nodes)?
+        .into_iter()
+        .find(|node| node.node_id == node_id)
+        .ok_or_else(|| anyhow!("heartbeat node is not an accepted paired node"))?;
+    if accepted.node_auth_token_hash.trim().is_empty() {
+        return Err(anyhow!("paired node has no heartbeat auth token"));
+    }
+    if token::hash_token(node_auth_token) != accepted.node_auth_token_hash {
+        return Err(anyhow!("heartbeat node auth token rejected"));
+    }
+    Ok(())
 }
 
 fn write_http_response(
@@ -1421,11 +1447,20 @@ fn pairing_status(cfg: &Config, request_id: &str) -> Result<PairingStatusRespons
         .into_iter()
         .find(|request| request.request_id == request_id)
         .ok_or_else(|| anyhow!("pairing request '{}' not found", request_id))?;
-    let node_id = if request.status == PairingRequestStatus::Approved {
+    let accepted_node = if request.status == PairingRequestStatus::Approved {
         read_jsonl::<AcceptedPairedNode>(PairingPaths::new(cfg).accepted_nodes)?
             .into_iter()
             .find(|node| node.node_public_key == request.node_public_key)
-            .map(|node| node.node_id)
+    } else {
+        None
+    };
+    let node_id = accepted_node.as_ref().map(|node| node.node_id.clone());
+    let node_auth_token = if let Some(node) = accepted_node {
+        if node.node_auth_token_hash.trim().is_empty() {
+            None
+        } else {
+            node_auth_token_for_status(cfg, &request.request_id, &node.node_id)?
+        }
     } else {
         None
     };
@@ -1433,10 +1468,43 @@ fn pairing_status(cfg: &Config, request_id: &str) -> Result<PairingStatusRespons
         request_id: request.request_id,
         status: request.status,
         node_id,
+        node_auth_token,
         execution_enabled: false,
         canonical_write_enabled: false,
         approval_enabled: false,
     })
+}
+
+fn make_node_auth_token(request_id: &str, node_public_key: &str) -> String {
+    format!(
+        "node_auth_{}",
+        token::hash_token(&format!("{request_id}:{node_public_key}:heartbeat-auth"))
+    )
+}
+
+fn node_auth_token_for_status(
+    cfg: &Config,
+    request_id: &str,
+    node_id: &str,
+) -> Result<Option<String>> {
+    let Some(request) = list_requests(cfg)?
+        .into_iter()
+        .find(|request| request.request_id == request_id)
+    else {
+        return Ok(None);
+    };
+    let candidate = make_node_auth_token(request_id, &request.node_public_key);
+    let accepted = read_jsonl::<AcceptedPairedNode>(PairingPaths::new(cfg).accepted_nodes)?
+        .into_iter()
+        .find(|node| node.node_id == node_id);
+    if accepted
+        .as_ref()
+        .is_some_and(|node| token::hash_token(&candidate) == node.node_auth_token_hash)
+    {
+        Ok(Some(candidate))
+    } else {
+        Ok(None)
+    }
 }
 
 fn render_pairing_invite_page(invite: &PairingInvite, invite_token: &str) -> String {
@@ -1730,9 +1798,10 @@ mod tests {
         )
     }
 
-    fn post_cluster_heartbeat(node_id: &str) -> String {
+    fn post_cluster_heartbeat(node_id: &str, node_auth_token: &str) -> String {
         let body = serde_json::to_string(&serde_json::json!({
             "node_id": node_id,
+            "node_auth_token": node_auth_token,
             "surface": "termux_worker",
             "claimed_capabilities": ["echo", "sleep", "heartbeat", "compute_scalar"],
             "execution_enabled": false,
@@ -2074,9 +2143,13 @@ mod tests {
         assert_eq!(response.status_code, 200);
         let request = list_requests(&cfg).expect("requests").remove(0);
         let accepted = approve_request(&cfg, &request.request_id, "operator").expect("approve");
+        let node_auth_token = pairing_status(&cfg, &request.request_id)
+            .expect("pairing status")
+            .node_auth_token
+            .expect("node auth token");
         let response = handle_pairing_http_request(
             &cfg,
-            &post_cluster_heartbeat(&accepted.node_id.to_string()),
+            &post_cluster_heartbeat(&accepted.node_id.to_string(), &node_auth_token),
             None,
         );
         assert_eq!(response.status_code, 200);
@@ -2090,6 +2163,27 @@ mod tests {
         assert!(!status.execution_enabled);
         assert!(!status.approval_enabled);
         assert!(!status.canonical_write_enabled);
+    }
+
+    #[test]
+    fn pair_server_rejects_spoofed_heartbeat_without_node_auth_token() {
+        let (_tmp, cfg) = test_config();
+        let view = invite(&cfg);
+        let response =
+            handle_pairing_http_request(&cfg, &post_pair_request(&server_payload(&view)), None);
+        assert_eq!(response.status_code, 200);
+        let request = list_requests(&cfg).expect("requests").remove(0);
+        let accepted = approve_request(&cfg, &request.request_id, "operator").expect("approve");
+        let response = handle_pairing_http_request(
+            &cfg,
+            &post_cluster_heartbeat(&accepted.node_id.to_string(), "wrong-token"),
+            None,
+        );
+        assert_eq!(response.status_code, 400);
+        assert!(response.body.contains("auth token rejected"));
+        let node_id = accepted.node_id.parse().expect("node id");
+        let status = cluster::node_status(&cfg, &node_id).expect("status");
+        assert!(!status.online);
     }
 
     #[test]
