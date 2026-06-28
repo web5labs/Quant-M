@@ -55,6 +55,18 @@ cargo build --features core-full
 cargo build --bin quant-m-child --profile release-child --no-default-features --features child-min
 ```
 
+On Raspberry Pi, DietPi, Termux, or other edge devices, use the launcher child path instead of bare `./quantm`:
+
+```bash
+git fetch origin
+git checkout release/v0-local-alpha
+git pull origin release/v0-local-alpha
+./quantm child-build
+./quantm child doctor
+```
+
+Bare `./quantm` is the full core/onboarding launcher. On edge devices it prints the child setup guide so the device does not accidentally try to build the full core.
+
 Start a local pairing flow from the core:
 
 ```bash

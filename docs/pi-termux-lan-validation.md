@@ -125,9 +125,12 @@ pkg update
 pkg install git rust clang pkg-config openssl
 git clone <repo-url> quantm
 cd quantm
-cargo build --bin quant-m-child --profile release-child --no-default-features --features child-min
+git fetch origin
+git checkout release/v0-local-alpha
+git pull origin release/v0-local-alpha
+./quantm child-build
 wc -c target/release-child/quant-m-child
-./target/release-child/quant-m-child --workspace workspace doctor
+./quantm child --workspace workspace doctor
 ```
 
 Expected:
@@ -138,6 +141,8 @@ Expected:
 - `canonical_write_enabled: false`
 - `model_router_compiled: false`
 - `provider_adapters_compiled: false`
+
+Do not run bare `./quantm` on an edge child. Bare `./quantm` is the full core/onboarding launcher; edge devices should use `./quantm child ...`.
 - `shared_state_accept_compiled: false`
 - `pairing_server_compiled: false`
 

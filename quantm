@@ -2,22 +2,129 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="$APP_DIR/target/release/quant-m"
+CORE_BIN="$APP_DIR/target/release/quant-m"
+CHILD_BIN="$APP_DIR/target/release-child/quant-m-child"
 
-needs_build=false
-if [[ ! -x "$BIN" ]]; then
-  needs_build=true
-elif [[ -n "$(find "$APP_DIR/src" "$APP_DIR/Cargo.toml" "$APP_DIR/Cargo.lock" -newer "$BIN" -print -quit)" ]]; then
-  needs_build=true
+is_edge_device() {
+  if [[ "${QUANTM_ASSUME_EDGE:-}" == "1" ]]; then
+    return 0
+  fi
+  if [[ -f /boot/dietpi/.version || -f /boot/dietpi/.install_stage ]]; then
+    return 0
+  fi
+  if [[ -r /proc/device-tree/model ]] && tr -d '\0' < /proc/device-tree/model | grep -qi "raspberry pi"; then
+    return 0
+  fi
+  if [[ -n "${TERMUX_VERSION:-}" || -d /data/data/com.termux/files/usr ]]; then
+    return 0
+  fi
+  return 1
+}
+
+print_edge_help() {
+  cat <<'EOF'
+Quant-M edge-device setup detected.
+
+For v0.local-alpha hardware smoke, this device should run the child binary.
+The core/onboarding wizard should run on your laptop or chosen core node.
+
+Recommended edge commands:
+  ./quantm child-build
+  ./quantm child --help
+  ./quantm child doctor
+  ./quantm child pair --core http://<core-lan-ip>:8787 --invite <invite-token>
+  ./quantm child heartbeat
+
+If this device is intentionally the core, run:
+  ./quantm core onboard
+  ./quantm core pair serve --bind 0.0.0.0:8787
+
+Safety: child mode builds quant-m-child with child-min only. It does not enable
+provider calls, proposals, execution, trading, betting, or canonical writes.
+EOF
+}
+
+ensure_release_child_feature() {
+  if ! grep -q '^child-min =' "$APP_DIR/Cargo.toml"; then
+    cat >&2 <<'EOF'
+This checkout does not contain the v0.local-alpha child-min feature.
+
+Run:
+  git fetch origin
+  git checkout release/v0-local-alpha
+  git pull origin release/v0-local-alpha
+EOF
+    exit 2
+  fi
+}
+
+child_needs_build() {
+  [[ ! -x "$CHILD_BIN" ]] && return 0
+  [[ -n "$(find "$APP_DIR/src/bin/quant-m-child.rs" "$APP_DIR/src/device_telemetry.rs" "$APP_DIR/Cargo.toml" "$APP_DIR/Cargo.lock" -newer "$CHILD_BIN" -print -quit)" ]]
+}
+
+core_needs_build() {
+  [[ ! -x "$CORE_BIN" ]] && return 0
+  [[ -n "$(find "$APP_DIR/src" "$APP_DIR/Cargo.toml" "$APP_DIR/Cargo.lock" -newer "$CORE_BIN" -print -quit)" ]]
+}
+
+build_child() {
+  ensure_release_child_feature
+  if child_needs_build; then
+    echo "Building Quant-M child locally..."
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" cargo build \
+      --manifest-path "$APP_DIR/Cargo.toml" \
+      --profile release-child \
+      --bin quant-m-child \
+      --no-default-features \
+      --features child-min
+  fi
+}
+
+build_core() {
+  if core_needs_build; then
+    echo "Building Quant-M core locally..."
+    cargo build --release --manifest-path "$APP_DIR/Cargo.toml" --features core-full
+  fi
+}
+
+case "${1:-}" in
+  child-build|edge-build)
+    build_child
+    echo "Child binary ready: $CHILD_BIN"
+    exit 0
+    ;;
+  child|edge)
+    shift
+    build_child
+    if [[ "$#" -eq 0 ]]; then
+      exec "$CHILD_BIN" --help
+    fi
+    exec "$CHILD_BIN" "$@"
+    ;;
+  core)
+    shift
+    build_core
+    if [[ "$#" -eq 0 ]]; then
+      exec "$CORE_BIN" start
+    fi
+    exec "$CORE_BIN" "$@"
+    ;;
+  edge-help|child-help)
+    print_edge_help
+    exit 0
+    ;;
+esac
+
+if is_edge_device && [[ "$#" -eq 0 || "${1:-}" == "onboard" ]]; then
+  print_edge_help
+  exit 0
 fi
 
-if [[ "$needs_build" == true ]]; then
-  echo "Building Quant-M locally..."
-  cargo build --release --manifest-path "$APP_DIR/Cargo.toml"
-fi
+build_core
 
 if [[ "$#" -eq 0 ]]; then
-  exec "$BIN" start
+  exec "$CORE_BIN" start
 fi
 
-exec "$BIN" "$@"
+exec "$CORE_BIN" "$@"
