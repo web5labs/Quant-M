@@ -72,6 +72,13 @@ On small devices, `./quantm onboard` uses a fast shell onboarding path when the 
 ./quantm core-build
 ```
 
+To clear saved onboarding choices and run the prompts again:
+
+```bash
+./quantm clear-onboarding
+./quantm onboard
+```
+
 To inspect the packages and tools used during Pi setup:
 
 ```bash
@@ -91,17 +98,23 @@ git pull origin release/v0-local-alpha
 
 Bare `./quantm` on an edge device prints the role guide. Explicit `./quantm onboard` always starts core onboarding.
 
-Start a local pairing flow from the core:
+After onboarding, Quant-M offers to print the child-device smoke-test handoff. To run it manually, start the pairing server from the core:
 
 ```bash
-cargo run --features core-full -- device add tablet-01 --desk crypto --role stablecoin_peg_watcher --link --watch --no-server
+./quantm core pair serve --bind 0.0.0.0:8787
+```
+
+Then in a second core terminal:
+
+```bash
+./quantm core device add tablet-01 --desk stablecoin --role stablecoin_peg_watcher --qr --watch --no-server
 ```
 
 On the child device, use the printed link or command from the core. After operator approval, keep the child observe-only and verify heartbeat/telemetry from the core:
 
 ```bash
-cargo run --features core-full -- cluster nodes
-cargo run --features core-full -- cluster report
+./quantm core cluster nodes
+./quantm core cluster report
 ```
 
 Release-candidate docs:

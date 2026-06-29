@@ -92,6 +92,53 @@ normalize_workspace_path() {
   printf "%s\n" "$value"
 }
 
+print_device_smoke_next_steps() {
+  cat <<'EOF'
+
+Child-device smoke test handoff
+This is observe-only. It does not enable trading, betting, providers, proposals, or execution.
+
+Core terminal 1:
+  ./quantm core pair serve --bind 0.0.0.0:8787
+
+Core terminal 2:
+  ./quantm core device add tablet-01 --desk stablecoin --role stablecoin_peg_watcher --qr --watch --no-server
+
+Child device:
+  ./quantm child pair --core http://<core-lan-ip>:8787 --invite <invite-token>
+  ./quantm child heartbeat
+
+Then verify from the core:
+  ./quantm core cluster nodes
+EOF
+}
+
+reset_onboarding() {
+  if [[ ! -f "$APP_DIR/quant-m.toml" ]]; then
+    echo "No saved onboarding config found at $APP_DIR/quant-m.toml"
+    return 0
+  fi
+  local backup="$APP_DIR/quant-m.toml.cleared.$(date +%Y%m%d%H%M%S)"
+  cp "$APP_DIR/quant-m.toml" "$backup"
+  local tmp="$APP_DIR/quant-m.toml.reset.$$"
+  awk '
+    /^onboarding_completed = / { print "onboarding_completed = false"; seen=1; next }
+    { print }
+    END {
+      if (!seen) {
+        print ""
+        print "[preferences]"
+        print "onboarding_completed = false"
+      }
+    }
+  ' "$APP_DIR/quant-m.toml" > "$tmp"
+  mv "$tmp" "$APP_DIR/quant-m.toml"
+  echo "Cleared saved onboarding completion marker."
+  echo "Backup: $backup"
+  echo "Run onboarding again with:"
+  echo "  ./quantm onboard"
+}
+
 write_fast_onboarding_config() {
   local workspace="$1"
   local profile="$2"
@@ -321,9 +368,13 @@ codex_tool_enabled: $codex_enabled
 Next, when you are ready to compile the core:
   ./quantm core-build
 
-Then start the pairing server:
-  ./quantm core pair serve --bind 0.0.0.0:8787
 EOF
+
+  local smoke_choice
+  smoke_choice="$(prompt_choice "Show child-device smoke test commands now?" "1" "Yes" "No")"
+  if [[ "$smoke_choice" == "1" ]]; then
+    print_device_smoke_next_steps
+  fi
 }
 
 ensure_release_child_feature() {
@@ -388,6 +439,10 @@ case "${1:-}" in
   core-onboard)
     build_core
     exec "$CORE_BIN" onboard
+    ;;
+  reset-onboarding|clear-onboarding)
+    reset_onboarding
+    exit 0
     ;;
   child-build|edge-build)
     build_child

@@ -3484,7 +3484,11 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     replace_tools: false,
                 },
             )?;
-            print_setup_report(&report, json)
+            print_setup_report(&report, json)?;
+            if !json {
+                maybe_offer_child_device_smoke_handoff()?;
+            }
+            Ok(())
         }
         Commands::Init {
             non_interactive,
@@ -3823,6 +3827,51 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
             report.openrouter_key_present,
         ),
     )
+}
+
+fn maybe_offer_child_device_smoke_handoff() -> Result<()> {
+    if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+        print_child_device_smoke_handoff(false);
+        return Ok(());
+    }
+    let answer = prompt_numbered_choice(
+        "Set up a child-device smoke test next?",
+        &[
+            ("📱 Show observe-only core/child commands", "show"),
+            ("⏭️ Skip for now", "skip"),
+        ],
+        1,
+    )?;
+    if answer == "show" {
+        print_child_device_smoke_handoff(true);
+    }
+    Ok(())
+}
+
+fn print_child_device_smoke_handoff(with_intro: bool) {
+    let command = quant_m_command_hint();
+    if with_intro {
+        println!();
+    }
+    println!("Child-device smoke test handoff");
+    println!(
+        "This is observe-only. It does not enable trading, betting, providers, proposals, or execution."
+    );
+    println!();
+    println!("Core terminal 1:");
+    println!("  {command} pair serve --bind 0.0.0.0:8787");
+    println!();
+    println!("Core terminal 2:");
+    println!(
+        "  {command} device add tablet-01 --desk stablecoin --role stablecoin_peg_watcher --qr --watch --no-server"
+    );
+    println!();
+    println!("Child device:");
+    println!("  quant-m-child pair --core http://<core-lan-ip>:8787 --invite <invite-token>");
+    println!("  quant-m-child heartbeat");
+    println!();
+    println!("Then verify from the core:");
+    println!("  {command} cluster nodes");
 }
 
 fn run_init_flow(config_path: &std::path::Path, _non_interactive: bool) -> Result<InitReport> {
