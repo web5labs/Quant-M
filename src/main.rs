@@ -156,6 +156,10 @@ enum Commands {
         external_network: Option<String>,
         #[arg(long)]
         context_guardian: Option<String>,
+        #[arg(long)]
+        operator_mode: Option<String>,
+        #[arg(long)]
+        permission_mode: Option<String>,
     },
     Config {
         #[command(subcommand)]
@@ -1444,6 +1448,8 @@ struct SetupReport {
     state_sqlite: PathBuf,
     session_dir: PathBuf,
     runtime_profile: config::RuntimeProfile,
+    operator_mode: config::OperatorMode,
+    permission_mode: config::LocalPermissionMode,
     external_network_enabled: bool,
     multi_model_enabled: bool,
     search_enabled: bool,
@@ -1493,6 +1499,8 @@ struct ToolListItem {
     command: String,
     validation_args: Vec<String>,
     command_present: bool,
+    validation_ok: bool,
+    validated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1504,10 +1512,17 @@ struct SettingsReport {
     search_enabled: bool,
     browser_harness_enabled: bool,
     external_network_enabled: bool,
+    operator_mode: config::OperatorMode,
     context_guardian_enabled: bool,
+    permission_mode: config::LocalPermissionMode,
+    allowed_paths: Vec<PathBuf>,
+    confirm_destructive_actions: bool,
+    allow_shell_commands: bool,
+    allow_network_actions: bool,
     preferred_local_model: Option<config::ModelPreference>,
     preferred_remote_model: Option<config::ModelPreference>,
     preferred_openrouter_model: Option<String>,
+    openrouter_key_present: bool,
     providers: Vec<ProviderListItem>,
     enabled_tools: Vec<String>,
     detected_tools: Vec<String>,
@@ -3480,6 +3495,8 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     session_path: None,
                     external_network: None,
                     context_guardian: None,
+                    operator_mode: None,
+                    permission_mode: None,
                     selected_tools: Vec::new(),
                     replace_tools: false,
                 },
@@ -3526,6 +3543,8 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
             session_path,
             external_network,
             context_guardian,
+            operator_mode,
+            permission_mode,
         } => {
             let report = run_setup_flow(
                 config_path,
@@ -3549,6 +3568,8 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     session_path,
                     external_network,
                     context_guardian,
+                    operator_mode,
+                    permission_mode,
                     selected_tools: Vec::new(),
                     replace_tools: false,
                 },
@@ -3631,6 +3652,8 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
                 session_path: None,
                 external_network: None,
                 context_guardian: None,
+                operator_mode: None,
+                permission_mode: None,
                 selected_tools: Vec::new(),
                 replace_tools: false,
             },
@@ -3646,14 +3669,27 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
     let _truth_report = truth_files::init_truth_files(&cfg, false)?;
 
     print_quant_m_brand_banner();
-    println!("{}", start_chat_message(&init.workspace));
-    tui_shell::run_chat(&cfg, config_path, true)
+    if has_usable_model_or_cli_route(&cfg) {
+        println!("{}", start_chat_message(&init.workspace));
+        tui_shell::run_chat(&cfg, config_path, true)
+    } else {
+        println!("{}", start_readiness_message(&cfg, &init.workspace));
+        Ok(())
+    }
 }
 
 fn start_chat_message(workspace: &Path) -> String {
     format!(
         "Quant-M ready.\nworkspace: {}\n\nOpening the governed Quant-M chat cockpit. Type /help, /state, /cost, /ask, or /quit.\nUse `quant-m shell` for the classic text shell.\n",
         workspace.display()
+    )
+}
+
+fn start_readiness_message(cfg: &Config, workspace: &Path) -> String {
+    format!(
+        "Quant-M workspace ready.\nworkspace: {}\n\nOperator chat is disabled until a model or CLI tool route is usable.\nreadiness: {}\n\nLocal commands still work:\n  quant-m doctor\n  quant-m settings\n  quant-m tool scan\n  quant-m tool validate codex\n  quant-m onboard\n",
+        workspace.display(),
+        readiness_summary(cfg),
     )
 }
 
@@ -3784,19 +3820,25 @@ struct SetupArgs {
     session_path: Option<PathBuf>,
     external_network: Option<String>,
     context_guardian: Option<String>,
+    operator_mode: Option<String>,
+    permission_mode: Option<String>,
     selected_tools: Vec<String>,
     replace_tools: bool,
 }
 
 fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
     let local_model = format_model_pref(report.preferred_local_model.as_ref());
-    let remote_model = format_model_pref(report.preferred_remote_model.as_ref());
+    let remote_model = format_remote_model_status(
+        report.preferred_remote_model.as_ref(),
+        report.openrouter_key_present,
+    );
     let channel = format_channel_pref(&report.preferred_channel);
     let command = quant_m_command_hint();
-    let openrouter_model = report
-        .preferred_openrouter_model
-        .as_deref()
-        .unwrap_or("unset");
+    let openrouter_model = format_openrouter_model_status(
+        report.preferred_openrouter_model.as_deref(),
+        report.openrouter_key_present,
+    );
+    let readiness = setup_readiness_summary(report);
     let tools = if report.enabled_tools.is_empty() {
         "none".to_string()
     } else {
@@ -3806,10 +3848,12 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
         report,
         json,
         &format!(
-            "Setup complete.\nconfig: {}\nworkspace: {}\ndevice_type: {}\nnetwork: {}\noperator_channel: {}\ntools: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command} agent\n  {command} doctor\n  {command} demo\n  {command} context guard",
+            "Workspace setup complete.\nconfig: {}\nworkspace: {}\nruntime_role: {}\noperator_mode: {:?}\npermission_mode: {:?}\nnetwork: {}\noperator_channel: {}\ntools: {}\nreadiness: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command} doctor\n  {command} settings\n  {command} tool scan\n  {command} tool validate codex\n  {command} onboard",
             report.config.display(),
             report.workspace.display(),
             runtime_profile_label(report.runtime_profile),
+            report.operator_mode,
+            report.permission_mode,
             if report.external_network_enabled {
                 "enabled"
             } else {
@@ -3817,6 +3861,7 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
             },
             channel,
             tools,
+            readiness,
             enabled_label(report.multi_model_enabled),
             enabled_label(report.search_enabled),
             enabled_label(report.browser_harness_enabled),
@@ -3921,6 +3966,12 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     if let Some(runtime_profile) = args.runtime_profile {
         cfg.runtime.profile = runtime_profile.parse()?;
     }
+    if let Some(operator_mode) = args.operator_mode {
+        cfg.runtime.operator_mode = operator_mode.parse()?;
+    }
+    if let Some(permission_mode) = args.permission_mode {
+        cfg.local_permissions.permission_mode = permission_mode.parse()?;
+    }
     if let Some(external_network) = args.external_network {
         cfg.runtime.external_network_enabled = parse_enabled_disabled(&external_network)?;
     }
@@ -4017,6 +4068,8 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
         state_sqlite: cfg.state_sql.sqlite_path.clone(),
         session_dir: cfg.runtime.session_dir.clone(),
         runtime_profile: cfg.runtime.profile,
+        operator_mode: cfg.runtime.operator_mode,
+        permission_mode: cfg.local_permissions.permission_mode,
         external_network_enabled: cfg.runtime.external_network_enabled,
         multi_model_enabled: cfg.runtime.multi_model_enabled,
         search_enabled: cfg.runtime.search_enabled,
@@ -4074,14 +4127,19 @@ fn run_interactive_setup(
     }
 
     if args.runtime_profile.is_none() {
-        print_onboarding_section("2", "Device", "Pick the closest runtime profile.");
+        print_onboarding_section(
+            "2",
+            "Runtime role",
+            "Pick what this Quant-M node should do.",
+        );
         args.runtime_profile = Some(prompt_numbered_choice(
-            "Choose this device type.",
+            "Choose this Quant-M runtime role.",
             &[
-                ("💻 Laptop or desktop", "laptop"),
-                ("📱 Phone / Termux / edge device", "edge"),
-                ("🏢 Staff-OS worker node", "staff-os-worker"),
-                ("🖥️ VPS / server", "vps"),
+                ("Solo local Quant-M node", "laptop"),
+                ("Agent cluster / core node", "laptop"),
+                ("Join existing cluster as child worker", "edge"),
+                ("Staff-OS worker", "staff-os-worker"),
+                ("VPS / server node", "vps"),
             ],
             1,
         )?);
@@ -4114,32 +4172,30 @@ fn run_interactive_setup(
         "Quant-M can run with no model selected. Remote and local models are optional.",
     );
     let model_provider = prompt_numbered_choice(
-        "Do you have an OpenRouter API key?",
+        "How should Quant-M think or act when it needs a model/tool?",
         &[
-            ("⏭️ No, none for now", "skip"),
-            ("🔑 Yes, use OPENROUTER_API_KEY from my environment", "env"),
-            ("💾 Yes, paste and save a key locally", "save"),
-            ("📋 Not yet, show me the export command", "export"),
+            ("No model yet, setup only", "skip"),
+            ("Local model, such as Ollama or LM Studio", "local"),
+            ("Provider API key, such as OpenRouter", "env"),
+            ("CLI agent tool, such as Codex", "cli"),
+            ("Demo/mock mode only", "demo"),
         ],
         1,
     )?;
     match model_provider.as_str() {
         "skip" => {}
+        "local" => {
+            println!("Local model details come next. Quant-M records names only.");
+        }
         "env" => {
             args.enable_openrouter = true;
             println!("Quant-M will read OPENROUTER_API_KEY from your environment when needed.");
         }
-        "save" => {
-            println!(
-                "This stores the key in local quant-m.toml. Prefer env vars on shared machines."
-            );
-            let key = prompt_secret_like("Paste OpenRouter API key to save locally")?;
-            if !key.trim().is_empty() {
-                args.openrouter_api_key = Some(key);
-            }
+        "cli" => {
+            println!("CLI tool selection comes next. Selected tools must still validate.");
         }
-        "export" => {
-            println!("Run: export OPENROUTER_API_KEY='<your-openrouter-key>'");
+        "demo" => {
+            println!("Demo mode uses local mock workflows and does not require a model.");
         }
         _ => unreachable!("choice is constrained"),
     }
@@ -4271,9 +4327,44 @@ fn run_interactive_setup(
         println!("Validate any selected tool later with: {command} tool validate <tool>");
     }
 
-    if args.channel.is_none() {
+    if args.permission_mode.is_none() {
         print_onboarding_section(
             "6",
+            "Local permissions",
+            "Choose what local file and shell work Quant-M may do.",
+        );
+        args.permission_mode = Some(prompt_numbered_choice(
+            "Local permission mode.",
+            &[
+                ("Read-only", "read_only"),
+                ("Workspace write", "workspace_write"),
+                ("Allowlisted folders", "allowlisted_paths"),
+                ("Trusted local mode", "trusted_local"),
+                ("Ask me each time", "ask_each_time"),
+            ],
+            1,
+        )?);
+        println!(
+            "{}Local permissions do not enable broker execution, live trading, child approval authority, or core FSM bypass.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+    }
+
+    if args.operator_mode.is_none() {
+        args.operator_mode = Some(prompt_numbered_choice(
+            "Operator mode.",
+            &[
+                ("Fast", "fast"),
+                ("Balanced", "balanced"),
+                ("Governed", "governed"),
+            ],
+            2,
+        )?);
+    }
+
+    if args.channel.is_none() {
+        print_onboarding_section(
+            "7",
             "Operator channel",
             "Choose the default way Quant-M talks to you.",
         );
@@ -4304,7 +4395,7 @@ fn run_interactive_setup(
 
     if args.context_guardian.is_none() {
         print_onboarding_section(
-            "7",
+            "8",
             "Continuity",
             "Keep long sessions recoverable with local handoff packets.",
         );
@@ -4338,13 +4429,16 @@ fn run_interactive_setup(
     }
 
     println!();
-    println!("{}{}✓ Setup complete.{}", ANSI_BOLD, ANSI_GREEN, ANSI_RESET);
+    println!(
+        "{}{}✓ Workspace setup complete.{}",
+        ANSI_BOLD, ANSI_GREEN, ANSI_RESET
+    );
     println!("Config will be written to: {}", config_path.display());
     println!("{}Next:{}", ANSI_UNDERLINE, ANSI_RESET);
     let command = quant_m_command_hint();
-    println!("  {command} agent");
     println!("  {command} doctor");
-    println!("  {command} demo");
+    println!("  {command} settings");
+    println!("  {command} tool scan");
     Ok(args)
 }
 
@@ -4433,6 +4527,8 @@ fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
         "none"
     };
     let channel = args.channel.as_deref().unwrap_or("none");
+    let operator_mode = args.operator_mode.as_deref().unwrap_or("balanced");
+    let permission_mode = args.permission_mode.as_deref().unwrap_or("read_only");
     let context_guardian = match args.context_guardian.as_deref() {
         Some("disabled") => "disabled",
         _ => "enabled",
@@ -4444,7 +4540,15 @@ fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
         ANSI_CYAN, ANSI_RESET
     );
     println!("{}│{} workspace       {}", ANSI_CYAN, ANSI_RESET, workspace);
-    println!("{}│{} device_type     {}", ANSI_CYAN, ANSI_RESET, profile);
+    println!("{}│{} runtime_role    {}", ANSI_CYAN, ANSI_RESET, profile);
+    println!(
+        "{}│{} operator_mode   {}",
+        ANSI_CYAN, ANSI_RESET, operator_mode
+    );
+    println!(
+        "{}│{} permissions     {}",
+        ANSI_CYAN, ANSI_RESET, permission_mode
+    );
     println!("{}│{} network         {}", ANSI_CYAN, ANSI_RESET, network);
     println!(
         "{}│{} model_provider  {}",
@@ -4489,6 +4593,8 @@ fn restart_interactive_args(args: &SetupArgs) -> SetupArgs {
         session_path: None,
         external_network: None,
         context_guardian: None,
+        operator_mode: None,
+        permission_mode: None,
         selected_tools: Vec::new(),
         replace_tools: args.replace_tools,
     }
@@ -5177,16 +5283,6 @@ fn prompt_choice(label: &str, default: &str, allowed: &[&str]) -> Result<String>
     }
 }
 
-fn prompt_secret_like(label: &str) -> Result<String> {
-    print!("{label}: ");
-    io::stdout().flush().context("failed to flush prompt")?;
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .context("failed to read setup secret")?;
-    Ok(strip_terminal_escape_input(input.trim()))
-}
-
 fn prompt_developer_tools(cfg: &Config) -> Result<Vec<String>> {
     let options = developer_tool_menu_options();
     println!();
@@ -5537,12 +5633,14 @@ fn handle_tool_command(config_path: &std::path::Path, command: ToolCommand) -> R
             } else {
                 for item in items {
                     println!(
-                        "{} enabled={} kind={:?} command={} present={} validation_args={}",
+                        "{} enabled={} kind={:?} command={} present={} validation_ok={} validated_at={} validation_args={}",
                         item.id,
                         item.enabled,
                         item.kind,
                         item.command,
                         item.command_present,
+                        item.validation_ok,
+                        item.validated_at.as_deref().unwrap_or("never"),
                         if item.validation_args.is_empty() {
                             "none".to_string()
                         } else {
@@ -5583,7 +5681,9 @@ fn handle_tool_command(config_path: &std::path::Path, command: ToolCommand) -> R
             Ok(())
         }
         ToolCommand::Validate { tool, json } => {
-            let report = validate_tool(&cfg, &tool)?;
+            let report = validate_tool(&mut cfg, &tool)?;
+            cfg.validate()?;
+            cfg.save(config_path)?;
             print_serialized_or_text(&report, json, &format_tool_report(&report))
         }
     }
@@ -5710,10 +5810,18 @@ fn settings_report(cfg: &Config, config_path: &std::path::Path) -> SettingsRepor
         search_enabled: cfg.runtime.search_enabled,
         browser_harness_enabled: cfg.runtime.browser_harness_enabled,
         external_network_enabled: cfg.runtime.external_network_enabled,
+        operator_mode: cfg.runtime.operator_mode,
         context_guardian_enabled: cfg.context_guardian.enabled,
+        permission_mode: cfg.local_permissions.permission_mode,
+        allowed_paths: cfg.local_permissions.allowed_paths.clone(),
+        confirm_destructive_actions: cfg.local_permissions.confirm_destructive_actions,
+        allow_shell_commands: cfg.local_permissions.allow_shell_commands,
+        allow_network_actions: cfg.local_permissions.allow_network_actions,
         preferred_local_model: cfg.preferences.preferred_local_model.clone(),
         preferred_remote_model: cfg.preferences.preferred_remote_model.clone(),
         preferred_openrouter_model: cfg.preferences.preferred_openrouter_model.clone(),
+        openrouter_key_present: provider_key_present(cfg, "openrouter")
+            || cfg.resolve_llm_api_key().is_some(),
         providers: list_providers(cfg),
         enabled_tools: enabled_tool_ids(cfg),
         detected_tools: scan_supported_developer_tools(cfg)
@@ -5738,6 +5846,16 @@ fn format_settings_report(report: &SettingsReport) -> String {
     } else {
         report.detected_tools.join(", ")
     };
+    let allowed_paths = if report.allowed_paths.is_empty() {
+        "none".to_string()
+    } else {
+        report
+            .allowed_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     let providers = if report.providers.is_empty() {
         "none".to_string()
     } else {
@@ -5760,16 +5878,25 @@ fn format_settings_report(report: &SettingsReport) -> String {
             .join(" | ")
     };
     format!(
-        "Settings\nconfig: {}\nworkspace: {}\nsession_dir: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nproviders: {}\nmulti_model_enabled: {}\nsearch_enabled: {}\nbrowser_harness_enabled: {}\nexternal_network_enabled: {}\ncontext_guardian_enabled: {}\nenabled_tools: {}\ndetected_tools: {}\n\nChange model settings:\n  quant-m onboard\n  quant-m setup --local-model-provider ollama --local-model <name>\n  quant-m config set-model openrouter <model-id>\n  quant-m config clear-model [local|remote|openrouter|all]\n\nOther next steps:\n  quant-m provider list\n  quant-m tool scan\n  quant-m context guard",
+        "Settings\nconfig: {}\nworkspace: {}\nsession_dir: {}\noperator_mode: {:?}\npermission_mode: {:?}\nallowed_paths: {}\nconfirm_destructive_actions: {}\nallow_shell_commands: {}\nallow_network_actions: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nproviders: {}\nmulti_model_enabled: {}\nsearch_enabled: {}\nbrowser_harness_enabled: {}\nexternal_network_enabled: {}\ncontext_guardian_enabled: {}\nenabled_tools: {}\ndetected_tools: {}\n\nChange model settings:\n  quant-m onboard\n  quant-m setup --local-model-provider ollama --local-model <name>\n  quant-m config set-model openrouter <model-id>\n  quant-m config clear-model [local|remote|openrouter|all]\n\nPermissions:\n  /permissions\n  /allow-all\n  /allow-path ~/Desktop\n\nOther next steps:\n  quant-m provider list\n  quant-m tool scan\n  quant-m tool validate codex\n  quant-m context guard",
         report.config.display(),
         report.workspace.display(),
         report.session_dir.display(),
+        report.operator_mode,
+        report.permission_mode,
+        allowed_paths,
+        report.confirm_destructive_actions,
+        report.allow_shell_commands,
+        report.allow_network_actions,
         format_model_pref(report.preferred_local_model.as_ref()),
-        format_model_pref(report.preferred_remote_model.as_ref()),
-        report
-            .preferred_openrouter_model
-            .as_deref()
-            .unwrap_or("unset"),
+        format_remote_model_status(
+            report.preferred_remote_model.as_ref(),
+            report.openrouter_key_present,
+        ),
+        format_openrouter_model_status(
+            report.preferred_openrouter_model.as_deref(),
+            report.openrouter_key_present,
+        ),
         providers,
         enabled_label(report.multi_model_enabled),
         enabled_label(report.search_enabled),
@@ -5918,6 +6045,8 @@ fn list_tools(cfg: &Config) -> Vec<ToolListItem> {
             command: tool.command.clone(),
             validation_args: tool.validation_args.clone(),
             command_present: command_present(&tool.command),
+            validation_ok: tool.validation_ok,
+            validated_at: tool.validated_at.clone(),
         })
         .collect()
 }
@@ -6013,40 +6142,52 @@ async fn validate_provider(
     Ok(report)
 }
 
-fn validate_tool(cfg: &Config, tool_id: &str) -> Result<ToolValidationReport> {
+fn validate_tool(cfg: &mut Config, tool_id: &str) -> Result<ToolValidationReport> {
     let id = normalize_registry_id(tool_id);
     let tool = cfg
         .tools
         .get(&id)
         .with_context(|| format!("unknown tool '{}'", tool_id))?;
-    let command_present = command_present(&tool.command);
+    let command = tool.command.clone();
+    let validation_args = tool.validation_args.clone();
+    let enabled = tool.enabled;
+    let kind = tool.kind;
+    let command_present = command_present(&command);
     if !command_present {
+        if let Some(tool) = cfg.tools.get_mut(&id) {
+            tool.validation_ok = false;
+            tool.validated_at = Some(now_unix_seconds_string());
+        }
         return Ok(ToolValidationReport {
             id,
-            enabled: tool.enabled,
-            kind: tool.kind,
-            command: tool.command.clone(),
+            enabled,
+            kind,
+            command,
             command_present,
             validation_ok: false,
             message: "command not found on PATH".to_string(),
         });
     }
 
-    let output = Command::new(&tool.command)
-        .args(&tool.validation_args)
+    let output = Command::new(&command)
+        .args(&validation_args)
         .output()
-        .with_context(|| format!("failed to run {}", tool.command))?;
+        .with_context(|| format!("failed to run {}", command))?;
     let validation_ok = output.status.success();
+    if let Some(tool) = cfg.tools.get_mut(&id) {
+        tool.validation_ok = validation_ok;
+        tool.validated_at = Some(now_unix_seconds_string());
+    }
     let message = if validation_ok {
-        "tool responded to safe validation command".to_string()
+        "tool responded to safe validation command; readiness cached".to_string()
     } else {
         format!("tool exited with status {}", output.status)
     };
     Ok(ToolValidationReport {
         id,
-        enabled: tool.enabled,
-        kind: tool.kind,
-        command: tool.command.clone(),
+        enabled,
+        kind,
+        command,
         command_present,
         validation_ok,
         message,
@@ -6056,6 +6197,74 @@ fn validate_tool(cfg: &Config, tool_id: &str) -> Result<ToolValidationReport> {
 fn provider_key_present(cfg: &Config, id: &str) -> bool {
     let id = normalize_registry_id(id);
     cfg.providers.get(&id).and_then(provider_api_key).is_some()
+}
+
+fn has_usable_model_or_cli_route(cfg: &Config) -> bool {
+    cfg.preferences.preferred_local_model.is_some()
+        || cfg.resolve_llm_api_key().is_some()
+        || cfg
+            .preferences
+            .preferred_remote_model
+            .as_ref()
+            .is_some_and(|pref| remote_provider_key_present(cfg, &pref.provider))
+        || cfg
+            .tools
+            .iter()
+            .any(|(_id, tool)| tool.enabled && tool.validation_ok)
+}
+
+fn readiness_summary(cfg: &Config) -> String {
+    if has_usable_model_or_cli_route(cfg) {
+        return "ready: at least one model or CLI tool route is available".to_string();
+    }
+    "not_ready: no local model, provider API key, or selected CLI command detected".to_string()
+}
+
+fn setup_readiness_summary(report: &SetupReport) -> String {
+    if report.preferred_local_model.is_some() {
+        return "ready: local model preference recorded".to_string();
+    }
+    if report.openrouter_key_present {
+        return "ready: provider key present".to_string();
+    }
+    if !report.enabled_tools.is_empty() {
+        return "selected_but_not_ready: validate selected CLI tools before using chat".to_string();
+    }
+    "not_ready: workspace configured, no model or CLI route selected".to_string()
+}
+
+fn remote_provider_key_present(cfg: &Config, provider_id: &str) -> bool {
+    let id = normalize_registry_id(provider_id);
+    if id == "openrouter" && cfg.resolve_llm_api_key().is_some() {
+        return true;
+    }
+    provider_key_present(cfg, &id)
+}
+
+fn format_remote_model_status(
+    value: Option<&config::ModelPreference>,
+    openrouter_key_present: bool,
+) -> String {
+    match value {
+        Some(pref)
+            if pref.provider.eq_ignore_ascii_case("openrouter") && !openrouter_key_present =>
+        {
+            format!(
+                "{} {} (not ready: missing OPENROUTER_API_KEY)",
+                pref.provider, pref.model
+            )
+        }
+        Some(pref) => format!("{} {}", pref.provider, pref.model),
+        None => "unset".to_string(),
+    }
+}
+
+fn format_openrouter_model_status(value: Option<&str>, key_present: bool) -> String {
+    match (value, key_present) {
+        (Some(model), true) => model.to_string(),
+        (Some(model), false) => format!("{model} (not ready: missing OPENROUTER_API_KEY)"),
+        (None, _) => "unset".to_string(),
+    }
 }
 
 fn provider_api_key(provider: &config::ProviderConfig) -> Option<String> {
@@ -6080,6 +6289,13 @@ fn command_present(command: &str) -> bool {
         return false;
     };
     env::split_paths(&path).any(|dir| dir.join(command).is_file())
+}
+
+fn now_unix_seconds_string() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 fn normalize_registry_id(value: &str) -> String {
@@ -6805,6 +7021,8 @@ mod tests {
                 session_path: Some(tmp.path().join("portable-workspace/state/sessions")),
                 external_network: Some("disabled".to_string()),
                 context_guardian: Some("disabled".to_string()),
+                operator_mode: None,
+                permission_mode: None,
                 selected_tools: Vec::new(),
                 replace_tools: false,
             },
@@ -6984,6 +7202,61 @@ mod tests {
     }
 
     #[test]
+    fn start_flow_reports_readiness_when_no_model_route_exists() {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = Config::default();
+        cfg.preferences.onboarding_completed = true;
+        let message = start_readiness_message(&cfg, tmp.path());
+
+        assert!(message.contains("Operator chat is disabled"));
+        assert!(message.contains("not_ready"));
+        assert!(message.contains("quant-m doctor"));
+    }
+
+    #[test]
+    fn enabled_but_unvalidated_cli_is_not_a_chat_route() {
+        let mut cfg = Config::default();
+        enable_tool(&mut cfg, "codex");
+        {
+            let codex = cfg.tools.get_mut("codex").expect("codex tool");
+            codex.command = "definitely-not-installed-quantm-test-tool".to_string();
+            codex.validation_ok = false;
+        }
+
+        assert!(!has_usable_model_or_cli_route(&cfg));
+
+        cfg.tools
+            .get_mut("codex")
+            .expect("codex tool")
+            .validation_ok = true;
+        assert!(has_usable_model_or_cli_route(&cfg));
+    }
+
+    #[test]
+    fn tool_validation_caches_readiness_without_rescanning_chat() {
+        let mut cfg = Config::default();
+        cfg.tools.insert(
+            "test-true".to_string(),
+            config::ToolConfig {
+                enabled: true,
+                kind: config::ToolKind::Codex,
+                command: "true".to_string(),
+                validation_args: Vec::new(),
+                validation_ok: false,
+                validated_at: None,
+            },
+        );
+
+        let report = validate_tool(&mut cfg, "test-true").expect("validate true tool");
+
+        assert!(report.validation_ok);
+        let tool = cfg.tools.get("test-true").expect("test tool");
+        assert!(tool.validation_ok);
+        assert!(tool.validated_at.is_some());
+        assert!(has_usable_model_or_cli_route(&cfg));
+    }
+
+    #[test]
     fn demo_command_parses() {
         let cli = Cli::try_parse_from(["quant-m"]).expect("parse default start");
         assert!(cli.command.is_none());
@@ -7106,6 +7379,8 @@ mod tests {
                 session_path: None,
                 external_network: None,
                 context_guardian: None,
+                operator_mode: None,
+                permission_mode: None,
                 selected_tools: vec!["openai".to_string()],
                 replace_tools: true,
             },
@@ -7230,6 +7505,8 @@ mod tests {
                 session_path: None,
                 external_network: None,
                 context_guardian: None,
+                operator_mode: None,
+                permission_mode: None,
                 selected_tools: Vec::new(),
                 replace_tools: false,
             },

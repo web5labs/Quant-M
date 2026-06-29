@@ -1,4 +1,4 @@
-use crate::config::{ChannelPreference, Config, ModelPreference};
+use crate::config::{ChannelPreference, Config, LocalPermissionMode, ModelPreference};
 use crate::cost_ledger;
 use crate::domain;
 use crate::execution_runtime::{self, WorkflowRunResult};
@@ -13,14 +13,13 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_VISIBLE_ITEMS: usize = 8;
 const MOCK_RESEARCH_WORKFLOW: &str = "workflow:mock-research-brief";
-const CHAT_INPUT_HINT: &str =
-    "/help /state [domain] /cost [session] /replay <session> /ask <question> /refresh /quit";
+const CHAT_INPUT_HINT: &str = "/help /status /permissions /allow-all /allow-path <path> /state [domain] /cost [session] /replay <session> /ask <question> /refresh /quit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TuiView {
@@ -88,6 +87,11 @@ enum TuiAction {
     Help,
     Quit,
     Refresh,
+    Status,
+    Permissions,
+    PermissionsReset,
+    AllowAll { persist: bool },
+    AllowPath { path: String },
     ShowState { domain: Option<String> },
     ShowCost { session_id: Option<String> },
     Replay { session_id: String },
@@ -138,7 +142,7 @@ struct ChatApp {
     snapshot: TuiSnapshot,
 }
 
-pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> {
+pub fn run_chat(cfg: &Config, config_path: &Path, inspect: bool) -> Result<()> {
     let mut app = ChatApp {
         inspect_only: inspect,
         messages: initial_chat_messages(inspect),
@@ -148,7 +152,7 @@ pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> 
     };
 
     let mut terminal = ratatui::init();
-    let result = run_chat_app(&mut terminal, cfg, &mut app);
+    let result = run_chat_app(&mut terminal, cfg, config_path, &mut app);
     ratatui::restore();
     result
 }
@@ -168,7 +172,12 @@ fn initial_chat_messages(inspect: bool) -> Vec<ChatMessage> {
     }]
 }
 
-fn run_chat_app(terminal: &mut DefaultTerminal, cfg: &Config, app: &mut ChatApp) -> Result<()> {
+fn run_chat_app(
+    terminal: &mut DefaultTerminal,
+    cfg: &Config,
+    config_path: &Path,
+    app: &mut ChatApp,
+) -> Result<()> {
     loop {
         terminal.draw(|frame| render_chat(frame, app))?;
         if event::poll(Duration::from_millis(200))? {
@@ -193,7 +202,7 @@ fn run_chat_app(terminal: &mut DefaultTerminal, cfg: &Config, app: &mut ChatApp)
                         if action == TuiAction::Quit {
                             break Ok(());
                         }
-                        handle_tui_action(cfg, app, action);
+                        handle_tui_action(cfg, config_path, app, action);
                     }
                     KeyCode::Backspace => {
                         app.input.pop();
@@ -221,6 +230,23 @@ fn parse_tui_action(input: &str) -> TuiAction {
     match command.to_ascii_lowercase().as_str() {
         "/quit" | "/exit" => return TuiAction::Quit,
         "/help" | "?" => return TuiAction::Help,
+        "/status" => return TuiAction::Status,
+        "/permissions" => {
+            if rest.trim() == "reset" {
+                return TuiAction::PermissionsReset;
+            }
+            return TuiAction::Permissions;
+        }
+        "/allow-all" => {
+            return TuiAction::AllowAll {
+                persist: rest.trim() == "--persist",
+            };
+        }
+        "/allow-path" => {
+            return TuiAction::AllowPath {
+                path: rest.trim().to_string(),
+            };
+        }
         "/refresh" => return TuiAction::Refresh,
         "/state" => {
             let domain = rest.trim();
@@ -261,6 +287,11 @@ fn storage_mode_for_action(action: &TuiAction) -> TuiStorageMode {
         TuiAction::Help
         | TuiAction::Quit
         | TuiAction::Refresh
+        | TuiAction::Status
+        | TuiAction::Permissions
+        | TuiAction::PermissionsReset
+        | TuiAction::AllowAll { .. }
+        | TuiAction::AllowPath { .. }
         | TuiAction::ShowState { .. }
         | TuiAction::ShowCost { .. }
         | TuiAction::Replay { .. }
@@ -269,7 +300,7 @@ fn storage_mode_for_action(action: &TuiAction) -> TuiStorageMode {
     }
 }
 
-fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
+fn handle_tui_action(cfg: &Config, config_path: &Path, app: &mut ChatApp, action: TuiAction) {
     let storage_mode = storage_mode_for_action(&action);
     if app.inspect_only && storage_mode != TuiStorageMode::InspectOnly {
         app.messages.push(ChatMessage {
@@ -309,6 +340,110 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                 body: format!("Refresh failed: {err}"),
             },
         },
+        TuiAction::Status => ChatMessage {
+            kind: ChatMessageKind::DisplayOnlyNote,
+            storage_mode,
+            body: format!(
+                "runtime_profile: {:?}\noperator_mode: {:?}\npermission_mode: {:?}\nmodel_route: local={} openrouter={}\nprovider_calls: none",
+                cfg.runtime.profile,
+                cfg.runtime.operator_mode,
+                cfg.local_permissions.permission_mode,
+                cfg.preferences.preferred_local_model.is_some(),
+                cfg.resolve_llm_api_key().is_some()
+            ),
+        },
+        TuiAction::Permissions => ChatMessage {
+            kind: ChatMessageKind::PolicyDecision,
+            storage_mode,
+            body: format!(
+                "permission_mode: {:?}\nallowed_paths: {}\nallow_shell_commands: {}\nallow_network_actions: {}\n\nLocal permission commands are handled before model routing. Broker execution, live trading, and cluster authority remain separately gated.",
+                cfg.local_permissions.permission_mode,
+                format_allowed_paths(cfg),
+                cfg.local_permissions.allow_shell_commands,
+                cfg.local_permissions.allow_network_actions,
+            ),
+        },
+        TuiAction::PermissionsReset => {
+            match Config::load_or_create(config_path).and_then(|mut cfg| {
+                cfg.local_permissions.permission_mode = LocalPermissionMode::ReadOnly;
+                cfg.local_permissions.allowed_paths.clear();
+                cfg.local_permissions.allow_shell_commands = false;
+                cfg.local_permissions.allow_network_actions = false;
+                let cfg = cfg.sanitize();
+                cfg.validate()?;
+                cfg.save(config_path)
+            }) {
+                Ok(()) => ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: "Local permissions reset to read_only.".to_string(),
+                },
+                Err(err) => ChatMessage {
+                    kind: ChatMessageKind::Error,
+                    storage_mode,
+                    body: format!("Failed to reset permissions: {err}"),
+                },
+            }
+        }
+        TuiAction::AllowAll { persist } => {
+            if persist {
+                match Config::load_or_create(config_path).and_then(|mut cfg| {
+                    cfg.local_permissions.permission_mode =
+                        LocalPermissionMode::AllowAllPersistent;
+                    cfg.local_permissions.allow_shell_commands = true;
+                    let cfg = cfg.sanitize();
+                    cfg.validate()?;
+                    cfg.save(config_path)
+                }) {
+                    Ok(()) => ChatMessage {
+                        kind: ChatMessageKind::PolicyDecision,
+                        storage_mode,
+                        body: "Local file and shell permissions are persistently allowed. Broker execution, live trading, and cluster authority remain separately gated.".to_string(),
+                    },
+                    Err(err) => ChatMessage {
+                        kind: ChatMessageKind::Error,
+                        storage_mode,
+                        body: format!("Failed to persist permission mode: {err}"),
+                    },
+                }
+            } else {
+                ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: "Local file and shell permissions are allowed for this TUI session. Broker execution, live trading, and cluster authority remain separately gated.".to_string(),
+                }
+            }
+        }
+        TuiAction::AllowPath { path } if path.trim().is_empty() => ChatMessage {
+            kind: ChatMessageKind::Error,
+            storage_mode,
+            body: "Usage: /allow-path <path>".to_string(),
+        },
+        TuiAction::AllowPath { path } => {
+            match Config::load_or_create(config_path).and_then(|mut cfg| {
+                cfg.local_permissions.permission_mode = LocalPermissionMode::AllowlistedPaths;
+                cfg.local_permissions
+                    .allowed_paths
+                    .push(PathBuf::from(path.trim()));
+                let cfg = cfg.sanitize();
+                cfg.validate()?;
+                cfg.save(config_path)
+            }) {
+                Ok(()) => ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: format!(
+                        "Allowed local writes under {}. Broker execution, live trading, and cluster authority remain separately gated.",
+                        path.trim()
+                    ),
+                },
+                Err(err) => ChatMessage {
+                    kind: ChatMessageKind::Error,
+                    storage_mode,
+                    body: format!("Failed to allow path: {err}"),
+                },
+            }
+        }
         TuiAction::ShowState { domain } => match state_review::review_state(cfg, domain.as_deref())
         {
             Ok(report) => ChatMessage {
@@ -698,11 +833,7 @@ fn collect_snapshot(cfg: &Config) -> Result<TuiSnapshot> {
         preferred_local_model: format_model_preference(
             cfg.preferences.preferred_local_model.as_ref(),
         ),
-        preferred_openrouter_model: cfg
-            .preferences
-            .preferred_openrouter_model
-            .clone()
-            .unwrap_or_else(|| "unset".to_string()),
+        preferred_openrouter_model: format_openrouter_snapshot_status(cfg),
         session_count: sessions.len(),
         shared_state_count: shared_state_rows.len(),
         available_domains: domains,
@@ -1041,6 +1172,27 @@ fn format_model_preference(preference: Option<&ModelPreference>) -> String {
         .unwrap_or_else(|| "unset".to_string())
 }
 
+fn format_allowed_paths(cfg: &Config) -> String {
+    if cfg.local_permissions.allowed_paths.is_empty() {
+        "none".to_string()
+    } else {
+        cfg.local_permissions
+            .allowed_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn format_openrouter_snapshot_status(cfg: &Config) -> String {
+    match cfg.preferences.preferred_openrouter_model.as_deref() {
+        Some(model) if cfg.resolve_llm_api_key().is_some() => model.to_string(),
+        Some(model) => format!("{model} (not ready: missing OPENROUTER_API_KEY)"),
+        None => "unset".to_string(),
+    }
+}
+
 #[allow(dead_code)]
 fn format_channel_preference(preference: &ChannelPreference) -> String {
     match &preference.value {
@@ -1118,6 +1270,22 @@ mod tests {
                 question: "what evidence exists?".to_string()
             }
         );
+        assert_eq!(parse_tui_action("/status"), TuiAction::Status);
+        assert_eq!(parse_tui_action("/permissions"), TuiAction::Permissions);
+        assert_eq!(
+            parse_tui_action("/allow-all"),
+            TuiAction::AllowAll { persist: false }
+        );
+        assert_eq!(
+            parse_tui_action("/allow-all --persist"),
+            TuiAction::AllowAll { persist: true }
+        );
+        assert_eq!(
+            parse_tui_action("/allow-path ~/Desktop"),
+            TuiAction::AllowPath {
+                path: "~/Desktop".to_string()
+            }
+        );
     }
 
     #[test]
@@ -1154,6 +1322,7 @@ mod tests {
 
         handle_tui_action(
             &cfg,
+            &tmp.path().join("quant-m.toml"),
             &mut app,
             TuiAction::ConsensusDryRun {
                 prompt: "should this write?".to_string(),
@@ -1199,6 +1368,7 @@ mod tests {
 
         handle_tui_action(
             &cfg,
+            &tmp.path().join("quant-m.toml"),
             &mut app,
             TuiAction::AskInspect {
                 question: "summarize evidence".to_string(),

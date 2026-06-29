@@ -42,6 +42,8 @@ pub struct Config {
     #[serde(default)]
     pub runtime: RuntimeConfig,
     #[serde(default)]
+    pub local_permissions: LocalPermissionConfig,
+    #[serde(default)]
     pub context_guardian: ContextGuardianConfig,
     #[serde(default)]
     pub preferences: PreferenceConfig,
@@ -162,6 +164,10 @@ pub struct ToolConfig {
     pub command: String,
     #[serde(default)]
     pub validation_args: Vec<String>,
+    #[serde(default)]
+    pub validation_ok: bool,
+    #[serde(default)]
+    pub validated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +211,8 @@ pub struct ForexConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub profile: RuntimeProfile,
+    #[serde(default)]
+    pub operator_mode: OperatorMode,
     #[serde(default = "default_session_dir")]
     pub session_dir: PathBuf,
     #[serde(default)]
@@ -215,6 +223,20 @@ pub struct RuntimeConfig {
     pub search_enabled: bool,
     #[serde(default)]
     pub browser_harness_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPermissionConfig {
+    #[serde(default)]
+    pub permission_mode: LocalPermissionMode,
+    #[serde(default)]
+    pub allowed_paths: Vec<PathBuf>,
+    #[serde(default = "default_confirm_destructive_actions")]
+    pub confirm_destructive_actions: bool,
+    #[serde(default)]
+    pub allow_shell_commands: bool,
+    #[serde(default)]
+    pub allow_network_actions: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -265,6 +287,28 @@ pub enum RuntimeProfile {
     Laptop,
     Vps,
     StaffOsWorker,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorMode {
+    Fast,
+    #[default]
+    Balanced,
+    Governed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalPermissionMode {
+    #[default]
+    ReadOnly,
+    WorkspaceWrite,
+    AllowlistedPaths,
+    TrustedLocal,
+    AllowAllSession,
+    AllowAllPersistent,
+    AskEachTime,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -336,6 +380,7 @@ impl Default for Config {
             chat_channels: ChatChannelsConfig::default(),
             forex: ForexConfig::default(),
             runtime: RuntimeConfig::default(),
+            local_permissions: LocalPermissionConfig::default(),
             context_guardian: ContextGuardianConfig::default(),
             preferences: PreferenceConfig::default(),
             providers: default_provider_registry(),
@@ -400,11 +445,24 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             profile: RuntimeProfile::default(),
+            operator_mode: OperatorMode::default(),
             session_dir: default_session_dir(),
             external_network_enabled: false,
             multi_model_enabled: false,
             search_enabled: false,
             browser_harness_enabled: false,
+        }
+    }
+}
+
+impl Default for LocalPermissionConfig {
+    fn default() -> Self {
+        Self {
+            permission_mode: LocalPermissionMode::default(),
+            allowed_paths: Vec::new(),
+            confirm_destructive_actions: default_confirm_destructive_actions(),
+            allow_shell_commands: false,
+            allow_network_actions: false,
         }
     }
 }
@@ -670,6 +728,13 @@ impl Config {
         cfg.runtime.session_dir = absolutize(&base, &cfg.runtime.session_dir);
         cfg.context_guardian.branch_packet_path =
             absolutize(&base, &cfg.context_guardian.branch_packet_path);
+        cfg.local_permissions.allowed_paths = cfg
+            .local_permissions
+            .allowed_paths
+            .iter()
+            .map(|path| expand_home_path(path))
+            .map(|path| absolutize(&base, &path))
+            .collect();
 
         cfg
     }
@@ -697,6 +762,12 @@ impl Config {
         cfg.runtime.session_dir = relativize_for_save(&base, &cfg.runtime.session_dir);
         cfg.context_guardian.branch_packet_path =
             relativize_for_save(&base, &cfg.context_guardian.branch_packet_path);
+        cfg.local_permissions.allowed_paths = cfg
+            .local_permissions
+            .allowed_paths
+            .iter()
+            .map(|path| relativize_for_save(&base, path))
+            .collect();
 
         cfg
     }
@@ -812,6 +883,8 @@ impl Config {
             .and_then(|value| normalize_channel_value(&value));
         self.providers = sanitize_provider_registry(std::mem::take(&mut self.providers));
         self.tools = sanitize_tool_registry(std::mem::take(&mut self.tools));
+        self.local_permissions.allowed_paths =
+            sanitize_allowed_paths(std::mem::take(&mut self.local_permissions.allowed_paths));
         self.chat_channels.allowed_channels =
             sanitize_allowed_channels(std::mem::take(&mut self.chat_channels.allowed_channels));
         if self.chat_channels.default_channel == ExternalChannel::None {
@@ -1046,6 +1119,46 @@ impl Config {
         };
         Ok(())
     }
+
+    pub fn local_write_allowed_for_path(&self, path: &Path, session_allow_all: bool) -> bool {
+        let path = expand_home_path(path);
+        if session_allow_all {
+            return true;
+        }
+        match self.local_permissions.permission_mode {
+            LocalPermissionMode::ReadOnly => false,
+            LocalPermissionMode::WorkspaceWrite => path_is_within(&path, &self.workspace_dir),
+            LocalPermissionMode::AllowlistedPaths => self
+                .local_permissions
+                .allowed_paths
+                .iter()
+                .any(|allowed| path_is_within(&path, allowed)),
+            LocalPermissionMode::TrustedLocal
+            | LocalPermissionMode::AllowAllSession
+            | LocalPermissionMode::AllowAllPersistent => true,
+            LocalPermissionMode::AskEachTime => false,
+        }
+    }
+
+    pub fn ensure_local_write_allowed(&self, path: &Path, session_allow_all: bool) -> Result<()> {
+        if self.local_write_allowed_for_path(path, session_allow_all) {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "Blocked by current permission mode: {:?}. Use /allow-path <path>, /allow-all, or change Settings > Permissions.",
+            self.local_permissions.permission_mode
+        )
+    }
+
+    pub fn create_dir_with_local_permission(
+        &self,
+        path: &Path,
+        session_allow_all: bool,
+    ) -> Result<()> {
+        self.ensure_local_write_allowed(path, session_allow_all)?;
+        std::fs::create_dir_all(expand_home_path(path))
+            .with_context(|| format!("failed to create {}", path.display()))
+    }
 }
 
 impl std::str::FromStr for RuntimeProfile {
@@ -1058,6 +1171,36 @@ impl std::str::FromStr for RuntimeProfile {
             "vps" => Ok(Self::Vps),
             "staff-os-worker" | "staff_os_worker" => Ok(Self::StaffOsWorker),
             other => anyhow::bail!("unknown runtime profile '{}'", other),
+        }
+    }
+}
+
+impl std::str::FromStr for OperatorMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fast" => Ok(Self::Fast),
+            "balanced" => Ok(Self::Balanced),
+            "governed" => Ok(Self::Governed),
+            other => anyhow::bail!("unknown operator mode '{}'", other),
+        }
+    }
+}
+
+impl std::str::FromStr for LocalPermissionMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "read_only" => Ok(Self::ReadOnly),
+            "workspace_write" => Ok(Self::WorkspaceWrite),
+            "allowlisted_paths" => Ok(Self::AllowlistedPaths),
+            "trusted_local" => Ok(Self::TrustedLocal),
+            "allow_all_session" => Ok(Self::AllowAllSession),
+            "allow_all_persistent" => Ok(Self::AllowAllPersistent),
+            "ask_each_time" | "ask" => Ok(Self::AskEachTime),
+            other => anyhow::bail!("unknown local permission mode '{}'", other),
         }
     }
 }
@@ -1177,6 +1320,10 @@ fn default_http_get_mode() -> String {
     "dry_run".to_string()
 }
 
+fn default_confirm_destructive_actions() -> bool {
+    true
+}
+
 fn default_session_dir() -> PathBuf {
     PathBuf::from("workspace/state/sessions")
 }
@@ -1208,6 +1355,27 @@ fn trimmed_option_string(value: String) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn expand_home_path(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    if raw == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| path.to_path_buf());
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let path = expand_home_path(path);
+    let root = expand_home_path(root);
+    path == root || path.starts_with(&root)
 }
 
 fn sanitize_model_preference(value: Option<ModelPreference>) -> Option<ModelPreference> {
@@ -1278,7 +1446,22 @@ fn sanitize_tool_registry(values: BTreeMap<String, ToolConfig>) -> BTreeMap<Stri
             .into_iter()
             .filter_map(trimmed_option_string)
             .collect();
+        tool.validated_at = tool.validated_at.and_then(trimmed_option_string);
         out.insert(id, tool);
+    }
+    out
+}
+
+fn sanitize_allowed_paths(values: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for path in values {
+        if path.as_os_str().is_empty() {
+            continue;
+        }
+        let path = expand_home_path(&path);
+        if !out.iter().any(|seen| seen == &path) {
+            out.push(path);
+        }
     }
     out
 }
@@ -1384,6 +1567,8 @@ fn default_tool_registry() -> BTreeMap<String, ToolConfig> {
                 kind,
                 command: command.to_string(),
                 validation_args: args.into_iter().map(str::to_string).collect(),
+                validation_ok: false,
+                validated_at: None,
             },
         );
     }
@@ -1610,6 +1795,50 @@ mod tests {
             ExternalChannel::Telegram
         );
         assert!(cfg.preferences.preferred_channel.value.is_none());
+    }
+
+    #[test]
+    fn local_permission_modes_gate_file_write_paths_only() {
+        let temp = tempdir().expect("tempdir");
+        let mut cfg = Config {
+            workspace_dir: temp.path().join("workspace"),
+            ..Config::default()
+        };
+        let workspace_file = cfg.workspace_dir.join("note.txt");
+        let desktop_file = temp.path().join("Desktop/QuantM Test");
+
+        assert!(!cfg.local_write_allowed_for_path(&workspace_file, false));
+        assert!(cfg.local_write_allowed_for_path(&desktop_file, true));
+        let blocked = cfg
+            .create_dir_with_local_permission(&desktop_file, false)
+            .expect_err("read_only blocks folder creation");
+        assert!(
+            blocked
+                .to_string()
+                .contains("Blocked by current permission mode")
+        );
+        cfg.create_dir_with_local_permission(&desktop_file, true)
+            .expect("session allow-all creates folder");
+        assert!(desktop_file.exists());
+
+        cfg.local_permissions.permission_mode = LocalPermissionMode::WorkspaceWrite;
+        assert!(cfg.local_write_allowed_for_path(&workspace_file, false));
+        assert!(!cfg.local_write_allowed_for_path(&desktop_file, false));
+
+        cfg.local_permissions.permission_mode = LocalPermissionMode::AllowlistedPaths;
+        cfg.local_permissions
+            .allowed_paths
+            .push(temp.path().join("Desktop"));
+        let allowed_nested = temp.path().join("Desktop/QuantM Path Test");
+        let unapproved = temp.path().join("Documents/QuantM Path Test");
+        assert!(cfg.local_write_allowed_for_path(&allowed_nested, false));
+        cfg.create_dir_with_local_permission(&allowed_nested, false)
+            .expect("allowlisted path creates folder");
+        assert!(allowed_nested.exists());
+        assert!(!cfg.local_write_allowed_for_path(&unapproved, false));
+
+        cfg.local_permissions.permission_mode = LocalPermissionMode::TrustedLocal;
+        assert!(cfg.local_write_allowed_for_path(&desktop_file, false));
     }
 
     #[test]

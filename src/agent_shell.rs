@@ -1,5 +1,5 @@
 use crate::bootstrap;
-use crate::config::{Config, ModelPreference};
+use crate::config::{Config, LocalPermissionMode, ModelPreference};
 use crate::demo_flow;
 use crate::domain;
 use crate::execution_runtime::{self, WorkflowRunResult};
@@ -10,8 +10,10 @@ use crate::workflow_registry::{self, WorkflowId};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MOCK_RESEARCH_WORKFLOW: &str = "workflow:mock-research-brief";
@@ -24,6 +26,7 @@ const ANSI_BLUE: &str = "\x1b[38;2;80;160;255m";
 const ANSI_CYAN: &str = "\x1b[38;2;70;220;230m";
 const ANSI_GREEN: &str = "\x1b[38;2;80;220;140m";
 const ANSI_RED: &str = "\x1b[38;2;255;95;95m";
+static SESSION_ALLOW_ALL: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AgentShellCommand {
@@ -31,6 +34,15 @@ enum AgentShellCommand {
     Ask(String),
     Greeting,
     Doctor,
+    Status,
+    Models,
+    Tools,
+    Connect,
+    Setup,
+    Permissions,
+    PermissionsReset,
+    AllowAll { persist: bool },
+    AllowPath(PathBuf),
     RunDemo,
     RunWorkflow(String),
     StateSummary,
@@ -138,10 +150,7 @@ fn startup_summary(cfg: &Config) -> Result<String> {
             "disabled"
         },
         format_model_preference(cfg.preferences.preferred_local_model.as_ref()),
-        cfg.preferences
-            .preferred_openrouter_model
-            .as_deref()
-            .unwrap_or("unset"),
+        format_openrouter_startup_status(cfg),
         enabled_tool_summary(cfg),
         domain_count,
         workflow_count,
@@ -171,9 +180,29 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
     }
 
     match parts.as_slice() {
-        ["help"] => Ok(AgentShellCommand::Help),
+        ["help"] | ["/help"] => Ok(AgentShellCommand::Help),
         ["ask", rest @ ..] if !rest.is_empty() => Ok(AgentShellCommand::Ask(rest.join(" "))),
-        ["doctor"] => Ok(AgentShellCommand::Doctor),
+        ["/ask", rest @ ..] if !rest.is_empty() => Ok(AgentShellCommand::Ask(rest.join(" "))),
+        ["doctor"] | ["/doctor"] => Ok(AgentShellCommand::Doctor),
+        ["status"] | ["/status"] => Ok(AgentShellCommand::Status),
+        ["models"] | ["/models"] => Ok(AgentShellCommand::Models),
+        ["tools"] | ["/tools"] => Ok(AgentShellCommand::Tools),
+        ["connect"] | ["/connect"] => Ok(AgentShellCommand::Connect),
+        ["setup"] | ["/setup"] => Ok(AgentShellCommand::Setup),
+        ["permissions"] | ["/permissions"] => Ok(AgentShellCommand::Permissions),
+        ["permissions", "reset"] | ["/permissions", "reset"] => {
+            Ok(AgentShellCommand::PermissionsReset)
+        }
+        ["allow-all"]
+        | ["/allow-all"]
+        | ["allow-all", "--session"]
+        | ["/allow-all", "--session"] => Ok(AgentShellCommand::AllowAll { persist: false }),
+        ["allow-all", "--persist"] | ["/allow-all", "--persist"] => {
+            Ok(AgentShellCommand::AllowAll { persist: true })
+        }
+        ["allow-path", path] | ["/allow-path", path] => {
+            Ok(AgentShellCommand::AllowPath(PathBuf::from(path)))
+        }
         ["demo"] | ["run", "mock-research"] => Ok(AgentShellCommand::RunDemo),
         ["run", "demo"] => Ok(AgentShellCommand::Hint(
             "Did you mean demo? Try: demo".to_string(),
@@ -199,7 +228,7 @@ fn parse_command(input: &str) -> Result<AgentShellCommand> {
         ["cli"] => Ok(AgentShellCommand::Hint(
             "Did you mean shell? Try: quant-m shell".to_string(),
         )),
-        ["exit"] | ["quit"] | ["bye"] => Ok(AgentShellCommand::Exit),
+        ["exit"] | ["/exit"] | ["quit"] | ["/quit"] | ["bye"] => Ok(AgentShellCommand::Exit),
         _ if looks_like_local_command(trimmed) => Ok(AgentShellCommand::Hint(format!(
             "That looks like a Quant-M command, but this shell does not run it directly yet. Type exit first, then run `{trimmed}` from your terminal."
         ))),
@@ -339,6 +368,15 @@ pub fn parse_command_for_fuzz(input: &str) -> Result<&'static str> {
         AgentShellCommand::Ask(_) => "ask",
         AgentShellCommand::Greeting => "greeting",
         AgentShellCommand::Doctor => "doctor",
+        AgentShellCommand::Status => "status",
+        AgentShellCommand::Models => "models",
+        AgentShellCommand::Tools => "tools",
+        AgentShellCommand::Connect => "connect",
+        AgentShellCommand::Setup => "setup",
+        AgentShellCommand::Permissions => "permissions",
+        AgentShellCommand::PermissionsReset => "permissions_reset",
+        AgentShellCommand::AllowAll { .. } => "allow_all",
+        AgentShellCommand::AllowPath(_) => "allow_path",
         AgentShellCommand::RunDemo => "run_demo",
         AgentShellCommand::RunWorkflow(_) => "run_workflow",
         AgentShellCommand::StateSummary => "state_summary",
@@ -380,6 +418,84 @@ fn execute_command(
             let report = run_doctor(cfg, config_path)?;
             Ok(AgentShellResponse {
                 output: format_doctor_report(&report),
+                should_exit: false,
+            })
+        }
+        AgentShellCommand::Status => Ok(AgentShellResponse {
+            output: format_shell_status(cfg),
+            should_exit: false,
+        }),
+        AgentShellCommand::Models => Ok(AgentShellResponse {
+            output: format_model_status(cfg),
+            should_exit: false,
+        }),
+        AgentShellCommand::Tools => Ok(AgentShellResponse {
+            output: format_tool_status(cfg),
+            should_exit: false,
+        }),
+        AgentShellCommand::Connect => Ok(AgentShellResponse {
+            output: connect_help().to_string(),
+            should_exit: false,
+        }),
+        AgentShellCommand::Setup => Ok(AgentShellResponse {
+            output: setup_help().to_string(),
+            should_exit: false,
+        }),
+        AgentShellCommand::Permissions => Ok(AgentShellResponse {
+            output: format_permission_status(cfg),
+            should_exit: false,
+        }),
+        AgentShellCommand::PermissionsReset => {
+            SESSION_ALLOW_ALL.store(false, Ordering::SeqCst);
+            let mut cfg = Config::load_or_create(config_path)?;
+            cfg.local_permissions.permission_mode = LocalPermissionMode::ReadOnly;
+            cfg.local_permissions.allowed_paths.clear();
+            cfg.local_permissions.allow_shell_commands = false;
+            cfg.local_permissions.allow_network_actions = false;
+            let cfg = cfg.sanitize();
+            cfg.validate()?;
+            cfg.save(config_path)?;
+            Ok(AgentShellResponse {
+                output: "Local permissions reset to read_only. Session allow-all cleared."
+                    .to_string(),
+                should_exit: false,
+            })
+        }
+        AgentShellCommand::AllowAll { persist } => {
+            if persist {
+                let mut cfg = Config::load_or_create(config_path)?;
+                cfg.local_permissions.permission_mode = LocalPermissionMode::AllowAllPersistent;
+                cfg.local_permissions.allow_shell_commands = true;
+                let cfg = cfg.sanitize();
+                cfg.validate()?;
+                cfg.save(config_path)?;
+            } else {
+                SESSION_ALLOW_ALL.store(true, Ordering::SeqCst);
+            }
+            Ok(AgentShellResponse {
+                output: "Local file and shell permissions are allowed for this session. Broker execution, live trading, and cluster authority remain separately gated.".to_string(),
+                should_exit: false,
+            })
+        }
+        AgentShellCommand::AllowPath(path) => {
+            let mut cfg = Config::load_or_create(config_path)?;
+            cfg.local_permissions.permission_mode = LocalPermissionMode::AllowlistedPaths;
+            if !cfg
+                .local_permissions
+                .allowed_paths
+                .iter()
+                .any(|existing| existing == &path)
+            {
+                cfg.local_permissions.allowed_paths.push(path.clone());
+            }
+            let cfg = cfg.sanitize();
+            cfg.validate()?;
+            cfg.save(config_path)?;
+            Ok(AgentShellResponse {
+                output: format!(
+                    "Allowed local writes under {}. Broker execution, live trading, and cluster authority remain separately gated.",
+                    path.display()
+                ),
                 should_exit: false,
             })
         }
@@ -489,10 +605,23 @@ Optional agent bridge:
 
 Overview:
   help
+  /help
+  status
   doctor
+  models
+  tools
+  permissions
+  /permissions
+  connect
   settings
   /settings
   config show
+
+Permissions:
+  /allow-all
+  /allow-all --persist
+  /allow-path ~/Desktop
+  /permissions reset
 
 Run:
   demo
@@ -520,6 +649,129 @@ Sessions:
 Exit:
   quit
   exit"
+}
+
+fn format_shell_status(cfg: &Config) -> String {
+    format!(
+        "{ANSI_BOLD}{ANSI_BLUE}Status{ANSI_RESET}
+workspace: {}
+runtime_role: {}
+network: {}
+models: {}
+tools: {}
+operator_mode: {:?}
+permissions: {}
+
+Local commands work without a model: /help, /status, /doctor, /models, /tools, /permissions, /allow-all, /allow-path, /connect, /setup, /exit",
+        cfg.workspace_dir.display(),
+        format!("{:?}", cfg.runtime.profile).to_lowercase(),
+        enabled_label(cfg.runtime.external_network_enabled),
+        format_model_status(cfg),
+        enabled_tool_summary(cfg),
+        cfg.runtime.operator_mode,
+        format_permission_summary(cfg),
+    )
+}
+
+fn format_model_status(cfg: &Config) -> String {
+    let local = format_model_preference(cfg.preferences.preferred_local_model.as_ref());
+    let remote = match cfg.preferences.preferred_remote_model.as_ref() {
+        Some(pref) if remote_provider_ready(cfg, &pref.provider) => {
+            format!("{} {}", pref.provider, pref.model)
+        }
+        Some(pref) => format!("{} {} (not ready: missing key)", pref.provider, pref.model),
+        None => "unset".to_string(),
+    };
+    let openrouter = match cfg.preferences.preferred_openrouter_model.as_deref() {
+        Some(model) if remote_provider_ready(cfg, "openrouter") => model.to_string(),
+        Some(model) => format!("{model} (not ready: missing OPENROUTER_API_KEY)"),
+        None => "unset".to_string(),
+    };
+    format!("local_model: {local}\nremote_model: {remote}\nopenrouter_model: {openrouter}")
+}
+
+fn format_openrouter_startup_status(cfg: &Config) -> String {
+    match cfg.preferences.preferred_openrouter_model.as_deref() {
+        Some(model) if remote_provider_ready(cfg, "openrouter") => model.to_string(),
+        Some(model) => format!("{model} (not ready: missing OPENROUTER_API_KEY)"),
+        None => "unset".to_string(),
+    }
+}
+
+fn format_tool_status(cfg: &Config) -> String {
+    let tools = enabled_tool_summary(cfg);
+    if tools == "none" {
+        return "enabled_tools: none\nRun `quant-m onboard` to select CLI tools.".to_string();
+    }
+    format!(
+        "enabled_tools: {tools}\nValidate selected tools outside the shell with `quant-m tool validate <tool>`."
+    )
+}
+
+fn format_permission_status(cfg: &Config) -> String {
+    format!(
+        "{ANSI_BOLD}{ANSI_BLUE}Permissions{ANSI_RESET}
+mode: {:?}
+session_allow_all: {}
+allowed_paths: {}
+confirm_destructive_actions: {}
+allow_shell_commands: {}
+allow_network_actions: {}
+
+Commands:
+  /allow-all
+  /allow-all --persist
+  /allow-path ~/Desktop
+  /permissions reset
+
+Boundary: local permissions do not enable broker execution, live trading, child approval authority, or core FSM bypass.",
+        cfg.local_permissions.permission_mode,
+        SESSION_ALLOW_ALL.load(Ordering::SeqCst),
+        format_allowed_paths(cfg),
+        cfg.local_permissions.confirm_destructive_actions,
+        cfg.local_permissions.allow_shell_commands,
+        cfg.local_permissions.allow_network_actions,
+    )
+}
+
+fn format_permission_summary(cfg: &Config) -> String {
+    let session = if SESSION_ALLOW_ALL.load(Ordering::SeqCst) {
+        " session_allow_all=true"
+    } else {
+        ""
+    };
+    format!("{:?}{session}", cfg.local_permissions.permission_mode)
+}
+
+fn format_allowed_paths(cfg: &Config) -> String {
+    if cfg.local_permissions.allowed_paths.is_empty() {
+        "none".to_string()
+    } else {
+        cfg.local_permissions
+            .allowed_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn connect_help() -> &'static str {
+    "Connect a usable model or CLI route:
+  quant-m onboard
+  quant-m provider validate openrouter
+  quant-m tool scan
+  quant-m tool validate codex
+
+Selected tools and provider settings are preferences until validation succeeds."
+}
+
+fn setup_help() -> &'static str {
+    "Run setup outside this shell:
+  quant-m onboard
+  quant-m setup --local-model-provider ollama --local-model <name>
+  quant-m config set-model openrouter <model-id>
+  quant-m config clear-model [local|remote|openrouter|all]"
 }
 
 fn format_shell_settings(cfg: &Config) -> String {
@@ -562,12 +814,33 @@ fn enabled_label(value: bool) -> &'static str {
     if value { "enabled" } else { "disabled" }
 }
 
+fn remote_provider_ready(cfg: &Config, provider_id: &str) -> bool {
+    let id = provider_id.trim().to_ascii_lowercase().replace('_', "-");
+    if id == "openrouter" && cfg.resolve_llm_api_key().is_some() {
+        return true;
+    }
+    cfg.providers
+        .get(&id)
+        .and_then(|provider| {
+            if provider.api_key_env.trim().is_empty() {
+                Some(())
+            } else {
+                std::env::var(&provider.api_key_env)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|_| ())
+            }
+        })
+        .is_some()
+}
+
 fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
     if !command_present("codex") {
         return Ok(format!(
             "{ANSI_RED}Codex CLI is not on PATH.{ANSI_RESET}\nRun `codex login`, then retry from this shell."
         ));
     }
+    let route_selected_at = Instant::now();
     let cwd = std::env::current_dir().unwrap_or_else(|_| cfg.workspace_dir.clone());
     let harness_prompt = format!(
         "You are Codex running through the Quant-M local agent harness.\n\
@@ -577,6 +850,7 @@ fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
         cfg.workspace_dir.display(),
         prompt
     );
+    let backend_spawn_at = Instant::now();
     let mut child = Command::new("codex")
         .arg("exec")
         .arg("--color")
@@ -592,18 +866,36 @@ fn run_codex_chat(cfg: &Config, prompt: &str) -> Result<String> {
         .stderr(Stdio::piped())
         .spawn()
         .context("failed to run codex exec")?;
+    let backend_started_ms = backend_spawn_at.elapsed().as_millis();
     if let Some(stdin) = child.stdin.as_mut() {
         stdin
             .write_all(harness_prompt.as_bytes())
             .context("failed to send prompt to codex exec")?;
     }
+    let first_output_wait_at = Instant::now();
     let output = child
         .wait_with_output()
         .context("failed to wait for codex exec")?;
+    let first_backend_output_ms = first_output_wait_at.elapsed().as_millis();
+    let quant_m_overhead_ms = backend_spawn_at
+        .duration_since(route_selected_at)
+        .as_millis()
+        + backend_started_ms;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let timing = format!(
+        "{ANSI_DIM}timing: route_selection_ms={} backend_start_ms={} first_backend_output_ms={} quant_m_overhead_ms={}{}",
+        backend_spawn_at
+            .duration_since(route_selected_at)
+            .as_millis(),
+        backend_started_ms,
+        first_backend_output_ms,
+        quant_m_overhead_ms,
+        ANSI_RESET,
+    );
     if output.status.success() {
         let mut lines = vec![format!("{ANSI_BOLD}{ANSI_GREEN}Codex{ANSI_RESET}")];
+        lines.push(timing);
         if !stderr.is_empty() {
             lines.push(format!("{ANSI_DIM}{stderr}{ANSI_RESET}"));
         }
@@ -964,6 +1256,50 @@ mod tests {
             AgentShellCommand::Settings
         );
         assert_eq!(
+            parse_command("/help").expect("slash help"),
+            AgentShellCommand::Help
+        );
+        assert_eq!(
+            parse_command("/status").expect("slash status"),
+            AgentShellCommand::Status
+        );
+        assert_eq!(
+            parse_command("/models").expect("slash models"),
+            AgentShellCommand::Models
+        );
+        assert_eq!(
+            parse_command("/tools").expect("slash tools"),
+            AgentShellCommand::Tools
+        );
+        assert_eq!(
+            parse_command("/connect").expect("slash connect"),
+            AgentShellCommand::Connect
+        );
+        assert_eq!(
+            parse_command("/setup").expect("slash setup"),
+            AgentShellCommand::Setup
+        );
+        assert_eq!(
+            parse_command("/permissions").expect("slash permissions"),
+            AgentShellCommand::Permissions
+        );
+        assert_eq!(
+            parse_command("/allow-all").expect("slash allow all"),
+            AgentShellCommand::AllowAll { persist: false }
+        );
+        assert_eq!(
+            parse_command("/allow-all --persist").expect("slash allow all persist"),
+            AgentShellCommand::AllowAll { persist: true }
+        );
+        assert_eq!(
+            parse_command("/allow-path ~/Desktop").expect("slash allow path"),
+            AgentShellCommand::AllowPath(PathBuf::from("~/Desktop"))
+        );
+        assert_eq!(
+            parse_command("/exit").expect("slash exit"),
+            AgentShellCommand::Exit
+        );
+        assert_eq!(
             parse_command("cli").expect("cli hint"),
             AgentShellCommand::Hint("Did you mean shell? Try: quant-m shell".to_string())
         );
@@ -1050,6 +1386,110 @@ mod tests {
                 .contains("browser_harness_enabled: disabled")
         );
         assert!(!response.should_exit);
+    }
+
+    #[test]
+    fn local_slash_commands_work_without_model_route() {
+        let (_temp, config_path, mut cfg) = temp_cfg();
+        cfg.preferences.preferred_local_model = None;
+        cfg.preferences.preferred_remote_model = None;
+        cfg.preferences.preferred_openrouter_model = None;
+        cfg.llm.enabled = false;
+        cfg.llm.api_key = None;
+        SESSION_ALLOW_ALL.store(false, Ordering::SeqCst);
+
+        for command in [
+            AgentShellCommand::Help,
+            AgentShellCommand::Status,
+            AgentShellCommand::Permissions,
+            AgentShellCommand::Tools,
+            AgentShellCommand::Models,
+            AgentShellCommand::AllowAll { persist: false },
+        ] {
+            let response =
+                execute_command(&cfg, &config_path, command).expect("local command response");
+            assert!(!response.output.is_empty());
+            assert!(!response.output.contains("Codex CLI is not on PATH"));
+            assert!(!response.output.contains("failed to run codex"));
+        }
+    }
+
+    #[test]
+    fn allow_all_session_permits_real_temp_folder_creation() {
+        let (temp, config_path, cfg) = temp_cfg();
+        let external = temp.path().join("Desktop/QuantM Test");
+        SESSION_ALLOW_ALL.store(false, Ordering::SeqCst);
+
+        assert!(
+            cfg.create_dir_with_local_permission(
+                &external,
+                SESSION_ALLOW_ALL.load(Ordering::SeqCst)
+            )
+            .is_err()
+        );
+        let response = execute_command(
+            &cfg,
+            &config_path,
+            AgentShellCommand::AllowAll { persist: false },
+        )
+        .expect("allow all");
+
+        assert!(response.output.contains("Local file and shell permissions"));
+        cfg.create_dir_with_local_permission(&external, SESSION_ALLOW_ALL.load(Ordering::SeqCst))
+            .expect("create after allow all");
+        assert!(external.exists());
+        assert!(!cfg.worker.allow_http_get);
+        assert!(!cfg.worker.allow_shell_commands);
+    }
+
+    #[test]
+    fn allow_path_persists_allowlist_without_allowing_other_paths() {
+        let (temp, config_path, cfg) = temp_cfg();
+        let allowed = temp.path().join("Desktop");
+        let allowed_child = allowed.join("QuantM Path Test");
+        let denied = temp.path().join("Documents/QuantM Path Test");
+
+        execute_command(
+            &cfg,
+            &config_path,
+            AgentShellCommand::AllowPath(allowed.clone()),
+        )
+        .expect("allow path");
+
+        let cfg = Config::load_existing(&config_path).expect("reload config");
+        cfg.create_dir_with_local_permission(&allowed_child, false)
+            .expect("create in allowlisted path");
+        assert!(allowed_child.exists());
+        assert!(
+            cfg.create_dir_with_local_permission(&denied, false)
+                .is_err()
+        );
+
+        execute_command(&cfg, &config_path, AgentShellCommand::PermissionsReset)
+            .expect("reset permissions");
+        let cfg = Config::load_existing(&config_path).expect("reload reset config");
+        assert!(
+            cfg.create_dir_with_local_permission(&allowed.join("AfterReset"), false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn local_slash_commands_meet_budget_targets() {
+        let (_temp, config_path, cfg) = temp_cfg();
+
+        let started = std::time::Instant::now();
+        execute_command(&cfg, &config_path, AgentShellCommand::Help).expect("help");
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+
+        let started = std::time::Instant::now();
+        execute_command(&cfg, &config_path, AgentShellCommand::Status).expect("status");
+        assert!(started.elapsed() < std::time::Duration::from_millis(250));
+
+        let path = cfg.workspace_dir.join("timing-check");
+        let started = std::time::Instant::now();
+        let _ = cfg.local_write_allowed_for_path(&path, true);
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
     }
 
     #[test]
@@ -1154,6 +1594,58 @@ mod tests {
             command,
             AgentShellCommand::Ask("launch everything".to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_passthrough_reports_timing_fields() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, config_path, cfg) = temp_cfg();
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+        let codex = bin_dir.join("codex");
+        std::fs::write(
+            &codex,
+            "#!/bin/sh\ncat >/dev/null\nprintf 'fake codex output\\n'\n",
+        )
+        .expect("fake codex");
+        let mut permissions = std::fs::metadata(&codex).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&codex, permissions).expect("chmod");
+
+        let old_path = std::env::var_os("PATH");
+        let next_path = match old_path.as_ref() {
+            Some(path) => {
+                let mut paths = vec![bin_dir.clone()];
+                paths.extend(std::env::split_paths(path));
+                std::env::join_paths(paths).expect("join path")
+            }
+            None => bin_dir.into_os_string(),
+        };
+        unsafe {
+            std::env::set_var("PATH", next_path);
+        }
+
+        let response = execute_command(
+            &cfg,
+            &config_path,
+            AgentShellCommand::Ask("hello".to_string()),
+        )
+        .expect("ask");
+
+        unsafe {
+            match old_path {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        assert!(response.output.contains("timing: route_selection_ms="));
+        assert!(response.output.contains("backend_start_ms="));
+        assert!(response.output.contains("first_backend_output_ms="));
+        assert!(response.output.contains("quant_m_overhead_ms="));
+        assert!(response.output.contains("fake codex output"));
     }
 
     #[test]
