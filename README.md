@@ -174,9 +174,12 @@ Then in a second core terminal:
 On the child device, use the printed link or command from the core. After operator approval, keep the child observe-only and verify heartbeat/telemetry from the core:
 
 ```bash
-./quantm core cluster nodes
-./quantm core cluster report
+./quantm agent-cluster device options
+./quantm agent-cluster nodes
+./quantm agent-cluster report
 ```
+
+`agent-cluster` is the preferred terminal spelling for the cluster feature. The older `cluster` command name remains available for compatibility.
 
 Release-candidate docs:
 

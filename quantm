@@ -23,16 +23,18 @@ is_edge_device() {
 
 print_edge_help() {
   cat <<'EOF'
-Quant-M edge-device setup detected.
+Quant-M Agent Cluster device setup detected.
 
-For v0.local-alpha hardware smoke, decide whether this device is the core
-or a child worker.
+Use old, reset, LAN-only phones, tablets, Raspberry Pi, or similar devices as
+observe-only Agent Cluster workers. Keep them on trusted local Wi-Fi.
 
 Core/onboarding commands:
   ./quantm onboard
   ./quantm core pair serve --bind 0.0.0.0:8787
+  ./quantm agent-cluster device options
 
 Child/worker commands:
+  pkg install termux-api openssh rust curl git
   ./quantm child-build
   ./quantm child --help
   ./quantm child doctor
@@ -95,8 +97,16 @@ normalize_workspace_path() {
 print_device_smoke_next_steps() {
   cat <<'EOF'
 
-Child-device smoke test handoff
+Agent Cluster child-device smoke test handoff
 This is observe-only. It does not enable trading, betting, providers, proposals, or execution.
+
+Old Android phones/tablets via Termux:
+  pkg update
+  pkg install termux-api openssh rust curl git
+
+Raspberry Pi / Linux child:
+  sudo apt-get update
+  sudo apt-get install -y openssh-client cargo curl git
 
 Core terminal 1:
   ./quantm core pair serve --bind 0.0.0.0:8787
@@ -109,7 +119,9 @@ Child device:
   ./quantm child heartbeat
 
 Then verify from the core:
-  ./quantm core cluster nodes
+  ./quantm agent-cluster device options
+  ./quantm agent-cluster nodes
+  ./quantm agent-cluster report
 EOF
 }
 

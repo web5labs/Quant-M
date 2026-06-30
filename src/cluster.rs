@@ -1564,7 +1564,7 @@ pub fn edge_device_options() -> Vec<ClusterDeviceOption> {
         },
         ClusterDeviceOption {
             profile_id: "android_termux_phone".to_string(),
-            display_name: "Android phone via Termux".to_string(),
+            display_name: "Agent Cluster Android phone via Termux".to_string(),
             authority: ClusterDeviceAuthority::ChildEvidenceWorker,
             can_be_execution_leader: false,
             surface: ClusterSurfaceKind::TermuxWorker,
@@ -1596,7 +1596,7 @@ pub fn edge_device_options() -> Vec<ClusterDeviceOption> {
         },
         ClusterDeviceOption {
             profile_id: "android_termux_tablet".to_string(),
-            display_name: "Android tablet via Termux".to_string(),
+            display_name: "Agent Cluster Android tablet via Termux".to_string(),
             authority: ClusterDeviceAuthority::ChildEvidenceWorker,
             can_be_execution_leader: false,
             surface: ClusterSurfaceKind::TermuxWorker,
@@ -1629,7 +1629,7 @@ pub fn edge_device_options() -> Vec<ClusterDeviceOption> {
         },
         ClusterDeviceOption {
             profile_id: "raspberry_pi_edge_worker".to_string(),
-            display_name: "Raspberry Pi LAN edge worker".to_string(),
+            display_name: "Agent Cluster Raspberry Pi LAN worker".to_string(),
             authority: ClusterDeviceAuthority::ChildEvidenceWorker,
             can_be_execution_leader: false,
             surface: ClusterSurfaceKind::LocalWorker,
@@ -1659,7 +1659,7 @@ pub fn edge_device_options() -> Vec<ClusterDeviceOption> {
         },
         ClusterDeviceOption {
             profile_id: "linux_laptop_edge_worker".to_string(),
-            display_name: "Linux laptop or mini PC edge worker".to_string(),
+            display_name: "Agent Cluster Linux laptop or mini PC worker".to_string(),
             authority: ClusterDeviceAuthority::ChildEvidenceWorker,
             can_be_execution_leader: false,
             surface: ClusterSurfaceKind::LocalWorker,
@@ -1699,7 +1699,7 @@ pub fn edge_device_options() -> Vec<ClusterDeviceOption> {
 }
 
 pub fn render_edge_device_options(options: &[ClusterDeviceOption]) -> String {
-    let mut out = String::from("cluster edge device options\n");
+    let mut out = String::from("Agent Cluster device options\n");
     for option in options {
         let transports = option
             .transports
@@ -1720,8 +1720,9 @@ pub fn render_edge_device_options(options: &[ClusterDeviceOption]) -> String {
             .collect::<Vec<_>>()
             .join(",");
         out.push_str(&format!(
-            "{} authority={} execution_leader={} surface={} transports={} roles={} capabilities={}\n",
+            "{} name=\"{}\" authority={} execution_leader={} surface={} transports={} roles={} capabilities={}\n",
             option.profile_id,
+            option.display_name,
             option.authority,
             option.can_be_execution_leader,
             option.surface,

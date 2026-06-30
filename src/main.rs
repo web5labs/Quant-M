@@ -213,6 +213,7 @@ enum Commands {
         #[command(subcommand)]
         command: WorkerCommand,
     },
+    #[command(visible_alias = "agent-cluster")]
     Cluster {
         #[command(subcommand)]
         command: ClusterCommand,
@@ -7956,6 +7957,27 @@ mod tests {
                 command: ClusterCommand::Device {
                     command: ClusterDeviceCommand::Options { json: true }
                 }
+            })
+        ));
+
+        let agent_cluster_options =
+            Cli::try_parse_from(["quant-m", "agent-cluster", "device", "options", "--json"])
+                .expect("parse agent-cluster device options alias");
+        assert!(matches!(
+            agent_cluster_options.command,
+            Some(Commands::Cluster {
+                command: ClusterCommand::Device {
+                    command: ClusterDeviceCommand::Options { json: true }
+                }
+            })
+        ));
+
+        let agent_cluster_nodes = Cli::try_parse_from(["quant-m", "agent-cluster", "nodes"])
+            .expect("parse agent-cluster nodes alias");
+        assert!(matches!(
+            agent_cluster_nodes.command,
+            Some(Commands::Cluster {
+                command: ClusterCommand::Nodes { json: false }
             })
         ));
 

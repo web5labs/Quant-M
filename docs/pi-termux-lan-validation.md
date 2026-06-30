@@ -139,6 +139,16 @@ sudo apt-get install -y openssh-client openssh-server git curl build-essential p
 curl https://sh.rustup.rs -sSf | sh
 ```
 
+Agent Cluster terminal commands:
+
+```bash
+./quantm agent-cluster device options
+./quantm agent-cluster nodes
+./quantm agent-cluster report
+```
+
+`agent-cluster` is the preferred terminal spelling for the child-device cluster feature. The older `cluster` command name remains available for compatibility with existing validation notes and scripts.
+
 Record the tested matrix:
 
 ```text
