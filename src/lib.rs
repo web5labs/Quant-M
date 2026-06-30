@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod capabilities;
 pub mod channels;
 pub mod child_bootstrap;
+pub mod child_pack_sync;
 pub mod cluster_boundary;
 pub mod compaction;
 pub mod config;

@@ -137,6 +137,33 @@ chmod +x quant-m-child
 
 Pairing still requires manual core approval. The child remains observe-only: no execution, approval, or canonical shared-state write authority is granted by bootstrap.
 
+Next milestone, `CHILD_PACK_SYNC_17A`, gives approved children a Git-free way to receive playbooks and policy packs from the core:
+
+```bash
+quant-m pack serve --bind 0.0.0.0:8789 --pack-dir ./release-packs
+```
+
+Pack metadata lives next to each approved archive:
+
+```toml
+pack_id = "forex-worker-basic"
+version = "0.1.0"
+desk = "forex"
+archive_name = "forex-worker-basic.tar"
+archive_size = 12345
+sha256 = "<sha256>"
+created_at = "2026-06-30T00:00:00Z"
+max_authority = "observe"
+allowed_roles = ["forex_worker"]
+schemas = ["evidence.schema.json"]
+timing_policy = "timing.toml"
+skills_manifest = "skills.manifest.json"
+revoked = false
+script_execution = false
+```
+
+The core lists only non-revoked packs whose archive size and SHA-256 match metadata, filters by role, and blocks arbitrary script execution. The child downloads the pack with `curl`, verifies SHA-256, caches it locally, reports the active pack hash in heartbeat, and includes the same hash in non-authoritative evidence.
+
 More device details:
 
 - [Android deployment guide](deploy/android/README.md)

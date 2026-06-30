@@ -54,6 +54,49 @@ chmod +x quant-m-child
 
 The bootstrap endpoint does not auto-approve pairing and does not grant execution, approval, or canonical write authority.
 
+## Core-Hosted Pack Sync
+
+After a child has a verified binary and has paired, `CHILD_PACK_SYNC_17A` lets the core serve approved knowledge packs without Git, Cargo, or manual file drops:
+
+```bash
+quant-m pack serve --bind 0.0.0.0:8789 --pack-dir ./release-packs
+```
+
+The pack endpoint exposes:
+
+- `GET /`: install/sync page
+- `GET /api/packs?role=<role>`: JSON listing filtered by approved child role
+- `GET /download/<archive>`: download for metadata-approved archives only
+
+Pack metadata example:
+
+```toml
+pack_id = "forex-worker-basic"
+version = "0.1.0"
+desk = "forex"
+archive_name = "forex-worker-basic.tar"
+archive_size = 12345
+sha256 = "<sha256>"
+created_at = "2026-06-30T00:00:00Z"
+max_authority = "observe"
+allowed_roles = ["forex_worker"]
+schemas = ["evidence.schema.json"]
+timing_policy = "timing.toml"
+skills_manifest = "skills.manifest.json"
+revoked = false
+script_execution = false
+```
+
+The child-side pack sync stays cache-only:
+
+```bash
+mkdir -p packs
+curl -fL -o packs/forex-worker-basic.tar http://<core-lan-ip>:8789/download/forex-worker-basic.tar
+printf '%s  %s\n' '<sha256>' packs/forex-worker-basic.tar | sha256sum -c -
+```
+
+The child reports `active_pack_hash` in heartbeat and includes the same pack hash in non-authoritative evidence. Packs may contain playbooks, timing policies, skill manifests, schemas, and markdown notes. Packs do not grant execution authority and scripts from packs are not auto-run.
+
 ## Simple Onboarding
 
 From the prepared Quant-M repo on the laptop, plug in one authorized Android device and run:
