@@ -2329,7 +2329,7 @@ fn run_interactive_setup(
     );
     println!("It stores memory, sessions, shared state, and replay evidence on this device.");
     println!(
-        "{}This device can run as a Quant-M Agent Node.{}",
+        "{}This device can run as a Quant-M node; choose its role by capability, not hardware.{}",
         ANSI_DIM, ANSI_RESET
     );
     println!();
@@ -2349,12 +2349,16 @@ fn run_interactive_setup(
     }
 
     if args.runtime_profile.is_none() {
-        print_onboarding_section("2", "Device", "Pick the closest runtime profile.");
+        print_onboarding_section(
+            "2",
+            "Device",
+            "Pick the closest runtime profile after deciding this node's role.",
+        );
         args.runtime_profile = Some(prompt_numbered_choice(
-            "Choose this device type.",
+            "Choose this device class.",
             &[
                 ("💻 Laptop or desktop", "laptop"),
-                ("📱 Phone / Termux / edge device", "edge"),
+                ("📱 Android/Termux or small edge device", "edge"),
                 ("🏢 Staff-OS worker node", "staff-os-worker"),
                 ("🖥️ VPS / server", "vps"),
             ],

@@ -2,11 +2,31 @@
 
 Host-side deploy lane for Quant-M Android edge devices.
 
-Default target: a slim `base-runtime` device that runs a prebuilt Quant-M Rust binary with no npm, Node.js, Git, Cargo, or internet requirement.
+Default old-device target: a slim `base-runtime` child worker that runs a prebuilt Quant-M Rust binary with no npm, Node.js, Git, Cargo, or internet requirement.
+
+Android phones and tablets are not child-only devices. A capable Wi-Fi-only phone or tablet with enough disk, RAM, power stability, shell access, local storage, and LAN port binding can run as an Agent Cluster core for testing or edge proof-of-concept deployments. The role depends on the device capability and operator goal, not the hardware category.
 
 Old Android and Termux devices should not be expected to clone GitHub or build Quant-M from source during normal Agent Cluster onboarding. Git HTTPS can fail on stale or mismatched Termux package sets with errors like `git-remote-https` aborts or `cannot locate symbol` from networking/TLS libraries. Treat Git/Cargo on-device builds as a development fallback only.
 
 If a tablet hits that Termux package failure, repair the Termux environment with package updates, `termux-change-repo`, and Git/curl/TLS package reinstalls. Product direction is to route around that class of failure: the core should host or push a prebuilt child binary over local Wi-Fi, then the child pairs and syncs approved packs.
+
+Valid Android validation methods include ADB, manual Termux commands, SSH into Termux, a QR or local bootstrap URL, a copied binary plus LAN command execution, or direct browser/Termux download from the core. ADB is useful for provisioning and debugging, but it is optional for LAN validation. The proof is that a real device executed the Quant-M flow over LAN.
+
+## Mobile/Tablet Core Mode
+
+Use mobile/tablet core mode when the Android device can:
+
+- run the `quant-m` core binary
+- store local workspace/state
+- keep stable Wi-Fi
+- bind LAN ports for pairing, bootstrap, or pack serving
+- maintain enough battery or external power
+- provide enough disk and RAM
+- run Termux or an equivalent shell
+
+Carrier service is not required. Wi-Fi is enough.
+
+Use the old-device child path when the hardware is weaker, freshly reset, or intended only for observe-only heartbeat, pack sync, and evidence reporting.
 
 ## Core-Hosted Bootstrap
 
@@ -18,7 +38,7 @@ quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --cor
 
 The endpoint exposes:
 
-- `GET /`: install page for old Android/Termux child devices
+- `GET /`: install page for Android/Termux child devices
 - `GET /api/bundles`: JSON listing of valid child bundles
 - `GET /download/<file>`: download for metadata-approved binaries only
 
@@ -129,7 +149,7 @@ The launcher handles the normal flow:
 - start the worker
 - run the health check
 
-This flow is the preferred old-device path because the child does not need GitHub, Cargo, Rust, or source checkout health on the tablet.
+This flow is the preferred old-device child path because the child does not need GitHub, Cargo, Rust, or source checkout health on the tablet.
 
 The APKs and offline package mirrors stay local in ignored paths, so the GitHub repo remains lightweight while the prepared laptop checkout can still deploy offline.
 

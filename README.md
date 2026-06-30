@@ -26,7 +26,23 @@ Quant-M is not a chatbot, broker, hosted agent platform, or trading bot. It is t
 
 ## Start Here
 
-Quant-M is easiest to understand as a local safety layer for agent work. Run it on one device first. Add phones, tablets, Raspberry Pi boards, or other small devices later as observe-only Agent Cluster workers.
+Quant-M is easiest to understand as a local safety layer for agent work. Run it on one device first, then add other capable devices by role. Roles are capability-based, not hardware-biased: a weak tablet can be a child, a strong tablet can be a core, a laptop can be a child, and a Raspberry Pi can be a core.
+
+Choose the role first:
+
+- Solo local node
+- Agent Cluster core
+- Agent Cluster child worker
+- Staff-OS worker
+- Server/VPS node
+
+Then choose the device class:
+
+- laptop or desktop
+- Raspberry Pi or mini PC
+- Android phone or tablet with Termux
+- Linux server
+- other Linux-like device
 
 ### 1. Prepare The Device
 
@@ -39,7 +55,7 @@ sudo apt-get update
 sudo apt-get install -y git curl cargo openssh-client
 ```
 
-Android phone or tablet with Termux, preferred child path:
+Android phone or tablet with Termux, minimal Wi-Fi node path:
 
 ```bash
 pkg update
@@ -48,11 +64,11 @@ pkg install curl openssh termux-api
 
 Termux:API is optional unless you want Android-specific device telemetry such as battery status. Install Termux and Termux add-ons from the same source when possible.
 
-Git and Rust/Cargo on the child are development fallback tools only. On older or freshly reset Android devices, Termux package mirrors and TLS libraries can be out of sync, causing Git HTTPS failures such as `git-remote-https` aborts or `cannot locate symbol` errors. If that happens, update Termux packages, use `termux-change-repo`, and reinstall Git/curl/TLS packages. For normal Agent Cluster child use, the product direction is a core-hosted prebuilt `quant-m-child` binary over local Wi-Fi.
+Git and Rust/Cargo on old child devices are development fallback tools only. On older or freshly reset Android devices, Termux package mirrors and TLS libraries can be out of sync, causing Git HTTPS failures such as `git-remote-https` aborts or `cannot locate symbol` errors. If that happens, update Termux packages, use `termux-change-repo`, and reinstall Git/curl/TLS packages. For normal Agent Cluster child use, the product direction is a core-hosted prebuilt `quant-m-child` binary over local Wi-Fi.
 
 ### 2. Get Quant-M
 
-Do this on the core laptop, desktop, Raspberry Pi, or development device:
+Do this on the device that will run the source checkout, such as a laptop, desktop, Raspberry Pi, server, or capable Termux device:
 
 ```bash
 git clone https://github.com/web5labs/Quant-M.git
@@ -71,17 +87,30 @@ If this device will be the core, choose the core role during onboarding. If this
 
 ## Agent Cluster
 
-Agent Cluster is the local-alpha lane for repurposing old, outdated, deprecated, or factory-reset Wi-Fi devices as safe Quant-M child nodes on a trusted LAN. This includes old Android phones, Android tablets, Raspberry Pi boards, mini PCs, low-power Linux laptops, and similar devices that can stay connected to local Wi-Fi.
+Agent Cluster is the local-alpha lane for running Quant-M across trusted LAN devices. It supports old, outdated, deprecated, or factory-reset Wi-Fi devices as safe child workers, and it also allows capable tablets, phones, Raspberry Pi boards, mini PCs, laptops, desktops, and servers to act as core nodes when they meet the core requirements.
 
-The goal is not to turn these devices into full developer machines. The goal is to reuse available hardware as lightweight observe-only workers that can pair with a Quant-M core node, heartbeat over LAN, run bounded tasks, and report non-authoritative evidence back to the core.
+The goal is role-first onboarding. A device can participate as a solo node, Agent Cluster core, observe-only child worker, Staff-OS worker, or server/VPS node. Old or limited devices should stay lightweight and observe-only. Stronger Wi-Fi-only devices may run the core for edge proof-of-concept deployments.
 
 Good first use cases:
 
 - old Android phone used as a Termux child node
 - old Android tablet used as a watcher or observe-only worker
-- Raspberry Pi used as a low-power always-on child node
-- spare laptop or mini PC used as a stronger child worker
+- newer Android phone or tablet used as a Termux core node
+- Raspberry Pi used as a low-power always-on core or child node
+- spare laptop or mini PC used as a stronger core or child worker
 - factory-reset phone or tablet kept on local Wi-Fi for cluster experiments
+
+Agent Cluster core requirements:
+
+- ability to run the `quant-m` core binary
+- local workspace/state storage
+- enough disk and RAM to keep the core alive
+- stable Wi-Fi or LAN
+- ability to bind local LAN ports
+- shell/runtime access
+- enough battery or power stability
+- no public internet requirement
+- no carrier/SIM requirement; Wi-Fi is enough
 
 Safety rules:
 
@@ -93,6 +122,8 @@ Safety rules:
 - do not expose the pairing server directly to the public internet
 - do not use outdated child devices for live trading execution
 - do not allow child nodes to approve work, mutate canonical shared state, or place orders
+
+Real-device validation can be driven through ADB, manual Termux commands, SSH into Termux, a QR/bootstrap URL, a copied binary, or any other method that proves a real device executed the Quant-M command over LAN. ADB is useful for provisioning and debugging Android devices, but it is not required for Agent Cluster LAN validation.
 
 What this local alpha can demonstrate:
 
@@ -112,8 +143,9 @@ What remains disabled:
 - child canonical writes
 - production remote orchestration
 
-Next milestone:
+Milestones:
 
+- `MOBILE_TABLET_CORE_ROLE_17A_FIX`: role-first onboarding language, mobile/tablet core proof-of-concept guidance, and optional ADB validation language.
 - `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
 
 Core-hosted child bootstrap:
@@ -163,6 +195,8 @@ script_execution = false
 ```
 
 The core lists only non-revoked packs whose archive size and SHA-256 match metadata, filters by role, and blocks arbitrary script execution. The child downloads the pack with `curl`, verifies SHA-256, caches it locally, reports the active pack hash in heartbeat, and includes the same hash in non-authoritative evidence.
+
+`CHILD_PACK_SYNC_REAL_DEVICE_17B` is blocked until a real reachable device completes that child-side flow over LAN. ADB returning no devices is only a debug detail; the blocker is that no real device completed download, checksum, cache, activation, heartbeat, and evidence reporting.
 
 More device details:
 
@@ -358,7 +392,7 @@ Those desks are not promises. They explain why Quant-M is strict: a runtime shap
 
 ## Onboarding Preview
 
-The onboarding flow runs from the main `./quantm` command on a fresh checkout. It covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
+The onboarding flow runs from the main `./quantm` command on a fresh checkout. It covers workspace, role-first device class, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
 
 When you say a local model is available, onboarding scans common Ollama and LM Studio model locations and lists detected model tags first. CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
 
