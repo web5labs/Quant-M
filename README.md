@@ -59,32 +59,64 @@ On Raspberry Pi, DietPi, Termux, or other edge devices, choose the device role e
 
 ### Agent Cluster
 
-Use this lane for old, outdated, deprecated, or factory-reset Wi-Fi devices that can still live safely on a trusted local network: old Android phones, tablets, Raspberry Pi boards, DietPi boxes, mini PCs, or similar edge hardware. The use case is modest on purpose: turn spare devices into observe-only Quant-M children that can pair, heartbeat, report device telemetry when available, and return non-authoritative evidence without becoming execution, approval, broker, provider, or canonical-write authorities.
+Agent Cluster is the local-alpha lane for repurposing old, outdated, deprecated, or factory-reset Wi-Fi devices as safe Quant-M child nodes on a trusted LAN. This includes old Android phones, Android tablets, Raspberry Pi boards, mini PCs, low-power Linux laptops, and similar devices that can stay connected to local Wi-Fi.
 
-Keep these devices on a private LAN. Do not expose the pairing server to the public internet, do not port-forward it, and do not treat an old device as trusted just because it paired successfully. Pairing means known device; heartbeat means visible device; an observe-only lease means bounded evidence work only.
+The goal is not to turn these devices into full developer machines. The goal is to reuse available hardware as lightweight observe-only workers that can pair with a Quant-M core node, heartbeat over LAN, run bounded tasks, and report non-authoritative evidence back to the core.
 
-Prerequisite device dependencies:
+Use cases:
 
-| Device lane | Required dependencies | Notes |
+- old Android phone used as a Termux child node
+- old Android tablet used as a watcher or observe-only worker
+- Raspberry Pi used as a low-power always-on child node
+- spare laptop or mini PC used as a stronger child worker
+- factory-reset phone or tablet kept on local Wi-Fi for cluster experiments
+- repurposed devices used for timing checks, heartbeats, evidence collection, and playbook-specific desk monitoring
+
+Recommended network posture:
+
+- factory reset repurposed devices before use when practical
+- connect them only to a trusted local Wi-Fi network
+- avoid storing API keys, broker credentials, or private tokens on child devices
+- keep execution authority on the core node only
+- keep child nodes observe-only by default
+- do not expose old Android devices or the pairing server directly to the public internet
+- do not use outdated child devices for live trading execution
+- do not allow child nodes to approve work, mutate canonical shared state, or place orders
+
+Device classes and dependencies:
+
+| Device lane | Bootstrap dependencies | Steady-state target |
 | --- | --- | --- |
-| Android phone/tablet with Termux | Termux app, Termux:API app, `termux-api`, `openssh`, `git`, `curl`, `rust`, `clang`, `pkg-config`, `openssl` | Best for factory-reset Wi-Fi Android devices. Termux:API is optional for richer battery/storage telemetry, but install it when available. |
-| Raspberry Pi / DietPi child or core | `openssh-client`/`openssh-server`, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Use SSH for administration and Cargo for local builds. |
-| Linux mini PC or similar edge worker | SSH, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Treat as a child unless it is intentionally selected as the core. |
+| Android phone/tablet with Termux | Termux app, optional Termux:API app, optional `termux-api`, `curl`, `git`, `rust`/Cargo, `clang`, `pkg-config`, `openssl`, optional `openssh` | Prebuilt `quant-m-child`, local child config, node identity, core LAN address, optional cached knowledge packs; no Git/Cargo/repo clone requirement. |
+| Raspberry Pi / DietPi child or core | `curl`, SSH, `git`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Prebuilt `quant-m-child` or `quant-m`, local config, node identity, core LAN address, optional service launcher; no source build required for normal operation. |
+| Linux mini PC or similar edge worker | `curl`, SSH, `git`, Rust/Cargo for development, prebuilt Quant-M binaries for normal operation | Stronger child worker or core-node test host, with the same observe-only child boundary unless intentionally selected as core. |
 
-Termux dependency setup:
+Termux and Termux add-ons should come from the same install source when possible. Source/signature mismatches can break add-on behavior. Termux:API is optional unless the child needs Android-specific device functions such as battery status, wake behavior, notifications, sensors, clipboard, or other Android integrations.
+
+Bootstrap dependencies are acceptable during local-alpha testing. Steady-state child nodes should not require Cargo, Rust, Git, a repo clone, direct database access, broker credentials, model-provider credentials, or arbitrary shell tools from knowledge packs. The long-term target is: build elsewhere, ship a prebuilt child binary, pair to the core, sync approved knowledge packs, and submit evidence only.
+
+Termux bootstrap setup:
 
 ```bash
 pkg update
 pkg install termux-api openssh git curl rust clang pkg-config openssl
 ```
 
-Raspberry Pi / Debian-style dependency setup:
+Raspberry Pi / Debian-style bootstrap setup:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y openssh-client openssh-server git curl build-essential pkg-config libssl-dev
 curl https://sh.rustup.rs -sSf | sh
 ```
+
+Recommended onboarding labels:
+
+- Agent Cluster
+- Run this device as Agent Cluster core
+- Join an existing Agent Cluster as child worker
+- Prepare Android/Termux child
+- Prepare Raspberry Pi/Linux child
 
 For a Raspberry Pi core node:
 

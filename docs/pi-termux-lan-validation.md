@@ -47,39 +47,91 @@ Minimum hardware:
 
 ## Agent Cluster Device Prerequisites
 
-This lane is for old, outdated, deprecated, or factory-reset Wi-Fi devices that can still participate safely on a trusted local network: old Android phones, tablets, Raspberry Pi boards, DietPi boxes, mini PCs, or similar edge hardware.
+Agent Cluster is the local-alpha lane for repurposing old, outdated, deprecated, or factory-reset Wi-Fi devices as safe child nodes on a trusted local network. This includes old Android phones, Android tablets, Raspberry Pi devices, mini PCs, low-power Linux laptops, and similar devices that can stay connected to local Wi-Fi.
+
+The goal is not to turn these devices into full developer machines. The goal is to reuse available hardware as lightweight observe-only workers that can pair with a Quant-M core node, heartbeat over LAN, run bounded tasks, and report non-authoritative evidence back to the core.
 
 Use case overview:
 
-- turn spare local devices into observe-only Quant-M children
-- pair them over a private LAN with explicit operator approval
-- collect heartbeat and best-effort device telemetry
-- return echo or scalar evidence as non-authoritative artifacts
-- keep proposal authority, execution authority, approval authority, provider calls, broker access, trading, betting, and canonical shared-state writes disabled
+- old Android phone used as a Termux child node
+- old Android tablet used as a dashboard, watcher, or observe-only worker
+- Raspberry Pi used as a low-power always-on child node
+- spare laptop or mini PC used as a stronger child worker
+- factory-reset phone or tablet kept on local Wi-Fi for cluster experiments
+- repurposed devices used for timing checks, heartbeats, evidence collection, and playbook-specific desk monitoring
 
-Network rule:
+Recommended network posture:
 
-- use only private Wi-Fi or trusted wired LAN
-- do not expose `0.0.0.0:8787` beyond the trusted LAN
-- do not port-forward the pairing server
-- do not reuse stale invites, QR codes, or child identities across unrelated tests
+- treat repurposed devices as semi-trusted hardware
+- factory reset the device before use when practical
+- connect it only to a trusted local Wi-Fi network
+- avoid storing API keys, broker credentials, or private tokens on child devices
+- keep execution authority on the core node only
+- keep child nodes observe-only by default
+- do not expose old Android devices or the pairing server directly to the public internet
+- do not use outdated child devices for live trading execution
+- do not allow child nodes to approve work, mutate canonical shared state, or place orders
 
-Prerequisite dependencies:
+Device classes:
 
-| Device lane | Required dependencies | Notes |
+| Device lane | Bootstrap dependencies | Steady-state target |
 | --- | --- | --- |
-| Android phone/tablet with Termux | Termux app, Termux:API app, `termux-api`, `openssh`, `git`, `curl`, `rust`, `clang`, `pkg-config`, `openssl` | Recommended for factory-reset Wi-Fi Android devices. Termux:API improves telemetry when available. |
-| Raspberry Pi / DietPi core or child | `openssh-client`/`openssh-server`, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | SSH is for administration; Cargo builds the core or child locally. |
-| Linux mini PC or similar edge worker | SSH, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Treat as observe-only child unless explicitly selected as core. |
+| Android phone/tablet with Termux | Termux app, optional Termux:API app, optional `termux-api`, `curl`, `git`, `rust`/Cargo, `clang`, `pkg-config`, `openssl`, optional `openssh` | Prebuilt `quant-m-child`, local child config, node identity, core LAN address, optional cached knowledge packs; no Git/Cargo/repo clone requirement. |
+| Raspberry Pi / DietPi core or child | `curl`, SSH, `git`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Prebuilt `quant-m-child` or `quant-m`, system service or shell launcher, local config, node identity, core LAN address, optional cached knowledge packs; no source build required for normal operation. |
+| Spare laptop, mini PC, or Linux box | `curl`, SSH, `git`, Cargo for development/source builds, prebuilt Quant-M binaries for normal operation | Stronger child worker or core-node test host. Child workers report evidence; the core owns canonical state and execution gates. |
 
-Termux setup:
+Termux and Termux add-ons should come from the same install source when possible. Source/signature mismatches can break add-on behavior. Termux:API is optional unless the child worker needs Android-specific device functions such as battery status, wake behavior, notifications, sensors, clipboard, or other Android integrations.
+
+Dependency policy:
+
+- bootstrap may temporarily require `curl`, SSH, `git`, Cargo/Rust, Termux, or Termux:API during local-alpha validation
+- steady-state child nodes should not require Cargo, Rust, Git, repo clones, direct database access, broker credentials, model-provider credentials, or arbitrary shell tools from knowledge packs
+- long-term target: build elsewhere, ship a prebuilt child binary, pair to the core, sync approved knowledge packs, submit evidence only
+
+Knowledge packs and playbooks:
+
+- approved packs live on the core first
+- child nodes may sync approved packs after pairing
+- packs may include `playbook.md`, `playbook.manifest.json`, `timing.toml`, `skills.manifest.json`, schemas, desk notes, markdown wiki pages, and normalization contracts
+- knowledge packs are not execution authority
+- a child may report the active pack hash in heartbeat and use the pack to format evidence
+- a child must not execute arbitrary scripts from a pack unless the skill is already compiled into the child binary or explicitly approved by the core
+
+Minimal local-alpha child checklist:
+
+- connect to the same local Wi-Fi as the core
+- run Termux or a Linux shell
+- receive or build the `quant-m-child` binary
+- create a node identity
+- submit a pairing request to the core
+- receive manual approval from the operator
+- heartbeat over LAN
+- become stale when disconnected
+- reconnect and recover heartbeat status
+- submit observe-only evidence
+- fail safely after lease revoke
+
+Future target checklist:
+
+- scan a QR code from the core
+- download the correct prebuilt child binary
+- verify checksum
+- pair with the core
+- receive an observe-only role
+- auto-sync approved knowledge packs
+- report active pack hash in heartbeat
+- run allowed observe-only skills
+- submit structured evidence
+- update through the core-controlled bootstrap channel
+
+Termux bootstrap setup:
 
 ```bash
 pkg update
 pkg install termux-api openssh git curl rust clang pkg-config openssl
 ```
 
-Raspberry Pi / Debian-style setup:
+Raspberry Pi / Debian-style bootstrap setup:
 
 ```bash
 sudo apt-get update
