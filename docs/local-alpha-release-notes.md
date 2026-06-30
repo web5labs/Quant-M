@@ -107,6 +107,6 @@ The local-alpha release record preserves these values:
 
 Local validation is recorded in [local-alpha-release-candidate-2026-06-27.md](validation-runs/local-alpha-release-candidate-2026-06-27.md).
 
-Real Pi/DietPi plus Termux LAN validation is still blocked until the devices are reachable. The blocked artifact is recorded in [pi-termux-lan-2026-06-27.md](validation-runs/pi-termux-lan-2026-06-27.md) and must not be counted as pass evidence.
+Real-device LAN validation for the current local-alpha path passed with a laptop fallback core and Android Termux child. The pass artifact is recorded in [real-device-lan-smoke-15a-2026-06-30.md](validation-runs/real-device-lan-smoke-15a-2026-06-30.md). The older blocked artifact remains in [pi-termux-lan-2026-06-27.md](validation-runs/pi-termux-lan-2026-06-27.md) as historical evidence only.
 
-Next milestone after tagging: `REAL_DEVICE_LAN_SMOKE_15A`.
+Next milestone after this validation: child bootstrap / transport hardening before child pack sync or broader product expansion.

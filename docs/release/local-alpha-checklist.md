@@ -30,23 +30,23 @@ Goal: produce release artifacts and proof without adding runtime authority.
 
 ## Required Real-Device Proof
 
-- [ ] Pi/DietPi or laptop fallback core on LAN
-- [ ] Termux child on LAN
-- [ ] pair
-- [ ] approve
-- [ ] heartbeat
-- [ ] telemetry visible
-- [ ] observe lease
-- [ ] echo evidence
-- [ ] scalar evidence
-- [ ] cluster report
-- [ ] `proposal_count=0`
-- [ ] `execution=false`
-- [ ] `provider_calls=false`
+- [x] Pi/DietPi or laptop fallback core on LAN
+- [x] Termux child on LAN
+- [x] pair
+- [x] approve
+- [x] heartbeat
+- [x] telemetry visible
+- [x] observe lease
+- [x] echo evidence
+- [x] scalar evidence
+- [x] cluster report
+- [x] `proposal_count=0`
+- [x] `execution=false`
+- [x] `provider_calls=false`
 
-Current status: blocked until real devices are reachable. See `docs/validation-runs/pi-termux-lan-2026-06-27.md`.
+Current status: passed for the current local-alpha LAN pairing, heartbeat, observe-only lease, non-authoritative evidence, stale/reconnect, and revoke gate. See `docs/validation-runs/real-device-lan-smoke-15a-2026-06-30.md`.
 
-This blocks fresh-device alpha, public beta, and production claims. It does not block shipping `v0.local-alpha` as a local-lab release when labeled honestly.
+This unblocks the local-alpha LAN smoke milestone when labeled honestly. Public beta, production claims, autonomous trading, autonomous betting, broker APIs, child pack sync, and remote execution APIs remain blocked.
 
 ## Ship Decision
 
