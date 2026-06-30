@@ -22,7 +22,97 @@ Quant-M is not a chatbot, broker, hosted agent platform, or trading bot. It is t
 
 > `v0.1.0-alpha`: public developer preview. CLI-first, local-first, intentionally conservative, and not a production trading system.
 
-[Five-Minute Proof](#five-minute-proof) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Validation](#validation)
+[Start Here](#start-here) | [Agent Cluster](#agent-cluster) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Validation](#validation)
+
+## Start Here
+
+Quant-M is easiest to understand as a local safety layer for agent work. Run it on one device first. Add phones, tablets, Raspberry Pi boards, or other small devices later as observe-only Agent Cluster workers.
+
+### 1. Prepare The Device
+
+Pick the one block that matches your device.
+
+Laptop, desktop, or Raspberry Pi / Debian-style Linux:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl cargo openssh-client
+```
+
+Android phone or tablet with Termux:
+
+```bash
+pkg update
+pkg install git curl rust openssh termux-api
+```
+
+Termux:API is optional unless you want Android-specific device telemetry such as battery status. Install Termux and Termux add-ons from the same source when possible.
+
+### 2. Get Quant-M
+
+```bash
+git clone https://github.com/web5labs/Quant-M.git
+cd Quant-M
+```
+
+### 3. Run One Command
+
+```bash
+./quantm
+```
+
+That command opens onboarding on a fresh checkout. On small devices, onboarding writes the safe local config first and does not require the Rust core to be compiled before you answer the setup questions.
+
+If this device will be the core, choose the core role during onboarding. If this device will be a child worker, choose the child role and let Quant-M print the next device-specific step.
+
+## Agent Cluster
+
+Agent Cluster is the local-alpha lane for repurposing old, outdated, deprecated, or factory-reset Wi-Fi devices as safe Quant-M child nodes on a trusted LAN. This includes old Android phones, Android tablets, Raspberry Pi boards, mini PCs, low-power Linux laptops, and similar devices that can stay connected to local Wi-Fi.
+
+The goal is not to turn these devices into full developer machines. The goal is to reuse available hardware as lightweight observe-only workers that can pair with a Quant-M core node, heartbeat over LAN, run bounded tasks, and report non-authoritative evidence back to the core.
+
+Good first use cases:
+
+- old Android phone used as a Termux child node
+- old Android tablet used as a watcher or observe-only worker
+- Raspberry Pi used as a low-power always-on child node
+- spare laptop or mini PC used as a stronger child worker
+- factory-reset phone or tablet kept on local Wi-Fi for cluster experiments
+
+Safety rules:
+
+- factory reset repurposed devices before use when practical
+- keep them on trusted local Wi-Fi
+- do not store API keys, broker credentials, or private tokens on child devices
+- keep execution authority on the core node only
+- keep child nodes observe-only by default
+- do not expose the pairing server directly to the public internet
+- do not use outdated child devices for live trading execution
+- do not allow child nodes to approve work, mutate canonical shared state, or place orders
+
+What this local alpha can demonstrate:
+
+- core CLI and `quant-m-child`
+- QR/link child pairing with manual approval
+- heartbeat visibility and device telemetry
+- explicit observe-only leases
+- echo evidence and scalar compute evidence
+- Android node kit and deployment helpers for local-lab devices
+
+What remains disabled:
+
+- live trading and live betting
+- broker, exchange, or sportsbook execution
+- provider calls from children
+- automatic proposal approval
+- child canonical writes
+- production remote orchestration
+
+More device details:
+
+- [Android deployment guide](deploy/android/README.md)
+- [Android node bundle](android-node-kit/bundles/quant-m-edge-bundle/README.md)
+- [Base runtime profile](android-node-kit/bundles/profiles/base-runtime/README.md)
 
 ## What Quant-M Is
 
@@ -54,117 +144,19 @@ Most AI tools focus on making agents do more. Quant-M focuses on making agent wo
 
 Use Quant-M when you want coding agents, worker agents, local models, or research workflows to leave behind evidence instead of terminal scrollback. Do not use it if you want a fully autonomous trading bot, a hosted SaaS agent platform, or unchecked tool execution.
 
+## First Run
 
-## Five-Minute Proof
+On a fresh checkout, the main command starts onboarding. After onboarding, it opens the governed Quant-M chat cockpit so you can communicate with the local evidence agent.
 
-Clone the repo:
+Useful cockpit commands are `/help`, `/state`, `/cost`, `/ask`, and `/quit`.
 
-```bash
-git clone https://github.com/web5labs/Quant-M.git
-cd Quant-M
-```
-
-Run the local demo path:
-
-```bash
-./quantm demo
-```
-
-Or start Quant-M:
-
-```bash
-./quantm
-```
-
-On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire before any chat UI opens. If the command is launched from a non-interactive copy/paste runner, Quant-M stops and asks you to run `./quantm onboard` in a real terminal instead of silently entering stale inspect mode.
-
-During onboarding, choose the CLI or provider you actually want to use. Manual CLI choices are allowed even before login; after browser/account verification, run the matching validation command:
-
-```bash
-./quantm tool setup codex
-./quantm tool setup claude
-./quantm tool setup antigravity
-./quantm tool validate codex
-./quantm tool validate claude
-./quantm tool validate antigravity
-./quantm provider validate openrouter --live
-```
-
-After onboarding is completed, `./quantm` opens the governed Quant-M chat cockpit. If a chat-capable CLI such as Codex, Claude, or Gemini is enabled, `/ask` and plain text route to that CLI through a bounded adapter. If no chat-capable CLI is enabled, the cockpit stays inspect-only and will say so directly instead of pretending to answer.
-
-Inside the Quant-M chat cockpit, try:
+To chat through the Codex CLI from inside Quant-M, install and log in to Codex first, then ask from the cockpit:
 
 ```text
-/help
-/write
-/add-dir ~/Desktop
-/state
-/cost
 /ask what should I inspect first?
-/quit
 ```
 
-Chat starts in read-only mode. Use `/write` when you want Codex to create or edit files inside the Quant-M workspace. To let Codex write somewhere outside the workspace, grant that directory for the current chat session first:
-
-```text
-/write
-/add-dir ~/Desktop
-create a folder on my Desktop named quantm-test
-/read
-```
-
-`/read` returns the chat to read-only mode. Quant-M uses Codex `workspace-write` for `/write`; it does not use unrestricted `danger-full-access`.
-
-The classic text shell remains available:
-
-```bash
-./quantm shell
-```
-
-Inside `quant-m>`, try:
-
-```text
-demo
-doctor
-help
-exit
-```
-
-For an inspect-first terminal cockpit, use the existing TUI chat mode:
-
-```bash
-./quantm tui chat --inspect
-```
-
-The same command works on macOS, Linux, and Termux once the repo is built. On Windows PowerShell, after building with Cargo, run:
-
-```powershell
-.\target\debug\quant-m.exe tui chat --inspect
-```
-
-This is chat-shaped evidence navigation, not an agent authority surface. It reads structured Quant-M truth through internal Rust paths and does not call providers, write worker proposals, or shell out to `quant-m`.
-
-To chat through the Codex CLI from inside the shell, use `ask <question>` after Codex is installed and logged in:
-
-```text
-ask what should I inspect first?
-```
-
-For the direct proof loop:
-
-```bash
-./quantm consensus --dry-run "What should a new Quant-M user inspect first?"
-```
-
-Copy the printed `session_id`, then run:
-
-```bash
-./quantm replay <session_id>
-./quantm compact <session_id>
-./quantm context guard --json
-./quantm cost summary
-./quantm fsm authority
-```
+For deeper CLI proof commands, use the validation checks below or the Android deployment docs.
 
 The first run is intentionally safe:
 
@@ -177,7 +169,7 @@ The first run is intentionally safe:
 
 ## Expected Result
 
-After the proof loop, you should be able to inspect a session record, evidence index, replay result, compact continuation packet, Context Guardian output, cost summary, and FSM authority snapshot. The point is to show that Quant-M can preserve what happened, classify what was allowed, and prepare safer continuation state for the next session.
+After first run, you should be able to inspect a session record, evidence index, replay result, compact continuation packet, Context Guardian output, cost summary, and FSM authority snapshot. The point is to show that Quant-M can preserve what happened, classify what was allowed, and prepare safer continuation state for the next session.
 
 ## Safety Posture
 
@@ -246,28 +238,11 @@ Long session
   -> next agent resumes from accepted facts
 ```
 
-What each piece means:
-
-| Piece | Purpose |
-| --- | --- |
-| Session evidence | The durable record of what happened, what was observed, and what was accepted or blocked. |
-| Replay record | A way to inspect the session later without repeating side effects. |
-| Compact packet | A smaller continuation summary built from accepted facts, not raw chat sprawl. |
-| Context Guardian report | A typed status check that says whether the current context is healthy, stale, needs compaction, needs review, or should be blocked. |
-| Continuation handoff | The packet a future model or session can use to resume safely. |
-
 The goal is simple: a future model should not need to reread a giant chat history or invent missing context. It should resume from the facts Quant-M accepted, the actions Quant-M blocked, and the next step Quant-M recommends.
 
 ## Authority Snapshot
 
-The Rust authority registry is the source of truth:
-
-```bash
-./quantm fsm authority
-./quantm fsm authority --json
-./quantm capabilities
-./quantm capabilities --json
-```
+The Rust authority registry is the source of truth. It separates wired, guarded, dry-run, mock, experimental, design-only, unavailable, and deprecated surfaces.
 
 Current alpha snapshot:
 
@@ -327,19 +302,7 @@ Those desks are not promises. They explain why Quant-M is strict: a runtime shap
 
 ## Onboarding Preview
 
-Run guided setup when you want to review or change first-run answers:
-
-```bash
-./quantm onboard
-```
-
-For a throwaway demo config that will not touch your local setup:
-
-```bash
-./quantm --config /tmp/quant-m-demo.toml onboard
-```
-
-The onboarding flow covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
+The onboarding flow runs from the main `./quantm` command on a fresh checkout. It covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
 
 When you say a local model is available, onboarding scans common Ollama and LM Studio model locations and lists detected model tags first. CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
 
