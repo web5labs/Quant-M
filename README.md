@@ -57,6 +57,35 @@ cargo build --bin quant-m-child --profile release-child --no-default-features --
 
 On Raspberry Pi, DietPi, Termux, or other edge devices, choose the device role explicitly.
 
+### Agent Cluster
+
+Use this lane for old, outdated, deprecated, or factory-reset Wi-Fi devices that can still live safely on a trusted local network: old Android phones, tablets, Raspberry Pi boards, DietPi boxes, mini PCs, or similar edge hardware. The use case is modest on purpose: turn spare devices into observe-only Quant-M children that can pair, heartbeat, report device telemetry when available, and return non-authoritative evidence without becoming execution, approval, broker, provider, or canonical-write authorities.
+
+Keep these devices on a private LAN. Do not expose the pairing server to the public internet, do not port-forward it, and do not treat an old device as trusted just because it paired successfully. Pairing means known device; heartbeat means visible device; an observe-only lease means bounded evidence work only.
+
+Prerequisite device dependencies:
+
+| Device lane | Required dependencies | Notes |
+| --- | --- | --- |
+| Android phone/tablet with Termux | Termux app, Termux:API app, `termux-api`, `openssh`, `git`, `curl`, `rust`, `clang`, `pkg-config`, `openssl` | Best for factory-reset Wi-Fi Android devices. Termux:API is optional for richer battery/storage telemetry, but install it when available. |
+| Raspberry Pi / DietPi child or core | `openssh-client`/`openssh-server`, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Use SSH for administration and Cargo for local builds. |
+| Linux mini PC or similar edge worker | SSH, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Treat as a child unless it is intentionally selected as the core. |
+
+Termux dependency setup:
+
+```bash
+pkg update
+pkg install termux-api openssh git curl rust clang pkg-config openssl
+```
+
+Raspberry Pi / Debian-style dependency setup:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y openssh-client openssh-server git curl build-essential pkg-config libssl-dev
+curl https://sh.rustup.rs -sSf | sh
+```
+
 For a Raspberry Pi core node:
 
 ```bash

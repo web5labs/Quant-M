@@ -45,6 +45,48 @@ Minimum hardware:
 | Child | Android phone or tablet with Termux | edge child |
 | Optional child | Raspberry Pi edge worker | second child |
 
+## Agent Cluster Device Prerequisites
+
+This lane is for old, outdated, deprecated, or factory-reset Wi-Fi devices that can still participate safely on a trusted local network: old Android phones, tablets, Raspberry Pi boards, DietPi boxes, mini PCs, or similar edge hardware.
+
+Use case overview:
+
+- turn spare local devices into observe-only Quant-M children
+- pair them over a private LAN with explicit operator approval
+- collect heartbeat and best-effort device telemetry
+- return echo or scalar evidence as non-authoritative artifacts
+- keep proposal authority, execution authority, approval authority, provider calls, broker access, trading, betting, and canonical shared-state writes disabled
+
+Network rule:
+
+- use only private Wi-Fi or trusted wired LAN
+- do not expose `0.0.0.0:8787` beyond the trusted LAN
+- do not port-forward the pairing server
+- do not reuse stale invites, QR codes, or child identities across unrelated tests
+
+Prerequisite dependencies:
+
+| Device lane | Required dependencies | Notes |
+| --- | --- | --- |
+| Android phone/tablet with Termux | Termux app, Termux:API app, `termux-api`, `openssh`, `git`, `curl`, `rust`, `clang`, `pkg-config`, `openssl` | Recommended for factory-reset Wi-Fi Android devices. Termux:API improves telemetry when available. |
+| Raspberry Pi / DietPi core or child | `openssh-client`/`openssh-server`, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | SSH is for administration; Cargo builds the core or child locally. |
+| Linux mini PC or similar edge worker | SSH, `git`, `curl`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Treat as observe-only child unless explicitly selected as core. |
+
+Termux setup:
+
+```bash
+pkg update
+pkg install termux-api openssh git curl rust clang pkg-config openssl
+```
+
+Raspberry Pi / Debian-style setup:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y openssh-client openssh-server git curl build-essential pkg-config libssl-dev
+curl https://sh.rustup.rs -sSf | sh
+```
+
 Record the tested matrix:
 
 ```text
@@ -141,7 +183,7 @@ On Termux:
 
 ```bash
 pkg update
-pkg install git rust clang pkg-config openssl
+pkg install termux-api openssh git curl rust clang pkg-config openssl
 git clone <repo-url> quantm
 cd quantm
 git fetch origin

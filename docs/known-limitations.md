@@ -8,9 +8,9 @@ Quant-M Edge Cluster Local Alpha is for local lab use only. It is not a public b
 
 ## Hardware Proof
 
-Real Pi/DietPi plus Termux LAN validation is not complete in this workspace. The current record is blocked because the physical devices were not reachable from the Codex environment.
+Real-device LAN validation passed for the current local-alpha path with a laptop fallback core and Android Termux child. The validation covers pairing, approval, heartbeat, observe-only lease, non-authoritative evidence, stale/reconnect, and revoke gating.
 
-Fresh-device alpha remains almost ready, but still requires a real LAN smoke test.
+Fresh-device alpha still needs packaging/autostart polish and broader repeated-device proof before public beta or production claims.
 
 ## Cluster Transport
 
@@ -33,4 +33,3 @@ The local alpha still needs fresh-machine packaging proof before any wider relea
 ## Security Review
 
 The current security posture is conservative, but it is not a completed production security review. Keep pairing servers on trusted LANs only, do not expose pairing endpoints to the public internet, and do not bundle generated state, secrets, live QR tokens, or child identities into release artifacts.
-
