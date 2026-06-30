@@ -22,11 +22,75 @@ Quant-M is not a chatbot, broker, hosted agent platform, or trading bot. It is t
 
 > `v0.1.0-alpha`: public developer preview. CLI-first, local-first, intentionally conservative, and not a production trading system.
 
-[Five-Minute Proof](#five-minute-proof) | [Local Alpha Edge Cluster](#local-alpha-edge-cluster) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Release Notes](docs/release/v0.1.0-alpha.md)
+[Start Here](#start-here) | [Agent Cluster](#agent-cluster) | [Safety](#safety-posture) | [Runtime Model](#runtime-model) | [Authority Snapshot](#authority-snapshot) | [Story](#origin-story) | [Release Notes](docs/release/v0.1.0-alpha.md)
 
-## Local Alpha Edge Cluster
+## Start Here
 
-Quant-M Edge Cluster Local Alpha is an experimental local-lab core/child worker runtime. It is suitable for a trusted LAN or fresh-device lab test, not for public beta, production deployment, autonomous trading, or autonomous betting.
+Quant-M is easiest to understand as a local safety layer for agent work. Run it on one device first. Add phones, tablets, Raspberry Pi boards, or other small devices later as observe-only Agent Cluster workers.
+
+### 1. Prepare The Device
+
+Pick the one block that matches your device.
+
+Laptop, desktop, or Raspberry Pi / Debian-style Linux:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl cargo openssh-client
+```
+
+Android phone or tablet with Termux:
+
+```bash
+pkg update
+pkg install git curl rust openssh termux-api
+```
+
+Termux:API is optional unless you want Android-specific device telemetry such as battery status. Install Termux and Termux add-ons from the same source when possible.
+
+### 2. Get Quant-M
+
+```bash
+git clone https://github.com/web5labs/Quant-M.git
+cd Quant-M
+```
+
+### 3. Run One Command
+
+```bash
+./quantm
+```
+
+That command opens onboarding on a fresh checkout. On small devices, onboarding writes the safe local config first and does not require the Rust core to be compiled before you answer the setup questions.
+
+If this device will be the core, choose the core role during onboarding. If this device will be a child worker, choose the child role and let Quant-M print the next device-specific step.
+
+The old `cluster` command still works, but `agent-cluster` is the preferred name for device and LAN testing after setup.
+
+## Agent Cluster
+
+Agent Cluster is the local-alpha lane for repurposing old, outdated, deprecated, or factory-reset Wi-Fi devices as safe Quant-M child nodes on a trusted LAN. This includes old Android phones, Android tablets, Raspberry Pi boards, mini PCs, low-power Linux laptops, and similar devices that can stay connected to local Wi-Fi.
+
+The goal is not to turn these devices into full developer machines. The goal is to reuse available hardware as lightweight observe-only workers that can pair with a Quant-M core node, heartbeat over LAN, run bounded tasks, and report non-authoritative evidence back to the core.
+
+Good first use cases:
+
+- old Android phone used as a Termux child node
+- old Android tablet used as a watcher or observe-only worker
+- Raspberry Pi used as a low-power always-on child node
+- spare laptop or mini PC used as a stronger child worker
+- factory-reset phone or tablet kept on local Wi-Fi for cluster experiments
+
+Safety rules:
+
+- factory reset repurposed devices before use when practical
+- keep them on trusted local Wi-Fi
+- do not store API keys, broker credentials, or private tokens on child devices
+- keep execution authority on the core node only
+- keep child nodes observe-only by default
+- do not expose the pairing server directly to the public internet
+- do not use outdated child devices for live trading execution
+- do not allow child nodes to approve work, mutate canonical shared state, or place orders
 
 What this local alpha can demonstrate:
 
@@ -35,8 +99,6 @@ What this local alpha can demonstrate:
 - heartbeat visibility and device telemetry
 - explicit observe-only leases
 - echo evidence and scalar compute evidence
-- desk observation evidence
-- playbook-bound local model handoff stubs
 - shared-state update validation
 
 What remains disabled:
@@ -47,139 +109,6 @@ What remains disabled:
 - automatic proposal approval
 - child canonical writes
 - production remote orchestration
-
-Build the core and tiny child locally:
-
-```bash
-cargo build --features core-full
-cargo build --bin quant-m-child --profile release-child --no-default-features --features child-min
-```
-
-On Raspberry Pi, DietPi, Termux, or other edge devices, choose the device role explicitly.
-
-### Agent Cluster
-
-Agent Cluster is the local-alpha lane for repurposing old, outdated, deprecated, or factory-reset Wi-Fi devices as safe Quant-M child nodes on a trusted LAN. This includes old Android phones, Android tablets, Raspberry Pi boards, mini PCs, low-power Linux laptops, and similar devices that can stay connected to local Wi-Fi.
-
-The goal is not to turn these devices into full developer machines. The goal is to reuse available hardware as lightweight observe-only workers that can pair with a Quant-M core node, heartbeat over LAN, run bounded tasks, and report non-authoritative evidence back to the core.
-
-Use cases:
-
-- old Android phone used as a Termux child node
-- old Android tablet used as a watcher or observe-only worker
-- Raspberry Pi used as a low-power always-on child node
-- spare laptop or mini PC used as a stronger child worker
-- factory-reset phone or tablet kept on local Wi-Fi for cluster experiments
-- repurposed devices used for timing checks, heartbeats, evidence collection, and playbook-specific desk monitoring
-
-Recommended network posture:
-
-- factory reset repurposed devices before use when practical
-- connect them only to a trusted local Wi-Fi network
-- avoid storing API keys, broker credentials, or private tokens on child devices
-- keep execution authority on the core node only
-- keep child nodes observe-only by default
-- do not expose old Android devices or the pairing server directly to the public internet
-- do not use outdated child devices for live trading execution
-- do not allow child nodes to approve work, mutate canonical shared state, or place orders
-
-Device classes and dependencies:
-
-| Device lane | Bootstrap dependencies | Steady-state target |
-| --- | --- | --- |
-| Android phone/tablet with Termux | Termux app, optional Termux:API app, optional `termux-api`, `curl`, `git`, `rust`/Cargo, `clang`, `pkg-config`, `openssl`, optional `openssh` | Prebuilt `quant-m-child`, local child config, node identity, core LAN address, optional cached knowledge packs; no Git/Cargo/repo clone requirement. |
-| Raspberry Pi / DietPi child or core | `curl`, SSH, `git`, Rust/Cargo, C build tools, OpenSSL/pkg-config packages | Prebuilt `quant-m-child` or `quant-m`, local config, node identity, core LAN address, optional service launcher; no source build required for normal operation. |
-| Linux mini PC or similar edge worker | `curl`, SSH, `git`, Rust/Cargo for development, prebuilt Quant-M binaries for normal operation | Stronger child worker or core-node test host, with the same observe-only child boundary unless intentionally selected as core. |
-
-Termux and Termux add-ons should come from the same install source when possible. Source/signature mismatches can break add-on behavior. Termux:API is optional unless the child needs Android-specific device functions such as battery status, wake behavior, notifications, sensors, clipboard, or other Android integrations.
-
-Bootstrap dependencies are acceptable during local-alpha testing. Steady-state child nodes should not require Cargo, Rust, Git, a repo clone, direct database access, broker credentials, model-provider credentials, or arbitrary shell tools from knowledge packs. The long-term target is: build elsewhere, ship a prebuilt child binary, pair to the core, sync approved knowledge packs, and submit evidence only.
-
-Termux bootstrap setup:
-
-```bash
-pkg update
-pkg install termux-api openssh git curl rust clang pkg-config openssl
-```
-
-Raspberry Pi / Debian-style bootstrap setup:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y openssh-client openssh-server git curl build-essential pkg-config libssl-dev
-curl https://sh.rustup.rs -sSf | sh
-```
-
-Recommended onboarding labels:
-
-- Agent Cluster
-- Run this device as Agent Cluster core
-- Join an existing Agent Cluster as child worker
-- Prepare Android/Termux child
-- Prepare Raspberry Pi/Linux child
-
-For a Raspberry Pi core node:
-
-```bash
-git fetch origin
-git checkout release/v0-local-alpha
-git pull origin release/v0-local-alpha
-./quantm onboard
-```
-
-On small devices, `./quantm onboard` uses a fast shell onboarding path when the core binary is not built yet. It asks the essential setup questions and writes `quant-m.toml` plus `workspace/` without compiling the Rust core first. Compile the core later with:
-
-```bash
-./quantm core-build
-```
-
-To clear saved onboarding choices and run the prompts again:
-
-```bash
-./quantm clear-onboarding
-./quantm onboard
-```
-
-To inspect the packages and tools used during Pi setup:
-
-```bash
-bash scripts/pi_dependency_audit.sh
-bash scripts/pi_lean_cleanup.sh --dry-run
-```
-
-For a child/worker node:
-
-```bash
-git fetch origin
-git checkout release/v0-local-alpha
-git pull origin release/v0-local-alpha
-./quantm child-build
-./quantm child doctor
-```
-
-Bare `./quantm` on an edge device prints the role guide. Explicit `./quantm onboard` always starts core onboarding.
-
-After onboarding, Quant-M offers to print the child-device smoke-test handoff. To run it manually, start the pairing server from the core:
-
-```bash
-./quantm core pair serve --bind 0.0.0.0:8787
-```
-
-Then in a second core terminal:
-
-```bash
-./quantm core device add tablet-01 --desk stablecoin --role stablecoin_peg_watcher --qr --watch --no-server
-```
-
-On the child device, use the printed link or command from the core. After operator approval, keep the child observe-only and verify heartbeat/telemetry from the core:
-
-```bash
-./quantm agent-cluster device options
-./quantm agent-cluster nodes
-./quantm agent-cluster report
-```
-
-`agent-cluster` is the preferred terminal spelling for the cluster feature. The older `cluster` command name remains available for compatibility.
 
 Release-candidate docs:
 
@@ -221,89 +150,21 @@ Most AI tools focus on making agents do more. Quant-M focuses on making agent wo
 Use Quant-M when you want coding agents, worker agents, local models, or research workflows to leave behind evidence instead of terminal scrollback. Do not use it if you want a fully autonomous trading bot, a hosted SaaS agent platform, or unchecked tool execution.
 
 
-## Five-Minute Proof
+## First Run
 
-Clone the repo:
+On a fresh checkout, the main command starts onboarding. After onboarding, it opens the governed Quant-M chat cockpit so you can communicate with the local evidence agent.
 
-```bash
-git clone https://github.com/web5labs/Quant-M.git
-cd Quant-M
-```
+Useful cockpit commands are `/help`, `/state`, `/cost`, `/ask`, and `/quit`.
 
-Run the local demo path:
+An inspect-first terminal view is also available after setup. It is chat-shaped evidence navigation, not an agent authority surface. It reads structured Quant-M truth through internal Rust paths and does not call providers, write worker proposals, or shell out to `quant-m`.
 
-```bash
-./quantm demo
-```
-
-Or start Quant-M:
-
-```bash
-./quantm
-```
-
-On a project that has not completed onboarding, `./quantm` starts the full first-run questionnaire. After onboarding is completed, `./quantm` opens the governed Quant-M chat cockpit so the user can communicate with the local evidence agent.
-
-Inside the Quant-M chat cockpit, try:
+To chat through the Codex CLI from inside Quant-M, install and log in to Codex first, then ask from the cockpit:
 
 ```text
-/help
-/state
-/cost
 /ask what should I inspect first?
-/quit
 ```
 
-The classic text shell remains available:
-
-```bash
-./quantm shell
-```
-
-Inside `quant-m>`, try:
-
-```text
-demo
-doctor
-help
-exit
-```
-
-For an inspect-first terminal cockpit, use the existing TUI chat mode:
-
-```bash
-./quantm tui chat --inspect
-```
-
-The same command works on macOS, Linux, and Termux once the repo is built. On Windows PowerShell, after building with Cargo, run:
-
-```powershell
-.\target\debug\quant-m.exe tui chat --inspect
-```
-
-This is chat-shaped evidence navigation, not an agent authority surface. It reads structured Quant-M truth through internal Rust paths and does not call providers, write worker proposals, or shell out to `quant-m`.
-
-To chat through the Codex CLI from inside the shell, use `ask <question>` after Codex is installed and logged in:
-
-```text
-ask what should I inspect first?
-```
-
-For the direct proof loop:
-
-```bash
-./quantm consensus --dry-run "What should a new Quant-M user inspect first?"
-```
-
-Copy the printed `session_id`, then run:
-
-```bash
-./quantm replay <session_id>
-./quantm compact <session_id>
-./quantm context guard --json
-./quantm cost summary
-./quantm fsm authority
-```
+For deeper CLI proof commands, see the validation and release docs.
 
 The first run is intentionally safe:
 
@@ -316,7 +177,7 @@ The first run is intentionally safe:
 
 ## Expected Result
 
-After the proof loop, you should be able to inspect a session record, evidence index, replay result, compact continuation packet, Context Guardian output, cost summary, and FSM authority snapshot. The point is to show that Quant-M can preserve what happened, classify what was allowed, and prepare safer continuation state for the next session.
+After first run, you should be able to inspect a session record, evidence index, replay result, compact continuation packet, Context Guardian output, cost summary, and FSM authority snapshot. The point is to show that Quant-M can preserve what happened, classify what was allowed, and prepare safer continuation state for the next session.
 
 ## Safety Posture
 
@@ -387,14 +248,7 @@ A long session can produce evidence, replay records, compact packets, Context Gu
 
 ## Authority Snapshot
 
-The Rust authority registry is the source of truth:
-
-```bash
-./quantm fsm authority
-./quantm fsm authority --json
-./quantm capabilities
-./quantm capabilities --json
-```
+The Rust authority registry is the source of truth. It separates wired, guarded, dry-run, mock, experimental, design-only, unavailable, and deprecated surfaces.
 
 Current alpha snapshot:
 
@@ -454,19 +308,7 @@ Those desks are not promises. They explain why Quant-M is strict: a runtime shap
 
 ## Onboarding Preview
 
-Run guided setup when you want to review or change first-run answers:
-
-```bash
-./quantm onboard
-```
-
-For a throwaway demo config that will not touch your local setup:
-
-```bash
-./quantm --config /tmp/quant-m-demo.toml onboard
-```
-
-The onboarding flow covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
+The onboarding flow runs from the main `./quantm` command on a fresh checkout. It covers workspace, device type, network posture, model provider, local model availability, explicit CLI tool selection, operator channel, continuity guard, and final review.
 
 When you say a local model is available, onboarding scans common Ollama and LM Studio model locations and lists detected model tags first. CLI choices include Codex CLI, OpenAI CLI, Gemini CLI, Claude/Anthropic CLIs, OpenCode, Antigravity-style CLIs, Ollama, and LM Studio. Detection does not grant execution permission.
 
