@@ -4,6 +4,7 @@ mod boil;
 mod bootstrap;
 mod capabilities;
 mod channels;
+mod child_bootstrap;
 mod cluster_boundary;
 mod compaction;
 mod config;
@@ -199,6 +200,10 @@ enum Commands {
         #[command(subcommand)]
         command: WorkerCommand,
     },
+    Bootstrap {
+        #[command(subcommand)]
+        command: BootstrapCommand,
+    },
     Memory {
         #[command(subcommand)]
         command: MemoryCommand,
@@ -382,6 +387,30 @@ enum WorkerProposalCommand {
         status: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BootstrapCommand {
+    /// List valid prebuilt child binary bundles without starting the server.
+    List {
+        #[arg(long, default_value = "./release-bundles")]
+        bundle_dir: PathBuf,
+        #[arg(long, default_value = "http://127.0.0.1:8788")]
+        bootstrap_url: String,
+        #[arg(long, default_value = "http://127.0.0.1:8787")]
+        core_url: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Serve child binary bootstrap page, metadata API, and approved downloads.
+    Serve {
+        #[arg(long, default_value = "0.0.0.0:8788")]
+        bind: String,
+        #[arg(long, default_value = "./release-bundles")]
+        bundle_dir: PathBuf,
+        #[arg(long, default_value = "http://127.0.0.1:8787")]
+        core_url: String,
     },
 }
 
@@ -1011,6 +1040,29 @@ async fn main() -> Result<()> {
                     }
                 }
             },
+        },
+        Commands::Bootstrap { command } => match command {
+            BootstrapCommand::List {
+                bundle_dir,
+                bootstrap_url,
+                core_url,
+                json,
+            } => {
+                let listing =
+                    child_bootstrap::list_bundles(&bundle_dir, &bootstrap_url, &core_url)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&listing)?);
+                } else {
+                    print!("{}", child_bootstrap::render_listing_text(&listing));
+                }
+            }
+            BootstrapCommand::Serve {
+                bind,
+                bundle_dir,
+                core_url,
+            } => {
+                child_bootstrap::serve(bundle_dir, &bind, &core_url)?;
+            }
         },
         Commands::Memory { command } => {
             let store = MemoryStore::open(&cfg)?;
@@ -4601,6 +4653,10 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         Commands::Daemon { .. } | Commands::Heartbeat { .. } | Commands::Telegram { .. } => {
             StorageMode::WorkerRun
         }
+        Commands::Bootstrap { command } => match command {
+            BootstrapCommand::List { .. } => StorageMode::Inspect,
+            BootstrapCommand::Serve { .. } => StorageMode::WorkerRun,
+        },
         Commands::Worker { command } => match command {
             WorkerCommand::Proposal {
                 command: WorkerProposalCommand::List { .. },

@@ -40,6 +40,7 @@ exclude = [
 
 [features]
 default = []
+core-full = []
 fuzzing_hooks = []
 
 [dependencies]
@@ -54,6 +55,7 @@ postcard = { version = "1", features = ["use-std"] }
 redb = "3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 tokio = { version = "1.47", features = ["macros", "rt", "time", "signal", "process", "sync"] }
 toml = "0.9"
 

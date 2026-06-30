@@ -8,6 +8,52 @@ Old Android and Termux devices should not be expected to clone GitHub or build Q
 
 If a tablet hits that Termux package failure, repair the Termux environment with package updates, `termux-change-repo`, and Git/curl/TLS package reinstalls. Product direction is to route around that class of failure: the core should host or push a prebuilt child binary over local Wi-Fi, then the child pairs and syncs approved packs.
 
+## Core-Hosted Bootstrap
+
+For `CHILD_BINARY_BOOTSTRAP_16A`, the core can expose a local child-binary bootstrap endpoint:
+
+```bash
+quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-lan-ip>:8787
+```
+
+The endpoint exposes:
+
+- `GET /`: install page for old Android/Termux child devices
+- `GET /api/bundles`: JSON listing of valid child bundles
+- `GET /download/<file>`: download for metadata-approved binaries only
+
+Each bundle is backed by a `.toml` metadata file in the bundle directory:
+
+```toml
+binary_name = "quant-m-child"
+version = "0.1.0"
+commit = "abc1234"
+platform = "android"
+architecture = "armv7"
+abi = "armeabi-v7a"
+file_name = "quant-m-child"
+file_size = 524272
+sha256 = "<sha256>"
+created_at = "2026-06-30T00:00:00Z"
+min_core_version = "0.1.0"
+notes = "local alpha child binary"
+```
+
+Invalid bundles are hidden. Downloads are denied for path traversal, unlisted files, missing files, size mismatches, and checksum mismatches.
+
+The child-side instructions stay intentionally small:
+
+```bash
+pkg update
+pkg install curl openssh termux-api
+curl -fL -o quant-m-child http://<core-lan-ip>:8788/download/quant-m-child
+printf '%s  %s\n' '<sha256>' quant-m-child | sha256sum -c -
+chmod +x quant-m-child
+./quant-m-child pair --core http://<core-lan-ip>:8787 --name android-tablet-01
+```
+
+The bootstrap endpoint does not auto-approve pairing and does not grant execution, approval, or canonical write authority.
+
 ## Simple Onboarding
 
 From the prepared Quant-M repo on the laptop, plug in one authorized Android device and run:

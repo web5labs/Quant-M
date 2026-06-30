@@ -4,6 +4,7 @@ pub mod boil;
 pub mod bootstrap;
 pub mod capabilities;
 pub mod channels;
+pub mod child_bootstrap;
 pub mod cluster_boundary;
 pub mod compaction;
 pub mod config;

@@ -116,6 +116,27 @@ Next milestone:
 
 - `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
 
+Core-hosted child bootstrap:
+
+```bash
+quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-lan-ip>:8787
+```
+
+The bundle directory contains prebuilt `quant-m-child` files plus `.toml` metadata. The core lists only bundles whose metadata file size and SHA-256 match the local binary, then serves only those approved files. The bootstrap page/API shows platform, architecture, ABI, version, commit, file size, checksum, download URL, checksum verification command, `chmod +x`, and the manual pairing command.
+
+Example child-side flow shown by the core:
+
+```bash
+pkg update
+pkg install curl openssh termux-api
+curl -fL -o quant-m-child http://<core-lan-ip>:8788/download/quant-m-child
+printf '%s  %s\n' '<sha256>' quant-m-child | sha256sum -c -
+chmod +x quant-m-child
+./quant-m-child pair --core http://<core-lan-ip>:8787 --name android-tablet-01
+```
+
+Pairing still requires manual core approval. The child remains observe-only: no execution, approval, or canonical shared-state write authority is granted by bootstrap.
+
 More device details:
 
 - [Android deployment guide](deploy/android/README.md)
