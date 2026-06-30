@@ -4,6 +4,8 @@ Heavy USB/ADB staging template for Android edge devices that need local Rust/Car
 
 This directory is not the default install path for old phones or tablets. It documents the opt-in builder payload. The actual APK files and offline `.deb` mirrors are local-only artifacts in a prepared checkout and are intentionally ignored by git.
 
+Do not treat GitHub clone plus Cargo build as the normal Agent Cluster child path on old Android devices. Termux package drift can break Git HTTPS helpers and TLS libraries even when Git appears installed. Normal child onboarding should use a prebuilt `quant-m-child` binary delivered by the core or host machine over local Wi-Fi/ADB, then pair and sync approved packs.
+
 Most devices should use the slim runtime profile instead:
 
 ```bash

@@ -39,16 +39,20 @@ sudo apt-get update
 sudo apt-get install -y git curl cargo openssh-client
 ```
 
-Android phone or tablet with Termux:
+Android phone or tablet with Termux, preferred child path:
 
 ```bash
 pkg update
-pkg install git curl rust openssh termux-api
+pkg install curl openssh termux-api
 ```
 
 Termux:API is optional unless you want Android-specific device telemetry such as battery status. Install Termux and Termux add-ons from the same source when possible.
 
+Git and Rust/Cargo on the child are development fallback tools only. On older or freshly reset Android devices, Termux package mirrors and TLS libraries can be out of sync, causing Git HTTPS failures such as `git-remote-https` aborts or `cannot locate symbol` errors. If that happens, update Termux packages, use `termux-change-repo`, and reinstall Git/curl/TLS packages. For normal Agent Cluster child use, the product direction is a core-hosted prebuilt `quant-m-child` binary over local Wi-Fi.
+
 ### 2. Get Quant-M
+
+Do this on the core laptop, desktop, Raspberry Pi, or development device:
 
 ```bash
 git clone https://github.com/web5labs/Quant-M.git
@@ -107,6 +111,10 @@ What remains disabled:
 - automatic proposal approval
 - child canonical writes
 - production remote orchestration
+
+Next milestone:
+
+- `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
 
 More device details:
 

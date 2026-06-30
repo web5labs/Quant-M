@@ -4,6 +4,10 @@ Host-side deploy lane for Quant-M Android edge devices.
 
 Default target: a slim `base-runtime` device that runs a prebuilt Quant-M Rust binary with no npm, Node.js, Git, Cargo, or internet requirement.
 
+Old Android and Termux devices should not be expected to clone GitHub or build Quant-M from source during normal Agent Cluster onboarding. Git HTTPS can fail on stale or mismatched Termux package sets with errors like `git-remote-https` aborts or `cannot locate symbol` from networking/TLS libraries. Treat Git/Cargo on-device builds as a development fallback only.
+
+If a tablet hits that Termux package failure, repair the Termux environment with package updates, `termux-change-repo`, and Git/curl/TLS package reinstalls. Product direction is to route around that class of failure: the core should host or push a prebuilt child binary over local Wi-Fi, then the child pairs and syncs approved packs.
+
 ## Simple Onboarding
 
 From the prepared Quant-M repo on the laptop, plug in one authorized Android device and run:
@@ -35,6 +39,8 @@ The launcher handles the normal flow:
 - push the Quant-M binary
 - start the worker
 - run the health check
+
+This flow is the preferred old-device path because the child does not need GitHub, Cargo, Rust, or source checkout health on the tablet.
 
 The APKs and offline package mirrors stay local in ignored paths, so the GitHub repo remains lightweight while the prepared laptop checkout can still deploy offline.
 
