@@ -30,6 +30,7 @@ pub mod logutil;
 pub mod loop_dry_run;
 pub mod memory;
 pub mod onboarding_router;
+pub mod pairing;
 pub mod policy_registry;
 pub mod question;
 pub mod scheduler_registry;

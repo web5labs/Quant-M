@@ -129,6 +129,7 @@ What this local alpha can demonstrate:
 
 - core CLI and `quant-m-child`
 - QR/link child pairing with manual approval
+- local pairing cockpit, invite registry, pending request list, approval, denial, and revoke flow
 - heartbeat visibility and device telemetry
 - explicit observe-only leases
 - echo evidence and scalar compute evidence
@@ -145,8 +146,47 @@ What remains disabled:
 
 Milestones:
 
+- `ONBOARDING_ROLE_ROUTER_AND_QR_PAIRING_P0B`: local Agent Cluster pairing cockpit, short-lived invite URLs, manual child approval, deny/revoke lifecycle, and observe-only safety flags.
 - `MOBILE_TABLET_CORE_ROLE_17A_FIX`: role-first onboarding language, mobile/tablet core proof-of-concept guidance, and optional ADB validation language.
 - `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
+
+Pairing cockpit:
+
+```bash
+quant-m pair cockpit
+```
+
+Use the cockpit on the core to see the local URL, QR fallback text, pending request count, approved children, revoked children, and the safety boundary. Pairing is for trusted LAN only. If the core binds `0.0.0.0:8787`, keep it on local Wi-Fi and do not expose the port to the public internet.
+
+Create an invite for a nearby device:
+
+```bash
+quant-m device add --qr
+```
+
+The invite URL uses this shape:
+
+```text
+http://<core-lan-ip>:8787/join/<invite_id>
+```
+
+If terminal QR rendering is unavailable, Quant-M prints the local URL and manual fallback instead of failing. Watch pending requests from another terminal:
+
+```bash
+quant-m device add --watch
+```
+
+Approve, deny, list, or revoke children on the core:
+
+```bash
+quant-m child list
+quant-m child approve <request_id>
+quant-m child deny <request_id>
+quant-m child revoke <node_id>
+quant-m pair status --json
+```
+
+Manual approval is required. Approved children remain observe-only: no provider calls, no shell execution, no approval authority, no canonical shared-state writes, and no broker/exchange/sportsbook execution.
 
 Core-hosted child bootstrap:
 

@@ -30,6 +30,7 @@ mod logutil;
 mod loop_dry_run;
 mod memory;
 mod onboarding_router;
+mod pairing;
 mod policy_registry;
 mod question;
 mod scheduler_registry;
@@ -215,6 +216,18 @@ enum Commands {
     Pack {
         #[command(subcommand)]
         command: PackCommand,
+    },
+    Pair {
+        #[command(subcommand)]
+        command: PairCommand,
+    },
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
+    Child {
+        #[command(subcommand)]
+        command: ChildCommand,
     },
     Memory {
         #[command(subcommand)]
@@ -453,6 +466,79 @@ enum PackCommand {
         bind: String,
         #[arg(long, default_value = "./release-packs")]
         pack_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PairCommand {
+    /// Show the Agent Cluster pairing cockpit without granting child authority.
+    Cockpit {
+        #[arg(long, default_value = "0.0.0.0:8787")]
+        bind: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value_t = true)]
+        qr: bool,
+    },
+    /// Show pairing server, pending request, and child status.
+    Status {
+        #[arg(long, default_value = "0.0.0.0:8787")]
+        bind: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Serve the minimal LAN pairing page and join URL text.
+    Serve {
+        #[arg(long, default_value = "0.0.0.0:8787")]
+        bind: String,
+        #[arg(long)]
+        allow_public_bind: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DeviceCommand {
+    /// Create a short-lived child pairing invite.
+    Add {
+        #[arg(long)]
+        qr: bool,
+        #[arg(long)]
+        watch: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = "0.0.0.0:8787")]
+        bind: String,
+        #[arg(long, default_value_t = 30)]
+        ttl_minutes: u64,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ChildCommand {
+    /// List pending child requests and approved children.
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        include_revoked: bool,
+    },
+    /// Manually approve a pending child request as observe-only.
+    Approve {
+        request_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Deny a pending child request.
+    Deny {
+        request_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke an approved child.
+    Revoke {
+        node_id: String,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1138,6 +1224,88 @@ async fn main() -> Result<()> {
             }
             PackCommand::Serve { bind, pack_dir } => {
                 child_pack_sync::serve(pack_dir, &bind)?;
+            }
+        },
+        Commands::Pair { command } => match command {
+            PairCommand::Cockpit { bind, dry_run, qr } => {
+                let report = pairing::cockpit(&cfg, &bind, qr, dry_run)?;
+                print!("{}", pairing::render_cockpit(&report));
+            }
+            PairCommand::Status { bind, json } => {
+                let report = pairing::status(&cfg, &bind)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_status(&report));
+                }
+            }
+            PairCommand::Serve {
+                bind,
+                allow_public_bind,
+            } => {
+                pairing::serve(&cfg, &bind, allow_public_bind)?;
+            }
+        },
+        Commands::Device { command } => match command {
+            DeviceCommand::Add {
+                qr,
+                watch,
+                dry_run,
+                bind,
+                ttl_minutes,
+            } => {
+                if watch {
+                    print!("{}", pairing::render_pending_watch(&cfg)?);
+                } else {
+                    let report = pairing::create_invite(&cfg, &bind, ttl_minutes, qr, dry_run)?;
+                    print!("{}", pairing::render_device_add(&report));
+                }
+            }
+        },
+        Commands::Child { command } => match command {
+            ChildCommand::List {
+                json,
+                include_revoked,
+            } => {
+                let report = pairing::list_children(&cfg, true, include_revoked)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_child_list(&report));
+                }
+            }
+            ChildCommand::Approve { request_id, json } => {
+                let child = pairing::approve_request(&cfg, &request_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&child)?);
+                } else {
+                    println!(
+                        "approved node_id={} request_id={} authority={} provider_calls={} execution={} approval={} canonical_writes={}",
+                        child.node_id,
+                        child.request_id,
+                        child.authority.authority,
+                        child.authority.provider_calls_allowed,
+                        child.authority.execution_allowed,
+                        child.authority.approval_allowed,
+                        child.authority.canonical_write_allowed,
+                    );
+                }
+            }
+            ChildCommand::Deny { request_id, json } => {
+                let request = pairing::deny_request(&cfg, &request_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&request)?);
+                } else {
+                    println!("denied request_id={} status=denied", request.request_id);
+                }
+            }
+            ChildCommand::Revoke { node_id, json } => {
+                let child = pairing::revoke_child(&cfg, &node_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&child)?);
+                } else {
+                    println!("revoked node_id={} status=revoked", child.node_id);
+                }
             }
         },
         Commands::Memory { command } => {
@@ -5046,6 +5214,32 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
             PackCommand::List { .. } => StorageMode::Inspect,
             PackCommand::Serve { .. } => StorageMode::WorkerRun,
         },
+        Commands::Pair { command } => match command {
+            PairCommand::Cockpit { dry_run, .. } => {
+                if *dry_run {
+                    StorageMode::Inspect
+                } else {
+                    StorageMode::SessionWrite
+                }
+            }
+            PairCommand::Status { .. } => StorageMode::Inspect,
+            PairCommand::Serve { .. } => StorageMode::WorkerRun,
+        },
+        Commands::Device { command } => match command {
+            DeviceCommand::Add { watch, dry_run, .. } => {
+                if *watch || *dry_run {
+                    StorageMode::Inspect
+                } else {
+                    StorageMode::SessionWrite
+                }
+            }
+        },
+        Commands::Child { command } => match command {
+            ChildCommand::List { .. } => StorageMode::Inspect,
+            ChildCommand::Approve { .. }
+            | ChildCommand::Deny { .. }
+            | ChildCommand::Revoke { .. } => StorageMode::SessionWrite,
+        },
         Commands::Worker { command } => match command {
             WorkerCommand::Proposal {
                 command: WorkerProposalCommand::List { .. },
@@ -5562,6 +5756,121 @@ mod tests {
                 advanced: false,
                 json: true
             })
+        ));
+    }
+
+    #[test]
+    fn pairing_cockpit_commands_parse_and_use_safe_storage_modes() {
+        let cli = Cli::try_parse_from(["quant-m", "pair", "cockpit", "--dry-run"])
+            .expect("parse pair cockpit");
+        match cli.command {
+            Some(Commands::Pair {
+                command:
+                    PairCommand::Cockpit {
+                        bind,
+                        dry_run: true,
+                        qr: true,
+                    },
+            }) => {
+                assert_eq!(bind, "0.0.0.0:8787");
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Pair {
+                        command: PairCommand::Cockpit {
+                            bind,
+                            dry_run: true,
+                            qr: true,
+                        },
+                    }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["quant-m", "pair", "status", "--json"])
+            .expect("parse pair status");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Pair {
+                command: PairCommand::Status { json: true, .. }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "pair", "serve", "--allow-public-bind"])
+            .expect("parse pair serve");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Pair {
+                command: PairCommand::Serve {
+                    allow_public_bind: true,
+                    ..
+                }
+            })
+        ));
+    }
+
+    #[test]
+    fn device_and_child_pairing_commands_parse() {
+        let cli = Cli::try_parse_from(["quant-m", "device", "add", "--qr", "--dry-run"])
+            .expect("parse device add");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Device {
+                command: DeviceCommand::Add {
+                    qr: true,
+                    dry_run: true,
+                    ttl_minutes: 30,
+                    ..
+                }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "device", "add", "--watch"])
+            .expect("parse device add watch");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Device {
+                command: DeviceCommand::Add { watch: true, .. }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "child", "list", "--include-revoked"])
+            .expect("parse child list");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::List {
+                    include_revoked: true,
+                    ..
+                }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "child", "approve", "req-1"])
+            .expect("parse child approve");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::Approve { request_id, .. }
+            }) if request_id == "req-1"
+        ));
+
+        let cli =
+            Cli::try_parse_from(["quant-m", "child", "deny", "req-1"]).expect("parse child deny");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::Deny { request_id, .. }
+            }) if request_id == "req-1"
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "child", "revoke", "child-1"])
+            .expect("parse child revoke");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::Revoke { node_id, .. }
+            }) if node_id == "child-1"
         ));
     }
 
