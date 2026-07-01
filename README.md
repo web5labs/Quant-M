@@ -236,9 +236,11 @@ Use Quant-M when you want coding agents, worker agents, local models, or researc
 
 ## First Run
 
-On a fresh checkout, the main command starts onboarding. After onboarding, it opens the governed Quant-M chat cockpit so you can communicate with the local evidence agent.
+On a fresh checkout, the main command starts onboarding. After onboarding, Quant-M opens the next surface for the selected role instead of assuming every node should enter chat.
 
-Useful cockpit commands are `/help`, `/state`, `/cost`, `/ask`, and `/quit`.
+Solo local nodes may enter the governed chat cockpit only when the workspace is writable and a valid chat-capable model or CLI route is available. Agent Cluster core nodes receive pairing/setup instructions. Agent Cluster child workers receive join instructions. Staff-OS workers and Server/VPS nodes receive role-specific handoff or headless setup instructions. Chat can always be opened later with the explicit chat command when available.
+
+Useful cockpit commands, when chat is explicitly opened, are `/help`, `/state`, `/cost`, `/ask`, and `/quit`.
 
 To chat through the Codex CLI from inside Quant-M, install and log in to Codex first, then ask from the cockpit:
 

@@ -29,6 +29,7 @@ mod llm;
 mod logutil;
 mod loop_dry_run;
 mod memory;
+mod onboarding_router;
 mod policy_registry;
 mod question;
 mod scheduler_registry;
@@ -139,6 +140,8 @@ enum Commands {
         #[arg(long)]
         runtime_profile: Option<String>,
         #[arg(long)]
+        role: Option<String>,
+        #[arg(long)]
         workspace_path: Option<PathBuf>,
         #[arg(long)]
         state_path: Option<PathBuf>,
@@ -152,6 +155,10 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    Onboarding {
+        #[command(subcommand)]
+        command: OnboardingCommand,
     },
     Doctor {
         #[arg(long)]
@@ -348,6 +355,14 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 enum DaemonCommand {
     Start,
+}
+
+#[derive(Subcommand, Debug)]
+enum OnboardingCommand {
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -831,6 +846,7 @@ struct InitReport {
     workspace: PathBuf,
     state_sqlite: PathBuf,
     session_dir: PathBuf,
+    role: config::OnboardingRole,
     runtime_profile: config::RuntimeProfile,
 }
 
@@ -841,6 +857,7 @@ struct SetupReport {
     workspace: PathBuf,
     state_sqlite: PathBuf,
     session_dir: PathBuf,
+    role: config::OnboardingRole,
     runtime_profile: config::RuntimeProfile,
     external_network_enabled: bool,
     multi_model_enabled: bool,
@@ -859,6 +876,8 @@ struct SetupReport {
 
 #[derive(Debug, Clone, Serialize)]
 struct DoctorReport {
+    role: config::OnboardingRole,
+    runtime_profile: config::RuntimeProfile,
     config_exists: bool,
     workspace_exists: bool,
     state_path_exists: bool,
@@ -869,6 +888,17 @@ struct DoctorReport {
     checked_binary: PathBuf,
     generated_session_id: Option<String>,
     provider_diagnostics: Vec<ProviderValidationReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OnboardingStatusReport {
+    config: PathBuf,
+    workspace: PathBuf,
+    onboarding_completed: bool,
+    role: config::OnboardingRole,
+    runtime_profile: config::RuntimeProfile,
+    next_action: onboarding_router::OnboardingNextAction,
+    provider_route_status: onboarding_router::ProviderRouteStatus,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -967,6 +997,7 @@ async fn main() -> Result<()> {
         Commands::Start
         | Commands::Init { .. }
         | Commands::Onboard { .. }
+        | Commands::Onboarding { .. }
         | Commands::Setup { .. }
         | Commands::Config { .. }
         | Commands::Doctor { .. }
@@ -1744,6 +1775,7 @@ fn is_onboarding_command(command: &Commands) -> bool {
             | Commands::Init { .. }
             | Commands::Onboard { .. }
             | Commands::Setup { .. }
+            | Commands::Onboarding { .. }
             | Commands::Config { .. }
             | Commands::Doctor { .. }
             | Commands::Provider { .. }
@@ -1772,6 +1804,7 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     enable_openrouter: false,
                     channel: None,
                     channel_value: None,
+                    role: None,
                     runtime_profile: None,
                     workspace_path: None,
                     state_path: None,
@@ -1793,12 +1826,13 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                 &report,
                 json,
                 &format!(
-                    "status: {}\nconfig: {}\nworkspace: {}\nstate_sqlite: {}\nsession_dir: {}\nruntime_profile: {}",
+                    "status: {}\nconfig: {}\nworkspace: {}\nstate_sqlite: {}\nsession_dir: {}\nrole: {}\nruntime_profile: {}",
                     report.status,
                     report.config.display(),
                     report.workspace.display(),
                     report.state_sqlite.display(),
                     report.session_dir.display(),
+                    onboarding_role_label(report.role),
                     runtime_profile_label(report.runtime_profile),
                 ),
             )
@@ -1814,6 +1848,7 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
             openrouter_api_key,
             channel,
             channel_value,
+            role,
             runtime_profile,
             workspace_path,
             state_path,
@@ -1837,6 +1872,7 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                     enable_openrouter: false,
                     channel,
                     channel_value,
+                    role,
                     runtime_profile,
                     workspace_path,
                     state_path,
@@ -1850,6 +1886,7 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
             print_setup_report(&report, json)
         }
         Commands::Config { command } => handle_config_command(config_path, command),
+        Commands::Onboarding { command } => handle_onboarding_status_command(config_path, command),
         Commands::Doctor {
             json,
             providers,
@@ -1865,7 +1902,9 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
                 String::new()
             };
             let summary = format!(
-                "config_exists: {}\nworkspace_exists: {}\nstate_path_exists: {}\nsession_path_exists: {}\nworkflow_run_ok: {}\nshared_state_list_ok: {}\nsession_list_ok: {}\nchecked_binary: {}\ngenerated_session_id: {}{}",
+                "role: {}\nruntime_profile: {}\nconfig_exists: {}\nworkspace_exists: {}\nstate_path_exists: {}\nsession_path_exists: {}\nworkflow_run_ok: {}\nshared_state_list_ok: {}\nsession_list_ok: {}\nchecked_binary: {}\ngenerated_session_id: {}{}",
+                onboarding_role_label(report.role),
+                runtime_profile_label(report.runtime_profile),
                 report.config_exists,
                 report.workspace_exists,
                 report.state_path_exists,
@@ -1897,6 +1936,49 @@ async fn handle_onboarding_command(command: Commands, config_path: &std::path::P
     }
 }
 
+fn handle_onboarding_status_command(
+    config_path: &std::path::Path,
+    command: OnboardingCommand,
+) -> Result<()> {
+    match command {
+        OnboardingCommand::Status { json } => {
+            let mut cfg = Config::load_or_create(config_path)
+                .with_context(|| format!("failed loading config {}", config_path.display()))?;
+            cfg.ensure_onboarding_registries();
+            cfg.save(config_path)?;
+            let provider_route_status = provider_route_status(&cfg);
+            let write_status = onboarding_workspace_write_status(&cfg, config_path);
+            let exit = onboarding_router::decide_next_action(
+                cfg.runtime.role,
+                write_status,
+                provider_route_status,
+            );
+            let report = OnboardingStatusReport {
+                config: config_path.to_path_buf(),
+                workspace: cfg.workspace_dir.clone(),
+                onboarding_completed: cfg.preferences.onboarding_completed,
+                role: cfg.runtime.role,
+                runtime_profile: cfg.runtime.profile,
+                next_action: exit.next_action,
+                provider_route_status,
+            };
+            print_serialized_or_text(
+                &report,
+                json,
+                &format!(
+                    "onboarding_completed: {}\nrole: {}\nruntime_profile: {}\nworkspace: {}\nnext_action: {:?}\nprovider_route_status: {:?}",
+                    report.onboarding_completed,
+                    onboarding_role_label(report.role),
+                    runtime_profile_label(report.runtime_profile),
+                    report.workspace.display(),
+                    report.next_action,
+                    report.provider_route_status,
+                ),
+            )
+        }
+    }
+}
+
 fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
     if start_needs_onboarding(config_path)? {
         if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
@@ -1909,19 +1991,63 @@ fn run_start_flow(config_path: &std::path::Path) -> Result<()> {
         print_setup_report(&report, false)?;
     }
 
-    let cfg = Config::load_or_create(config_path)
+    let mut cfg = Config::load_or_create(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
+    cfg.ensure_onboarding_registries();
+    cfg.save(config_path)?;
     cfg.validate()?;
     bootstrap::ensure_workspace(&cfg)?;
-    let _truth_report = truth_files::init_truth_files(&cfg, false)?;
+
+    let write_status = onboarding_workspace_write_status(&cfg, config_path);
+    let provider_status = provider_route_status(&cfg);
+    let report =
+        onboarding_router::decide_next_action(cfg.runtime.role, write_status, provider_status);
 
     print_quant_m_brand_banner();
-    println!("{}", start_chat_message(&cfg.workspace_dir));
-    tui_shell::run_chat(
-        &cfg,
-        config_path,
-        tui_shell::selected_chat_tool(&cfg).is_none(),
-    )
+    dispatch_onboarding_next_action(&cfg, config_path, &report)
+}
+
+fn dispatch_onboarding_next_action(
+    cfg: &Config,
+    config_path: &Path,
+    report: &onboarding_router::OnboardingExitReport,
+) -> Result<()> {
+    match &report.next_action {
+        onboarding_router::OnboardingNextAction::OpenSoloChat => {
+            let _truth_report = truth_files::init_truth_files(cfg, false)?;
+            println!("{}", start_chat_message(&cfg.workspace_dir));
+            tui_shell::run_chat(cfg, config_path, false)
+        }
+        onboarding_router::OnboardingNextAction::ShowProviderSetup => {
+            println!("{}", provider_setup_next_steps(cfg));
+            Ok(())
+        }
+        onboarding_router::OnboardingNextAction::OpenCorePairing => {
+            println!("{}", core_pairing_next_steps(cfg));
+            Ok(())
+        }
+        onboarding_router::OnboardingNextAction::OpenChildJoin => {
+            println!("{}", child_join_next_steps(cfg));
+            Ok(())
+        }
+        onboarding_router::OnboardingNextAction::OpenStaffWorkerHandoff => {
+            println!("{}", staff_worker_next_steps(cfg));
+            Ok(())
+        }
+        onboarding_router::OnboardingNextAction::OpenServerHeadlessSetup => {
+            println!("{}", server_headless_next_steps(cfg));
+            Ok(())
+        }
+        onboarding_router::OnboardingNextAction::BlockedReadOnlyWorkspace => {
+            println!("{}", read_only_workspace_next_steps(report));
+            Ok(())
+        }
+        onboarding_router::OnboardingNextAction::ShowDoctor => {
+            println!("Quant-M needs a doctor check before opening a stateful surface.");
+            println!("next: {} doctor", quant_m_command_hint());
+            Ok(())
+        }
+    }
 }
 
 fn default_interactive_setup_args() -> SetupArgs {
@@ -1939,6 +2065,7 @@ fn default_interactive_setup_args() -> SetupArgs {
         enable_openrouter: false,
         channel: None,
         channel_value: None,
+        role: None,
         runtime_profile: None,
         workspace_path: None,
         state_path: None,
@@ -1964,6 +2091,141 @@ fn start_needs_onboarding(config_path: &std::path::Path) -> Result<bool> {
     let cfg = Config::load_existing(config_path)
         .with_context(|| format!("failed loading config {}", config_path.display()))?;
     Ok(!cfg.preferences.onboarding_completed)
+}
+
+fn provider_route_status(cfg: &Config) -> onboarding_router::ProviderRouteStatus {
+    if tui_shell::selected_chat_tool(cfg).is_some() {
+        onboarding_router::ProviderRouteStatus::Available
+    } else {
+        onboarding_router::ProviderRouteStatus::Missing
+    }
+}
+
+fn onboarding_workspace_write_status(
+    cfg: &Config,
+    config_path: &Path,
+) -> onboarding_router::WorkspaceWriteStatus {
+    let checks = workspace_write_checks(cfg, config_path);
+    for (path, operation) in checks {
+        if let Err(err) = probe_write_path(&path) {
+            return onboarding_router::WorkspaceWriteStatus::ReadOnly {
+                path,
+                operation,
+                message: err.to_string(),
+            };
+        }
+    }
+    onboarding_router::WorkspaceWriteStatus::Writable
+}
+
+fn workspace_write_checks(cfg: &Config, config_path: &Path) -> Vec<(PathBuf, &'static str)> {
+    let mut checks = vec![
+        (config_path.to_path_buf(), "write onboarding config"),
+        (cfg.runtime.session_dir.clone(), "write session state"),
+        (cfg.workspace_dir.join("evidence"), "write evidence records"),
+        (cfg.logging.file.clone(), "write audit log"),
+    ];
+
+    match cfg.runtime.role {
+        config::OnboardingRole::AgentClusterCore => checks.push((
+            cfg.workspace_dir.join("state/pairing/invites"),
+            "write pairing invite registry",
+        )),
+        config::OnboardingRole::AgentClusterChildWorker => checks.push((
+            cfg.workspace_dir.join("state/child/identity.toml"),
+            "write child identity",
+        )),
+        _ => {}
+    }
+
+    checks
+}
+
+fn probe_write_path(path: &Path) -> Result<()> {
+    if path.extension().is_some() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        if path.exists() {
+            fs::OpenOptions::new()
+                .append(true)
+                .open(path)
+                .with_context(|| format!("failed to open {}", path.display()))?;
+        } else if let Some(parent) = path.parent() {
+            probe_write_directory(parent)?;
+        }
+        return Ok(());
+    }
+
+    probe_write_directory(path)
+}
+
+fn probe_write_directory(path: &Path) -> Result<()> {
+    fs::create_dir_all(path).with_context(|| format!("failed to create {}", path.display()))?;
+    let probe = path.join(".quantm-write-check");
+    fs::write(&probe, b"ok").with_context(|| format!("failed to write {}", probe.display()))?;
+    fs::remove_file(&probe).with_context(|| format!("failed to remove {}", probe.display()))
+}
+
+fn provider_setup_next_steps(cfg: &Config) -> String {
+    let command = quant_m_command_hint();
+    format!(
+        "No chat-capable provider or local CLI route is available yet.\nworkspace: {}\nrole: {}\n\nChat was not opened.\nNext:\n  {command} provider list\n  {command} tool scan\n  {command} onboard\n  {command} doctor\n\nDetection is not permission. Provider or CLI calls remain disabled until explicitly configured.",
+        cfg.workspace_dir.display(),
+        onboarding_role_label(cfg.runtime.role),
+    )
+}
+
+fn core_pairing_next_steps(cfg: &Config) -> String {
+    let command = quant_m_command_hint();
+    format!(
+        "Agent Cluster core selected.\nworkspace: {}\n\nChat was not opened because this role pairs child devices first.\n\nNext:\n  {command} pair cockpit\n  {command} device add --qr\n  {command} device add --watch\n  {command} bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-lan-ip>:8787\n\nSafety:\n  children remain observe-only\n  child provider calls are blocked\n  child canonical writes are blocked\n  child execution authority is blocked",
+        cfg.workspace_dir.display()
+    )
+}
+
+fn child_join_next_steps(cfg: &Config) -> String {
+    let command = quant_m_command_hint();
+    format!(
+        "Agent Cluster child worker selected.\nworkspace: {}\n\nChat was not opened because this role joins a core first.\n\nNext:\n  {command} child join\n  {command} child join --url <core-local-url>\n\nTermux/manual fallback:\n  open the core bootstrap URL or paste the join URL in Termux\n  download the prebuilt child binary when available\n  verify SHA-256 before pairing\n\nSafety:\n  child stores no provider keys\n  child remains observe-only\n  no approval, execution, provider-call, or canonical-write authority is granted",
+        cfg.workspace_dir.display()
+    )
+}
+
+fn staff_worker_next_steps(cfg: &Config) -> String {
+    let command = quant_m_command_hint();
+    format!(
+        "Staff-OS worker selected.\nworkspace: {}\n\nChat was not opened by default for this worker role.\n\nNext:\n  {command} worker proposal list\n  {command} question staff-os-handoff --help\n  {command} doctor",
+        cfg.workspace_dir.display()
+    )
+}
+
+fn server_headless_next_steps(cfg: &Config) -> String {
+    let command = quant_m_command_hint();
+    format!(
+        "Server/VPS node selected.\nworkspace: {}\n\nChat was not opened because this role should start headless-friendly setup first.\n\nNext:\n  {command} onboarding status\n  {command} provider list\n  {command} tool scan\n  {command} doctor\n\nUse explicit commands for chat or TUI after provider and workspace checks pass.",
+        cfg.workspace_dir.display()
+    )
+}
+
+fn read_only_workspace_next_steps(report: &onboarding_router::OnboardingExitReport) -> String {
+    let command = quant_m_command_hint();
+    match &report.workspace_write_status {
+        onboarding_router::WorkspaceWriteStatus::ReadOnly {
+            path,
+            operation,
+            message,
+        } => format!(
+            "Quant-M cannot open a stateful surface because the workspace/config is not writable.\nfailed_path: {}\nfailed_operation: {}\nerror: {}\n\nChat was not opened.\nPairing was not started.\n\nSafe next commands:\n  {command} doctor\n  {command} setup --workspace-path ./workspace\n",
+            path.display(),
+            operation,
+            message,
+        ),
+        onboarding_router::WorkspaceWriteStatus::Writable => {
+            format!("Quant-M write preflight passed unexpectedly. Run `{command} doctor`.")
+        }
+    }
 }
 
 const QUANT_M_ASCII_BANNER: &[&str] = &[
@@ -2078,6 +2340,7 @@ struct SetupArgs {
     enable_openrouter: bool,
     channel: Option<String>,
     channel_value: Option<String>,
+    role: Option<String>,
     runtime_profile: Option<String>,
     workspace_path: Option<PathBuf>,
     state_path: Option<PathBuf>,
@@ -2115,9 +2378,10 @@ fn print_setup_report(report: &SetupReport, json: bool) -> Result<()> {
         report,
         json,
         &format!(
-            "Setup complete.\nconfig: {}\nworkspace: {}\ndevice_type: {}\nnetwork: {}\noperator_channel: {}\ntools: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command}\n  {command} doctor\n{}  {command} shell\n\n`{command}` opens the governed Quant-M chat cockpit. Selected CLI tools such as Codex are recognized there, but tool detection is not execution permission.",
+            "Setup complete.\nconfig: {}\nworkspace: {}\nrole: {}\ndevice_type: {}\nnetwork: {}\noperator_channel: {}\ntools: {}\nmulti_model: {}\nsearch: {}\nbrowser_harness: {}\ncontext_guardian: {}\nlocal_model: {}\nremote_model: {}\nopenrouter_model: {}\nopenrouter_key_present: {}\n\nNext:\n  {command}\n  {command} onboarding status\n  {command} doctor\n{}  {command} shell\n\n`{command}` routes to the next surface for the selected role. Chat is explicit and opens only when a solo node has a writable workspace and a valid chat route.",
             report.config.display(),
             report.workspace.display(),
+            onboarding_role_label(report.role),
             runtime_profile_label(report.runtime_profile),
             if report.external_network_enabled {
                 "enabled"
@@ -2153,6 +2417,7 @@ fn run_init_flow(config_path: &std::path::Path, _non_interactive: bool) -> Resul
         workspace: cfg.workspace_dir.clone(),
         state_sqlite: cfg.state_sql.sqlite_path.clone(),
         session_dir: cfg.runtime.session_dir.clone(),
+        role: cfg.runtime.role,
         runtime_profile: cfg.runtime.profile,
     })
 }
@@ -2185,6 +2450,9 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     }
     if let Some(runtime_profile) = args.runtime_profile {
         cfg.runtime.profile = runtime_profile.parse()?;
+    }
+    if let Some(role) = args.role {
+        cfg.runtime.role = role.parse()?;
     }
     if let Some(external_network) = args.external_network {
         cfg.runtime.external_network_enabled = parse_enabled_disabled(&external_network)?;
@@ -2291,6 +2559,7 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
         workspace: cfg.workspace_dir.clone(),
         state_sqlite: cfg.state_sql.sqlite_path.clone(),
         session_dir: cfg.runtime.session_dir.clone(),
+        role: cfg.runtime.role,
         runtime_profile: cfg.runtime.profile,
         external_network_enabled: cfg.runtime.external_network_enabled,
         multi_model_enabled: cfg.runtime.multi_model_enabled,
@@ -2348,9 +2617,31 @@ fn run_interactive_setup(
         args.workspace_path = Some(PathBuf::from(answer));
     }
 
-    if args.runtime_profile.is_none() {
+    if args.role.is_none() {
         print_onboarding_section(
             "2",
+            "Role",
+            "Choose what this node should do before choosing its hardware class.",
+        );
+        args.role = Some(prompt_numbered_choice(
+            "How should this device participate in Quant-M?",
+            &[
+                ("🧭 Solo local node", "solo-local-node"),
+                ("🛰️ Agent Cluster core", "agent-cluster-core"),
+                (
+                    "📡 Agent Cluster child worker",
+                    "agent-cluster-child-worker",
+                ),
+                ("🏢 Staff-OS worker", "staff-os-worker"),
+                ("🖥️ Server/VPS node", "server-vps-node"),
+            ],
+            1,
+        )?);
+    }
+
+    if args.runtime_profile.is_none() {
+        print_onboarding_section(
+            "3",
             "Device",
             "Pick the closest runtime profile after deciding this node's role.",
         );
@@ -2367,7 +2658,7 @@ fn run_interactive_setup(
     }
 
     if args.external_network.is_none() {
-        print_onboarding_section("3", "Network", "Keep first-run safe unless you opt in.");
+        print_onboarding_section("4", "Network", "Keep first-run safe unless you opt in.");
         let network_mode = prompt_numbered_choice(
             "Should Quant-M use the internet?",
             &[
@@ -2387,43 +2678,61 @@ fn run_interactive_setup(
         }
     }
 
-    print_onboarding_section(
-        "4",
-        "Models",
-        "Quant-M can run with no model selected. Remote and local models are optional.",
-    );
-    let model_provider = prompt_numbered_choice(
-        "Do you have an OpenRouter API key?",
-        &[
-            ("⏭️ No, none for now", "skip"),
-            ("🔑 Yes, use OPENROUTER_API_KEY from my environment", "env"),
-            ("💾 Yes, paste and save a key locally", "save"),
-            ("📋 Not yet, show me the export command", "export"),
-        ],
-        1,
-    )?;
-    match model_provider.as_str() {
-        "skip" => {}
-        "env" => {
-            args.enable_openrouter = true;
-            println!("Quant-M will read OPENROUTER_API_KEY from your environment when needed.");
-        }
-        "save" => {
-            println!(
-                "This stores the key in local quant-m.toml. Prefer env vars on shared machines."
-            );
-            let key = prompt_secret_like("Paste OpenRouter API key to save locally")?;
-            if !key.trim().is_empty() {
-                args.openrouter_api_key = Some(key);
+    let model_provider = if setup_role_is_child(&args) {
+        print_onboarding_section(
+            "5",
+            "Models",
+            "Child workers do not store provider keys or configure provider calls.",
+        );
+        println!(
+            "{}Child role selected: skipping provider keys and chat model setup.{}",
+            ANSI_DIM, ANSI_RESET
+        );
+        "skip".to_string()
+    } else {
+        print_onboarding_section(
+            "5",
+            "Models",
+            "Quant-M can run with no model selected. Remote and local models are optional.",
+        );
+        let model_provider = prompt_numbered_choice(
+            "Do you have an OpenRouter API key?",
+            &[
+                ("⏭️ No, none for now", "skip"),
+                ("🔑 Yes, use OPENROUTER_API_KEY from my environment", "env"),
+                ("💾 Yes, paste and save a key locally", "save"),
+                ("📋 Not yet, show me the export command", "export"),
+            ],
+            1,
+        )?;
+        match model_provider.as_str() {
+            "skip" => {}
+            "env" => {
+                args.enable_openrouter = true;
+                println!("Quant-M will read OPENROUTER_API_KEY from your environment when needed.");
             }
+            "save" => {
+                println!(
+                    "This stores the key in local quant-m.toml. Prefer env vars on shared machines."
+                );
+                let key = prompt_secret_like("Paste OpenRouter API key to save locally")?;
+                if !key.trim().is_empty() {
+                    args.openrouter_api_key = Some(key);
+                }
+            }
+            "export" => {
+                println!("Run: export OPENROUTER_API_KEY='<your-openrouter-key>'");
+            }
+            _ => unreachable!("choice is constrained"),
         }
-        "export" => {
-            println!("Run: export OPENROUTER_API_KEY='<your-openrouter-key>'");
-        }
-        _ => unreachable!("choice is constrained"),
-    }
+        model_provider
+    };
 
-    let detected_local_providers = detected_local_provider_options();
+    let detected_local_providers = if setup_role_is_child(&args) {
+        Vec::new()
+    } else {
+        detected_local_provider_options()
+    };
     if !detected_local_providers.is_empty() {
         println!();
         println!(
@@ -2448,7 +2757,9 @@ fn run_interactive_setup(
         );
     }
 
-    let has_local_models = if detected_local_providers.is_empty() {
+    let has_local_models = if setup_role_is_child(&args) {
+        false
+    } else if detected_local_providers.is_empty() {
         prompt_yes_no("Do you have local model(s) available?", false)?
     } else {
         prompt_yes_no("Use detected local model(s)?", true)?
@@ -2475,7 +2786,7 @@ fn run_interactive_setup(
             args.local_model = Some(first.clone());
             args.local_models = local_models;
         }
-    } else {
+    } else if !setup_role_is_child(&args) {
         println!(
             "{}No local model selected. You can add one later with `quant-m setup --local-model-provider ollama --local-model <name>` or clear stale choices with `quant-m config clear-model`.{}",
             ANSI_DIM, ANSI_RESET
@@ -2515,7 +2826,7 @@ fn run_interactive_setup(
     }
 
     print_onboarding_section(
-        "5",
+        "6",
         "Developer tools",
         "Choose optional CLIs Quant-M should recognize. Detection does not grant execution permission.",
     );
@@ -2552,7 +2863,7 @@ fn run_interactive_setup(
 
     if args.channel.is_none() {
         print_onboarding_section(
-            "6",
+            "7",
             "Operator channel",
             "Choose the default way Quant-M talks to you.",
         );
@@ -2583,7 +2894,7 @@ fn run_interactive_setup(
 
     if args.context_guardian.is_none() {
         print_onboarding_section(
-            "7",
+            "8",
             "Continuity",
             "Keep long sessions recoverable with local handoff packets.",
         );
@@ -2694,6 +3005,7 @@ fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "./workspace".to_string());
     let profile = args.runtime_profile.as_deref().unwrap_or("laptop");
+    let role = args.role.as_deref().unwrap_or("solo-local-node");
     let network = match args.external_network.as_deref() {
         Some("enabled") => "enabled",
         Some("disabled") | None => "local only / ask before live checks",
@@ -2721,6 +3033,7 @@ fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
         ANSI_CYAN, ANSI_RESET
     );
     println!("{}│{} workspace       {}", ANSI_CYAN, ANSI_RESET, workspace);
+    println!("{}│{} role            {}", ANSI_CYAN, ANSI_RESET, role);
     println!("{}│{} device_type     {}", ANSI_CYAN, ANSI_RESET, profile);
     println!("{}│{} network         {}", ANSI_CYAN, ANSI_RESET, network);
     println!(
@@ -2745,6 +3058,13 @@ fn print_onboarding_review(config_path: &std::path::Path, args: &SetupArgs) {
     );
 }
 
+fn setup_role_is_child(args: &SetupArgs) -> bool {
+    args.role
+        .as_deref()
+        .and_then(|role| role.parse::<config::OnboardingRole>().ok())
+        .is_some_and(|role| role == config::OnboardingRole::AgentClusterChildWorker)
+}
+
 fn restart_interactive_args(args: &SetupArgs) -> SetupArgs {
     SetupArgs {
         non_interactive: args.non_interactive,
@@ -2760,6 +3080,7 @@ fn restart_interactive_args(args: &SetupArgs) -> SetupArgs {
         enable_openrouter: false,
         channel: None,
         channel_value: None,
+        role: None,
         runtime_profile: None,
         workspace_path: None,
         state_path: None,
@@ -4195,6 +4516,8 @@ async fn run_doctor(
 
     if !(workspace_exists && state_path_exists && session_path_exists) {
         return Ok(DoctorReport {
+            role: cfg.runtime.role,
+            runtime_profile: cfg.runtime.profile,
             config_exists,
             workspace_exists,
             state_path_exists,
@@ -4220,6 +4543,8 @@ async fn run_doctor(
     let state_ok = shared_state::list_state(&cfg, None).is_ok();
 
     Ok(DoctorReport {
+        role: cfg.runtime.role,
+        runtime_profile: cfg.runtime.profile,
         config_exists,
         workspace_exists,
         state_path_exists,
@@ -4489,6 +4814,16 @@ fn runtime_profile_label(profile: config::RuntimeProfile) -> &'static str {
     }
 }
 
+fn onboarding_role_label(role: config::OnboardingRole) -> &'static str {
+    match role {
+        config::OnboardingRole::SoloLocalNode => "solo-local-node",
+        config::OnboardingRole::AgentClusterCore => "agent-cluster-core",
+        config::OnboardingRole::AgentClusterChildWorker => "agent-cluster-child-worker",
+        config::OnboardingRole::StaffOsWorker => "staff-os-worker",
+        config::OnboardingRole::ServerVpsNode => "server-vps-node",
+    }
+}
+
 fn format_model_pref(value: Option<&config::ModelPreference>) -> String {
     value
         .map(|pref| format!("{} {}", pref.provider, pref.model))
@@ -4645,6 +4980,7 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         Commands::Start
         | Commands::Config { .. }
         | Commands::Onboard { .. }
+        | Commands::Onboarding { .. }
         | Commands::Setup { .. }
         | Commands::Provider { .. }
         | Commands::Tool { .. }
@@ -4880,6 +5216,8 @@ fn build_status_payload(cfg: &Config) -> serde_json::Value {
 
     serde_json::json!({
         "node_id": cfg.node_id,
+        "role": onboarding_role_label(cfg.runtime.role),
+        "runtime_profile": runtime_profile_label(cfg.runtime.profile),
         "workspace": cfg.workspace_dir,
         "memory_count": memory_count,
         "skills_count": skills_count,
@@ -5024,6 +5362,7 @@ mod tests {
                 enable_openrouter: false,
                 channel: Some("telegram".to_string()),
                 channel_value: Some("disabled".to_string()),
+                role: None,
                 runtime_profile: Some("edge".to_string()),
                 workspace_path: Some(tmp.path().join("portable-workspace")),
                 state_path: Some(tmp.path().join("portable-workspace/state/shared-state.db")),
@@ -5040,6 +5379,7 @@ mod tests {
         assert_eq!(report.status, "ok_non_interactive");
         assert!(cfg.preferences.onboarding_completed);
         assert_eq!(cfg.runtime.profile, config::RuntimeProfile::Edge);
+        assert_eq!(cfg.runtime.role, config::OnboardingRole::SoloLocalNode);
         assert_eq!(cfg.workspace_dir, tmp.path().join("portable-workspace"));
         assert_eq!(
             cfg.state_sql.sqlite_path,
@@ -5099,6 +5439,7 @@ mod tests {
                 enable_openrouter: false,
                 channel: Some("none".to_string()),
                 channel_value: None,
+                role: Some("solo-local-node".to_string()),
                 runtime_profile: Some("laptop".to_string()),
                 workspace_path: Some(blocked_parent.join("workspace")),
                 state_path: None,
@@ -5252,13 +5593,95 @@ mod tests {
     }
 
     #[test]
-    fn start_flow_announces_governed_chat_after_onboarding() {
+    fn start_flow_chat_message_is_explicit_solo_chat_only() {
         let tmp = TempDir::new().expect("tempdir");
         let message = start_chat_message(tmp.path());
 
         assert!(message.contains("Opening the governed Quant-M chat cockpit"));
         assert!(message.contains("/ask"));
         assert!(message.contains("quant-m shell"));
+    }
+
+    #[test]
+    fn legacy_config_without_role_requires_safe_migration() {
+        let tmp = TempDir::new().expect("tempdir");
+        let config_path = config_path_for(&tmp);
+        std::fs::write(
+            &config_path,
+            r#"
+node_id = "legacy-edge"
+workspace_dir = "workspace"
+
+[memory]
+sqlite_path = "workspace/memory/brain.db"
+core_markdown = "workspace/MEMORY.md"
+daily_dir = "workspace/daily"
+vector_weight = 0.7
+keyword_weight = 0.3
+vector_dims = 64
+
+[state_sql]
+sqlite_path = "workspace/state/quantm-state.db"
+
+[heartbeat]
+enabled = true
+interval_seconds = 1800
+tasks_file = "workspace/HEARTBEAT.md"
+
+[worker]
+inbox_path = "workspace/queue/inbox.ndjson"
+outbox_path = "workspace/queue/outbox.ndjson"
+inflight_path = "workspace/queue/inflight.json"
+state_path = "workspace/state/worker_state.json"
+dead_letter_path = "workspace/queue/dead-letter.ndjson"
+poll_interval_seconds = 3
+command_timeout_seconds = 60
+concurrency = 1
+max_retries = 1
+max_inbox_depth = 1000
+allow_shell_commands = false
+allow_http_get = false
+allow_insecure_https = false
+http_get_mode = "deny"
+http_get_sandbox_hosts = []
+
+[adapters]
+terminal_enabled = true
+webhook_url = ""
+webhook_timeout_seconds = 10
+
+[logging]
+file = "workspace/logs/quant-m.log"
+max_bytes = 1048576
+keep_files = 3
+
+[skills]
+dir = "workspace/skills"
+allow_shell_commands = false
+
+[runtime]
+profile = "edge"
+session_dir = "workspace/state/sessions"
+external_network_enabled = false
+multi_model_enabled = false
+search_enabled = false
+browser_harness_enabled = false
+
+[preferences]
+onboarding_completed = true
+"#,
+        )
+        .expect("write legacy config");
+
+        let mut cfg = Config::load_or_create(&config_path).expect("load legacy");
+        cfg.ensure_onboarding_registries();
+        cfg.save(&config_path).expect("persist migration");
+        let migrated = Config::load_existing(&config_path).expect("reload migrated");
+        let raw = std::fs::read_to_string(&config_path).expect("read migrated");
+
+        assert_eq!(migrated.runtime.profile, config::RuntimeProfile::Edge);
+        assert_eq!(migrated.runtime.role, config::OnboardingRole::SoloLocalNode);
+        assert!(raw.contains("role = \"solo_local_node\""));
     }
 
     #[test]
@@ -5394,6 +5817,7 @@ mod tests {
                 enable_openrouter: false,
                 channel: None,
                 channel_value: None,
+                role: None,
                 runtime_profile: None,
                 workspace_path: None,
                 state_path: None,
@@ -5522,6 +5946,7 @@ mod tests {
                 enable_openrouter: false,
                 channel: None,
                 channel_value: None,
+                role: None,
                 runtime_profile: None,
                 workspace_path: Some(tmp.path().join("project-workspace")),
                 state_path: None,

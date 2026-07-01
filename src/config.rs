@@ -204,6 +204,8 @@ pub struct ForexConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeConfig {
+    #[serde(default)]
+    pub role: OnboardingRole,
     pub profile: RuntimeProfile,
     #[serde(default = "default_session_dir")]
     pub session_dir: PathBuf,
@@ -267,6 +269,17 @@ pub enum RuntimeProfile {
     Laptop,
     Vps,
     StaffOsWorker,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingRole {
+    #[default]
+    SoloLocalNode,
+    AgentClusterCore,
+    AgentClusterChildWorker,
+    StaffOsWorker,
+    ServerVpsNode,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -401,6 +414,7 @@ impl Default for ForexConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
+            role: OnboardingRole::default(),
             profile: RuntimeProfile::default(),
             session_dir: default_session_dir(),
             external_network_enabled: false,
@@ -1060,6 +1074,34 @@ impl std::str::FromStr for RuntimeProfile {
             "vps" => Ok(Self::Vps),
             "staff-os-worker" | "staff_os_worker" => Ok(Self::StaffOsWorker),
             other => anyhow::bail!("unknown runtime profile '{}'", other),
+        }
+    }
+}
+
+impl std::str::FromStr for OnboardingRole {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "solo" | "solo-local" | "solo_local" | "solo-local-node" | "solo_local_node" => {
+                Ok(Self::SoloLocalNode)
+            }
+            "agent-cluster-core" | "agent_cluster_core" | "cluster-core" | "core" => {
+                Ok(Self::AgentClusterCore)
+            }
+            "agent-cluster-child"
+            | "agent_cluster_child"
+            | "agent-cluster-child-worker"
+            | "agent_cluster_child_worker"
+            | "child"
+            | "child-worker"
+            | "child_worker" => Ok(Self::AgentClusterChildWorker),
+            "staff-os-worker" | "staff_os_worker" | "staff-worker" | "staff_worker" => {
+                Ok(Self::StaffOsWorker)
+            }
+            "server-vps" | "server_vps" | "server-vps-node" | "server_vps_node" | "server"
+            | "vps" => Ok(Self::ServerVpsNode),
+            other => anyhow::bail!("unknown onboarding role '{}'", other),
         }
     }
 }
