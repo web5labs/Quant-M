@@ -515,6 +515,20 @@ enum DeviceCommand {
 
 #[derive(Subcommand, Debug)]
 enum ChildCommand {
+    /// Join a core invite as an observe-only child request.
+    Join {
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        manual: bool,
+        #[arg(long, hide = true)]
+        requested_authority: Option<String>,
+    },
+    /// Create or print the local child identity.
+    Identity {
+        #[arg(long)]
+        json: bool,
+    },
     /// List pending child requests and approved children.
     List {
         #[arg(long)]
@@ -1263,6 +1277,34 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Child { command } => match command {
+            ChildCommand::Join {
+                url,
+                manual,
+                requested_authority,
+            } => {
+                if manual {
+                    print!("{}", pairing::render_child_join_manual());
+                } else {
+                    let url = url.with_context(|| {
+                        "child join requires --url <join-url> or --manual for fallback instructions"
+                    })?;
+                    let report = pairing::child_join_by_url(
+                        &cfg,
+                        None,
+                        &url,
+                        requested_authority.as_deref(),
+                    )?;
+                    print!("{}", pairing::render_child_join(&report));
+                }
+            }
+            ChildCommand::Identity { json } => {
+                let report = pairing::child_identity(&cfg)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_child_identity(&report));
+                }
+            }
             ChildCommand::List {
                 json,
                 include_revoked,
@@ -5236,6 +5278,7 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         },
         Commands::Child { command } => match command {
             ChildCommand::List { .. } => StorageMode::Inspect,
+            ChildCommand::Join { .. } | ChildCommand::Identity { .. } => StorageMode::SessionWrite,
             ChildCommand::Approve { .. }
             | ChildCommand::Deny { .. }
             | ChildCommand::Revoke { .. } => StorageMode::SessionWrite,
@@ -5843,6 +5886,43 @@ mod tests {
                     include_revoked: true,
                     ..
                 }
+            })
+        ));
+
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "child",
+            "join",
+            "--url",
+            "http://127.0.0.1:8787/join/inv-1",
+        ])
+        .expect("parse child join");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::Join {
+                    url: Some(url),
+                    manual: false,
+                    ..
+                }
+            }) if url == "http://127.0.0.1:8787/join/inv-1"
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "child", "join", "--manual"])
+            .expect("parse child join manual");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::Join { manual: true, .. }
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["quant-m", "child", "identity", "--json"])
+            .expect("parse child identity");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command: ChildCommand::Identity { json: true }
             })
         ));
 

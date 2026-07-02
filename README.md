@@ -147,6 +147,7 @@ What remains disabled:
 Milestones:
 
 - `ONBOARDING_ROLE_ROUTER_AND_QR_PAIRING_P0B`: local Agent Cluster pairing cockpit, short-lived invite URLs, manual child approval, deny/revoke lifecycle, and observe-only safety flags.
+- `CHILD_JOIN_REQUEST_P0C_A`: child-side manual URL join, stable child identity, and pending observe-only pair request submission. Heartbeat remains a later milestone.
 - `MOBILE_TABLET_CORE_ROLE_17A_FIX`: role-first onboarding language, mobile/tablet core proof-of-concept guidance, and optional ADB validation language.
 - `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
 
@@ -170,6 +171,15 @@ The invite URL uses this shape:
 http://<core-lan-ip>:8787/join/<invite_id>
 ```
 
+Child-side manual URL join:
+
+```bash
+quant-m child identity
+quant-m child join --url http://<core-lan-ip>:8787/join/<invite_id>
+```
+
+Camera QR scanning is not required in this runtime. If a camera scanner is unavailable, paste the URL from the core into `quant-m child join --url <url>`. The child creates a local identity under its own workspace, stores no provider keys, requests observe-only authority, and remains pending until the operator approves it on the core. The current wired command surface is `quant-m child ...`; a separate `quant-m-child` binary remains part of the bootstrap/package path.
+
 If terminal QR rendering is unavailable, Quant-M prints the local URL and manual fallback instead of failing. Watch pending requests from another terminal:
 
 ```bash
@@ -187,6 +197,8 @@ quant-m pair status --json
 ```
 
 Manual approval is required. Approved children remain observe-only: no provider calls, no shell execution, no approval authority, no canonical shared-state writes, and no broker/exchange/sportsbook execution.
+
+Heartbeat visibility and revoke health are separate follow-up milestones. The P0C-A child join flow proves identity and pending request submission; it does not claim child heartbeat validation.
 
 Core-hosted child bootstrap:
 
