@@ -10,7 +10,7 @@ Old Android and Termux devices should not be expected to clone GitHub or build Q
 
 If a tablet hits that Termux package failure, repair the Termux environment with package updates, `termux-change-repo`, and Git/curl/TLS package reinstalls. Product direction is to route around that class of failure: the core should host or push a prebuilt child binary over local Wi-Fi, then the child pairs and syncs approved packs.
 
-Valid Android validation methods include ADB, manual Termux commands, SSH into Termux, a QR or local bootstrap URL, a copied binary plus LAN command execution, or direct browser/Termux download from the core. ADB is useful for provisioning and debugging, but it is optional for LAN validation. The proof is that a real device executed the Quant-M flow over LAN.
+Valid Android validation methods include ADB, manual Termux commands, SSH into Termux, a QR or local bootstrap URL, a copied binary plus same-Wi-Fi/local-network command execution, or direct browser/Termux download from the core. ADB is useful for provisioning and debugging, but it is optional for validation. The proof is that a real device executed the Quant-M flow over the same trusted local network.
 
 ## Mobile/Tablet Core Mode
 
@@ -19,7 +19,7 @@ Use mobile/tablet core mode when the Android device can:
 - run the `quant-m` core binary
 - store local workspace/state
 - keep stable Wi-Fi
-- bind LAN ports for pairing, bootstrap, or pack serving
+- bind local network ports for pairing, bootstrap, or pack serving
 - maintain enough battery or external power
 - provide enough disk and RAM
 - run Termux or an equivalent shell
@@ -33,7 +33,7 @@ Use the old-device child path when the hardware is weaker, freshly reset, or int
 For `CHILD_BINARY_BOOTSTRAP_16A`, the core can expose a local child-binary bootstrap endpoint:
 
 ```bash
-quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-lan-ip>:8787
+quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-wifi-or-lan-ip>:8787
 ```
 
 The endpoint exposes:
@@ -66,10 +66,10 @@ The child-side instructions stay intentionally small:
 ```bash
 pkg update
 pkg install curl openssh termux-api
-curl -fL -o quant-m-child http://<core-lan-ip>:8788/download/quant-m-child
+curl -fL -o quant-m-child http://<core-wifi-or-lan-ip>:8788/download/quant-m-child
 printf '%s  %s\n' '<sha256>' quant-m-child | sha256sum -c -
 chmod +x quant-m-child
-./quant-m-child pair --core http://<core-lan-ip>:8787 --name android-tablet-01
+./quant-m-child pair --core http://<core-wifi-or-lan-ip>:8787 --name android-tablet-01
 ```
 
 The bootstrap endpoint does not auto-approve pairing and does not grant execution, approval, or canonical write authority.
@@ -111,7 +111,7 @@ The child-side pack sync stays cache-only:
 
 ```bash
 mkdir -p packs
-curl -fL -o packs/forex-worker-basic.tar http://<core-lan-ip>:8789/download/forex-worker-basic.tar
+curl -fL -o packs/forex-worker-basic.tar http://<core-wifi-or-lan-ip>:8789/download/forex-worker-basic.tar
 printf '%s  %s\n' '<sha256>' packs/forex-worker-basic.tar | sha256sum -c -
 ```
 

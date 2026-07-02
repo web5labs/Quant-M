@@ -2,7 +2,7 @@
 
 Verdict target: `child_heartbeat_revoke_p0c_b_validated`
 
-This slice proves an approved child can report heartbeat visibility, the core can classify health, and revoke prevents a child from being treated as healthy. It does not claim real Android/Termux LAN proof.
+This slice proves an approved child can report heartbeat visibility, the core can classify health, and revoke prevents a child from being treated as healthy. It does not claim real Android/Termux same-Wi-Fi/local-network proof.
 
 ## Simulated Local Flow
 
@@ -15,7 +15,7 @@ quant-m device add --qr
 Join from the child workspace:
 
 ```bash
-quant-m child join --url http://<core-lan-ip>:8787/join/<invite_id>
+quant-m child join --url http://<core-wifi-or-lan-ip>:8787/join/<invite_id>
 ```
 
 Approve on the core:
@@ -28,7 +28,7 @@ quant-m child approve <request_id>
 Send one heartbeat from the child:
 
 ```bash
-quant-m child heartbeat --core http://<core-lan-ip>:8787 --once
+quant-m child heartbeat --core http://<core-wifi-or-lan-ip>:8787 --once
 ```
 
 Inspect health on the core:
@@ -68,7 +68,7 @@ After revoke, a heartbeat from that node is recorded as revoked/unhealthy and is
 
 ## Known Later Milestones
 
-- P0C-C: real Android/Termux LAN proof with physical device.
+- P0C-C: real Android/Termux same-Wi-Fi/local-network proof with physical device.
 - Camera QR scanning remains unsupported in this runtime.
 - Separate `quant-m-child` binary path remains pending.
 - Child pack sync remains a later milestone.

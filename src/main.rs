@@ -476,9 +476,28 @@ enum PairCommand {
         #[arg(long, default_value = "0.0.0.0:8787")]
         bind: String,
         #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        interface: Option<String>,
+        #[arg(long)]
         dry_run: bool,
         #[arg(long, default_value_t = true)]
         qr: bool,
+    },
+    /// Diagnose same-Wi-Fi/local-network pairing URL selection.
+    Doctor {
+        #[arg(long, default_value = "0.0.0.0:8787")]
+        bind: String,
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        interface: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
     /// Show pairing server, pending request, and child status.
     Status {
@@ -508,6 +527,12 @@ enum DeviceCommand {
         dry_run: bool,
         #[arg(long, default_value = "0.0.0.0:8787")]
         bind: String,
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        interface: Option<String>,
         #[arg(long, default_value_t = 30)]
         ttl_minutes: u64,
     },
@@ -1252,9 +1277,34 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Pair { command } => match command {
-            PairCommand::Cockpit { bind, dry_run, qr } => {
-                let report = pairing::cockpit(&cfg, &bind, qr, dry_run)?;
+            PairCommand::Cockpit {
+                bind,
+                host,
+                port,
+                interface,
+                dry_run,
+                qr,
+            } => {
+                let bind = bind_with_optional_port(&bind, port);
+                let options = pairing::AdvertiseOptions { host, interface };
+                let report = pairing::cockpit_with_options(&cfg, &bind, qr, dry_run, &options)?;
                 print!("{}", pairing::render_cockpit(&report));
+            }
+            PairCommand::Doctor {
+                bind,
+                host,
+                port,
+                interface,
+                json,
+            } => {
+                let bind = bind_with_optional_port(&bind, port);
+                let options = pairing::AdvertiseOptions { host, interface };
+                let report = pairing::doctor(&cfg, &bind, &options)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_doctor(&report));
+                }
             }
             PairCommand::Status { bind, json } => {
                 let report = pairing::status(&cfg, &bind)?;
@@ -1277,12 +1327,24 @@ async fn main() -> Result<()> {
                 watch,
                 dry_run,
                 bind,
+                host,
+                port,
+                interface,
                 ttl_minutes,
             } => {
                 if watch {
                     print!("{}", pairing::render_pending_watch(&cfg)?);
                 } else {
-                    let report = pairing::create_invite(&cfg, &bind, ttl_minutes, qr, dry_run)?;
+                    let bind = bind_with_optional_port(&bind, port);
+                    let options = pairing::AdvertiseOptions { host, interface };
+                    let report = pairing::create_invite_with_options(
+                        &cfg,
+                        &bind,
+                        ttl_minutes,
+                        qr,
+                        dry_run,
+                        &options,
+                    )?;
                     print!("{}", pairing::render_device_add(&report));
                 }
             }
@@ -2419,7 +2481,7 @@ fn provider_setup_next_steps(cfg: &Config) -> String {
 fn core_pairing_next_steps(cfg: &Config) -> String {
     let command = quant_m_command_hint();
     format!(
-        "Agent Cluster core selected.\nworkspace: {}\n\nChat was not opened because this role pairs child devices first.\n\nNext:\n  {command} pair cockpit\n  {command} device add --qr\n  {command} device add --watch\n  {command} bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-lan-ip>:8787\n\nSafety:\n  children remain observe-only\n  child provider calls are blocked\n  child canonical writes are blocked\n  child execution authority is blocked",
+        "Agent Cluster core selected.\nworkspace: {}\n\nChat was not opened because this role pairs child devices first.\n\nNext:\n  {command} pair doctor\n  {command} pair cockpit\n  {command} device add --qr\n  {command} device add --watch\n  {command} bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-wifi-or-lan-ip>:8787\n\nNetwork:\n  same trusted local network required\n  Wi-Fi is supported\n  Ethernet is optional\n\nSafety:\n  children remain observe-only\n  child provider calls are blocked\n  child canonical writes are blocked\n  child execution authority is blocked",
         cfg.workspace_dir.display()
     )
 }
@@ -5214,6 +5276,16 @@ fn run_boil_cli(
     }
 }
 
+fn bind_with_optional_port(bind: &str, port: Option<u16>) -> String {
+    match port {
+        Some(port) => {
+            let host = bind.rsplit_once(':').map(|(host, _)| host).unwrap_or(bind);
+            format!("{host}:{port}")
+        }
+        None => bind.to_string(),
+    }
+}
+
 fn storage_mode_for_command(command: &Commands) -> StorageMode {
     match command {
         Commands::Start
@@ -5293,6 +5365,7 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
                     StorageMode::SessionWrite
                 }
             }
+            PairCommand::Doctor { .. } => StorageMode::Inspect,
             PairCommand::Status { .. } => StorageMode::Inspect,
             PairCommand::Serve { .. } => StorageMode::WorkerRun,
         },
@@ -5842,15 +5915,24 @@ mod tests {
                 command:
                     PairCommand::Cockpit {
                         bind,
+                        host,
+                        port,
+                        interface,
                         dry_run: true,
                         qr: true,
                     },
             }) => {
                 assert_eq!(bind, "0.0.0.0:8787");
+                assert_eq!(host, None);
+                assert_eq!(port, None);
+                assert_eq!(interface, None);
                 assert_eq!(
                     storage_mode_for_command(&Commands::Pair {
                         command: PairCommand::Cockpit {
-                            bind,
+                            bind: "0.0.0.0:8787".to_string(),
+                            host: None,
+                            port: None,
+                            interface: None,
                             dry_run: true,
                             qr: true,
                         },
@@ -5860,6 +5942,32 @@ mod tests {
             }
             other => panic!("unexpected command: {other:?}"),
         }
+
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "pair",
+            "doctor",
+            "--host",
+            "192.168.1.50",
+            "--port",
+            "8788",
+            "--interface",
+            "en0",
+            "--json",
+        ])
+        .expect("parse pair doctor");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Pair {
+                command: PairCommand::Doctor {
+                    host: Some(host),
+                    port: Some(8788),
+                    interface: Some(interface),
+                    json: true,
+                    ..
+                }
+            }) if host == "192.168.1.50" && interface == "en0"
+        ));
 
         let cli = Cli::try_parse_from(["quant-m", "pair", "status", "--json"])
             .expect("parse pair status");
@@ -5894,9 +6002,36 @@ mod tests {
                     qr: true,
                     dry_run: true,
                     ttl_minutes: 30,
+                    host: None,
                     ..
                 }
             })
+        ));
+
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "device",
+            "add",
+            "--host",
+            "192.168.1.42",
+            "--port",
+            "8789",
+            "--interface",
+            "wlan0",
+            "--dry-run",
+        ])
+        .expect("parse device add host options");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Device {
+                command: DeviceCommand::Add {
+                    host: Some(host),
+                    port: Some(8789),
+                    interface: Some(interface),
+                    dry_run: true,
+                    ..
+                }
+            }) if host == "192.168.1.42" && interface == "wlan0"
         ));
 
         let cli = Cli::try_parse_from(["quant-m", "device", "add", "--watch"])

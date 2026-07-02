@@ -2,7 +2,7 @@
 
 Verdict target: `child_join_request_p0c_a_validated`
 
-This slice proves the child can consume a core join URL, create a local identity, and submit a pending observe-only pair request. It does not implement heartbeat or real-device LAN proof.
+This slice proves the child can consume a core join URL, create a local identity, and submit a pending observe-only pair request. It does not implement heartbeat or real-device same-Wi-Fi/local-network proof.
 
 ## Core Setup
 
@@ -16,10 +16,10 @@ quant-m device add --qr
 Copy the printed URL:
 
 ```text
-http://<core-lan-ip>:8787/join/<invite_id>
+http://<core-wifi-or-lan-ip>:8787/join/<invite_id>
 ```
 
-If serving over LAN, keep the pairing server on trusted Wi-Fi only:
+If serving over the local network, keep the pairing server on trusted Wi-Fi/LAN only. Ethernet is optional:
 
 ```bash
 quant-m pair serve --bind 0.0.0.0:8787
@@ -31,7 +31,7 @@ On the child device or child workspace:
 
 ```bash
 quant-m child identity
-quant-m child join --url http://<core-lan-ip>:8787/join/<invite_id>
+quant-m child join --url http://<core-wifi-or-lan-ip>:8787/join/<invite_id>
 ```
 
 Camera scanning is not required. Paste the URL manually when QR scanning is unavailable.
@@ -70,5 +70,5 @@ P0C-A stops at pending request submission. Manual approval still happens on the 
 ## Known Later Milestones
 
 - P0C-B: child heartbeat and revoke health visibility.
-- P0C-C: real Android/Termux LAN proof.
+- P0C-C: real Android/Termux same-Wi-Fi/local-network proof.
 - Child binary bootstrap remains the Git-free packaging path for old devices.

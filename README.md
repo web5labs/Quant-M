@@ -87,7 +87,7 @@ If this device will be the core, choose the core role during onboarding. If this
 
 ## Agent Cluster
 
-Agent Cluster is the local-alpha lane for running Quant-M across trusted LAN devices. It supports old, outdated, deprecated, or factory-reset Wi-Fi devices as safe child workers, and it also allows capable tablets, phones, Raspberry Pi boards, mini PCs, laptops, desktops, and servers to act as core nodes when they meet the core requirements.
+Agent Cluster is the local-alpha lane for running Quant-M across the same trusted local network, including Wi-Fi. It supports old, outdated, deprecated, or factory-reset Wi-Fi devices as safe child workers, and it also allows capable tablets, phones, Raspberry Pi boards, mini PCs, laptops, desktops, and servers to act as core nodes when they meet the core requirements.
 
 The goal is role-first onboarding. A device can participate as a solo node, Agent Cluster core, observe-only child worker, Staff-OS worker, or server/VPS node. Old or limited devices should stay lightweight and observe-only. Stronger Wi-Fi-only devices may run the core for edge proof-of-concept deployments.
 
@@ -105,8 +105,8 @@ Agent Cluster core requirements:
 - ability to run the `quant-m` core binary
 - local workspace/state storage
 - enough disk and RAM to keep the core alive
-- stable Wi-Fi or LAN
-- ability to bind local LAN ports
+- stable Wi-Fi or LAN; Ethernet is optional
+- ability to bind local network ports
 - shell/runtime access
 - enough battery or power stability
 - no public internet requirement
@@ -123,7 +123,7 @@ Safety rules:
 - do not use outdated child devices for live trading execution
 - do not allow child nodes to approve work, mutate canonical shared state, or place orders
 
-Real-device validation can be driven through ADB, manual Termux commands, SSH into Termux, a QR/bootstrap URL, a copied binary, or any other method that proves a real device executed the Quant-M command over LAN. ADB is useful for provisioning and debugging Android devices, but it is not required for Agent Cluster LAN validation.
+Real-device validation can be driven through ADB, manual Termux commands, SSH into Termux, a QR/bootstrap URL, a copied binary, or any other method that proves a real device executed the Quant-M command over the same Wi-Fi or local network. ADB is useful for provisioning and debugging Android devices, but it is not required for Agent Cluster validation.
 
 What this local alpha can demonstrate:
 
@@ -150,8 +150,17 @@ Milestones:
 - `ONBOARDING_ROLE_ROUTER_AND_QR_PAIRING_P0B`: local Agent Cluster pairing cockpit, short-lived invite URLs, manual child approval, deny/revoke lifecycle, and observe-only safety flags.
 - `CHILD_JOIN_REQUEST_P0C_A`: child-side manual URL join, stable child identity, and pending observe-only pair request submission. Heartbeat remains a later milestone.
 - `CHILD_HEARTBEAT_REVOKE_P0C_B`: approved child heartbeat visibility, health summaries, stale/revoked classification, and heartbeat authority hardening.
+- `WIFI_FIRST_PAIRING_URL_FIX`: Wi-Fi-first advertised pairing URLs, `pair doctor`, manual host/interface overrides, and Ethernet-optional wording.
 - `MOBILE_TABLET_CORE_ROLE_17A_FIX`: role-first onboarding language, mobile/tablet core proof-of-concept guidance, and optional ADB validation language.
 - `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
+
+Pairing diagnostics:
+
+```bash
+quant-m pair doctor
+```
+
+`pair doctor` reports the selected bind address, the advertised child URL, detected local IP candidates, ignored addresses, port availability, firewall guidance, and a child-side `curl` test command. Same trusted local network means the core and child are on the same Wi-Fi or LAN and can reach each other directly. Ethernet is optional; Raspberry Pi is supported but not required.
 
 Pairing cockpit:
 
@@ -159,7 +168,7 @@ Pairing cockpit:
 quant-m pair cockpit
 ```
 
-Use the cockpit on the core to see the local URL, QR fallback text, pending request count, approved children, revoked children, and the safety boundary. Pairing is for trusted LAN only. If the core binds `0.0.0.0:8787`, keep it on local Wi-Fi and do not expose the port to the public internet.
+Use the cockpit on the core to see the selected child-reachable URL, QR fallback text, detected addresses, pending request count, approved children, revoked children, and the safety boundary. Pairing is for the same trusted local network, including Wi-Fi. If the core binds `0.0.0.0:8787`, keep it on local Wi-Fi/LAN and do not expose the port to the public internet.
 
 Create an invite for a nearby device:
 
@@ -167,17 +176,27 @@ Create an invite for a nearby device:
 quant-m device add --qr
 ```
 
+If Quant-M cannot automatically choose the right Wi-Fi/local-network address, pass it manually:
+
+```bash
+quant-m pair cockpit --host 192.168.1.42
+quant-m device add --qr --host 192.168.1.42
+quant-m pair doctor --host 192.168.1.42
+```
+
+The server may bind `0.0.0.0`, but QR and child join URLs use an actual advertised host. Quant-M avoids `0.0.0.0`, `127.0.0.1`, and Docker/VM-style interfaces for phone/tablet QR URLs when a private Wi-Fi/LAN address is available.
+
 The invite URL uses this shape:
 
 ```text
-http://<core-lan-ip>:8787/join/<invite_id>
+http://<core-wifi-or-lan-ip>:8787/join/<invite_id>
 ```
 
 Child-side manual URL join:
 
 ```bash
 quant-m child identity
-quant-m child join --url http://<core-lan-ip>:8787/join/<invite_id>
+quant-m child join --url http://<core-wifi-or-lan-ip>:8787/join/<invite_id>
 ```
 
 Camera QR scanning is not required in this runtime. If a camera scanner is unavailable, paste the URL from the core into `quant-m child join --url <url>`. The child creates a local identity under its own workspace, stores no provider keys, requests observe-only authority, and remains pending until the operator approves it on the core. The current wired command surface is `quant-m child ...`; a separate `quant-m-child` binary remains part of the bootstrap/package path.
@@ -203,17 +222,17 @@ Manual approval is required. Approved children remain observe-only: no provider 
 Approved children can report heartbeat visibility:
 
 ```bash
-quant-m child heartbeat --core http://<core-lan-ip>:8787 --once
+quant-m child heartbeat --core http://<core-wifi-or-lan-ip>:8787 --once
 quant-m child list --json
 quant-m pair status --json
 ```
 
-Heartbeat proves visibility only. It does not grant provider calls, execution, approval authority, canonical writes, or broker/exchange/sportsbook execution. Revoked children are not counted as healthy or active. Real phone/tablet LAN proof is still a separate validation milestone.
+Heartbeat proves visibility only. It does not grant provider calls, execution, approval authority, canonical writes, or broker/exchange/sportsbook execution. Revoked children are not counted as healthy or active. Real phone/tablet same-Wi-Fi/local-network proof is still a separate validation milestone.
 
 Core-hosted child bootstrap:
 
 ```bash
-quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-lan-ip>:8787
+quant-m bootstrap serve --bind 0.0.0.0:8788 --bundle-dir ./release-bundles --core-url http://<core-wifi-or-lan-ip>:8787
 ```
 
 The bundle directory contains prebuilt `quant-m-child` files plus `.toml` metadata. The core lists only bundles whose metadata file size and SHA-256 match the local binary, then serves only those approved files. The bootstrap page/API shows platform, architecture, ABI, version, commit, file size, checksum, download URL, checksum verification command, `chmod +x`, and the manual pairing command.
@@ -223,10 +242,10 @@ Example child-side flow shown by the core:
 ```bash
 pkg update
 pkg install curl openssh termux-api
-curl -fL -o quant-m-child http://<core-lan-ip>:8788/download/quant-m-child
+curl -fL -o quant-m-child http://<core-wifi-or-lan-ip>:8788/download/quant-m-child
 printf '%s  %s\n' '<sha256>' quant-m-child | sha256sum -c -
 chmod +x quant-m-child
-./quant-m-child pair --core http://<core-lan-ip>:8787 --name android-tablet-01
+./quant-m-child pair --core http://<core-wifi-or-lan-ip>:8787 --name android-tablet-01
 ```
 
 Pairing still requires manual core approval. The child remains observe-only: no execution, approval, or canonical shared-state write authority is granted by bootstrap.
@@ -258,7 +277,7 @@ script_execution = false
 
 The core lists only non-revoked packs whose archive size and SHA-256 match metadata, filters by role, and blocks arbitrary script execution. The child downloads the pack with `curl`, verifies SHA-256, caches it locally, reports the active pack hash in heartbeat, and includes the same hash in non-authoritative evidence.
 
-`CHILD_PACK_SYNC_REAL_DEVICE_17B` is blocked until a real reachable device completes that child-side flow over LAN. ADB returning no devices is only a debug detail; the blocker is that no real device completed download, checksum, cache, activation, heartbeat, and evidence reporting.
+`CHILD_PACK_SYNC_REAL_DEVICE_17B` is blocked until a real reachable device completes that child-side flow over the same Wi-Fi/local network. ADB returning no devices is only a debug detail; the blocker is that no real device completed download, checksum, cache, activation, heartbeat, and evidence reporting.
 
 More device details:
 
