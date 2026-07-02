@@ -529,6 +529,17 @@ enum ChildCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Send an observe-only child heartbeat to the approved core.
+    Heartbeat {
+        #[arg(long)]
+        core: Option<String>,
+        #[arg(long)]
+        once: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        interval: Option<u64>,
+    },
     /// List pending child requests and approved children.
     List {
         #[arg(long)]
@@ -1303,6 +1314,24 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&report)?);
                 } else {
                     print!("{}", pairing::render_child_identity(&report));
+                }
+            }
+            ChildCommand::Heartbeat {
+                core,
+                once: _,
+                json,
+                interval,
+            } => {
+                if let Some(interval) = interval
+                    && interval < 15
+                {
+                    anyhow::bail!("child heartbeat --interval must be at least 15 seconds");
+                }
+                let report = pairing::child_heartbeat(&cfg, None, core.as_deref(), None)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", pairing::render_child_heartbeat(&report));
                 }
             }
             ChildCommand::List {
@@ -5278,7 +5307,9 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         },
         Commands::Child { command } => match command {
             ChildCommand::List { .. } => StorageMode::Inspect,
-            ChildCommand::Join { .. } | ChildCommand::Identity { .. } => StorageMode::SessionWrite,
+            ChildCommand::Join { .. }
+            | ChildCommand::Identity { .. }
+            | ChildCommand::Heartbeat { .. } => StorageMode::SessionWrite,
             ChildCommand::Approve { .. }
             | ChildCommand::Deny { .. }
             | ChildCommand::Revoke { .. } => StorageMode::SessionWrite,
@@ -5924,6 +5955,29 @@ mod tests {
             Some(Commands::Child {
                 command: ChildCommand::Identity { json: true }
             })
+        ));
+
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "child",
+            "heartbeat",
+            "--core",
+            "http://127.0.0.1:8787",
+            "--once",
+            "--json",
+        ])
+        .expect("parse child heartbeat");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Child {
+                command:
+                    ChildCommand::Heartbeat {
+                        core: Some(core),
+                        once: true,
+                        json: true,
+                        ..
+                    }
+            }) if core == "http://127.0.0.1:8787"
         ));
 
         let cli = Cli::try_parse_from(["quant-m", "child", "approve", "req-1"])

@@ -95,6 +95,57 @@ pub struct ChildRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeartbeatHealth {
+    Healthy,
+    Stale,
+    Pending,
+    Revoked,
+    Unknown,
+    Denied,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChildHeartbeatPayload {
+    pub node_id: String,
+    pub request_id: Option<String>,
+    pub child_fingerprint: String,
+    pub device_name: String,
+    pub claimed_role: String,
+    pub authority: ChildAuthority,
+    pub timestamp: u64,
+    pub os: String,
+    pub architecture: String,
+    pub runtime_surface: String,
+    pub child_binary_version: String,
+    pub core_url: String,
+    pub active_pack_hash: Option<String>,
+    pub battery_status: Option<String>,
+    pub storage_status: Option<String>,
+    pub network_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChildHeartbeatRecord {
+    pub node_id: String,
+    pub request_id: Option<String>,
+    pub child_fingerprint: String,
+    pub last_heartbeat: u64,
+    pub heartbeat_hash: String,
+    pub health: HeartbeatHealth,
+    pub active_pack_hash: Option<String>,
+    pub authority: ChildAuthority,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChildHeartbeatReport {
+    pub accepted: bool,
+    pub health: HeartbeatHealth,
+    pub record: Option<ChildHeartbeatRecord>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PairAuditEvent {
     pub event_id: String,
     pub event_type: String,
@@ -110,6 +161,11 @@ pub struct PairStatusReport {
     pub pending_request_count: usize,
     pub approved_child_count: usize,
     pub revoked_child_count: usize,
+    pub healthy_child_count: usize,
+    pub stale_child_count: usize,
+    pub pending_child_count: usize,
+    pub unknown_child_count: usize,
+    pub denied_child_count: usize,
     pub last_audit_event: Option<PairAuditEvent>,
 }
 
@@ -141,6 +197,7 @@ pub struct ChildListReport {
     pub pending: Vec<PairRequest>,
     pub approved: Vec<ChildRecord>,
     pub revoked: Vec<ChildRecord>,
+    pub health: Vec<ChildHeartbeatRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,6 +223,10 @@ pub struct ChildIdentity {
     pub created_at: u64,
     pub last_joined_core_url: Option<String>,
     pub last_invite_id: Option<String>,
+    #[serde(default)]
+    pub last_request_id: Option<String>,
+    #[serde(default)]
+    pub approved_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,6 +267,7 @@ pub struct PairPaths {
     invites: PathBuf,
     requests: PathBuf,
     children: PathBuf,
+    heartbeats: PathBuf,
     audit: PathBuf,
 }
 
@@ -234,6 +296,7 @@ impl PairPaths {
             invites: root.join("invites"),
             requests: root.join("requests"),
             children: root.join("children"),
+            heartbeats: root.join("heartbeats"),
             audit: root.join("audit.ndjson"),
             root,
         }
@@ -246,6 +309,8 @@ impl PairPaths {
             .with_context(|| format!("failed to create {}", self.requests.display()))?;
         fs::create_dir_all(&self.children)
             .with_context(|| format!("failed to create {}", self.children.display()))?;
+        fs::create_dir_all(&self.heartbeats)
+            .with_context(|| format!("failed to create {}", self.heartbeats.display()))?;
         Ok(())
     }
 
@@ -259,6 +324,10 @@ impl PairPaths {
 
     fn child_path(&self, node_id: &str) -> PathBuf {
         self.children.join(format!("{}.json", safe_id(node_id)))
+    }
+
+    fn heartbeat_path(&self, node_id: &str) -> PathBuf {
+        self.heartbeats.join(format!("{}.json", safe_id(node_id)))
     }
 }
 
@@ -350,6 +419,7 @@ pub fn status(cfg: &Config, bind: &str) -> Result<PairStatusReport> {
     let paths = PairPaths::new(cfg);
     let pending = list_pending_requests(&paths)?;
     let children = list_child_records(&paths)?;
+    let health = health_records(&paths)?;
     Ok(PairStatusReport {
         server_status: "stopped_or_unverified".to_string(),
         bind: bind.to_string(),
@@ -362,6 +432,23 @@ pub fn status(cfg: &Config, bind: &str) -> Result<PairStatusReport> {
         revoked_child_count: children
             .iter()
             .filter(|child| child.status == ChildStatus::Revoked)
+            .count(),
+        healthy_child_count: health
+            .iter()
+            .filter(|record| record.health == HeartbeatHealth::Healthy)
+            .count(),
+        stale_child_count: health
+            .iter()
+            .filter(|record| record.health == HeartbeatHealth::Stale)
+            .count(),
+        pending_child_count: pending.len(),
+        unknown_child_count: health
+            .iter()
+            .filter(|record| record.health == HeartbeatHealth::Unknown)
+            .count(),
+        denied_child_count: health
+            .iter()
+            .filter(|record| record.health == HeartbeatHealth::Denied)
             .count(),
         last_audit_event: last_audit_event(&paths)?,
     })
@@ -392,6 +479,7 @@ pub fn list_children(
         },
         approved: children,
         revoked,
+        health: health_records(&paths)?,
     })
 }
 
@@ -474,6 +562,9 @@ pub fn child_join_from_metadata(
             request.status
         );
     }
+    identity.last_request_id = Some(request.request_id.clone());
+    identity.approved_node_id = Some(node_id_for_request(&request.request_id));
+    write_json(&paths.identity, &identity)?;
     append_child_audit(
         &paths,
         "child_pair_request_submitted",
@@ -486,6 +577,131 @@ pub fn child_join_from_metadata(
         request,
         camera_scanning_available: false,
         safety: ChildAuthority::observe_only(),
+    })
+}
+
+pub fn child_heartbeat(
+    child_cfg: &Config,
+    core_cfg: Option<&Config>,
+    core_url: Option<&str>,
+    claimed_authority: Option<ChildAuthority>,
+) -> Result<ChildHeartbeatReport> {
+    preflight_child_writes(child_cfg)?;
+    let paths = ChildPaths::new(child_cfg);
+    let identity = load_or_create_child_identity(child_cfg, &paths)?;
+    let request_id = identity.last_request_id.clone();
+    let node_id = identity
+        .approved_node_id
+        .clone()
+        .or_else(|| request_id.as_deref().map(node_id_for_request))
+        .with_context(|| "child heartbeat requires a prior child join request")?;
+    let core_url = core_url
+        .map(ToOwned::to_owned)
+        .or(identity.last_joined_core_url.clone())
+        .with_context(|| "child heartbeat requires --core <core-url> or prior join metadata")?;
+    let payload = ChildHeartbeatPayload {
+        node_id,
+        request_id,
+        child_fingerprint: identity.child_fingerprint.clone(),
+        device_name: identity.display_name.clone(),
+        claimed_role: "agent-cluster-child-worker".to_string(),
+        authority: claimed_authority.unwrap_or_else(ChildAuthority::observe_only),
+        timestamp: now_secs(),
+        os: identity.os.clone(),
+        architecture: identity.architecture.clone(),
+        runtime_surface: identity.runtime_surface.clone(),
+        child_binary_version: env!("CARGO_PKG_VERSION").to_string(),
+        core_url,
+        active_pack_hash: None,
+        battery_status: None,
+        storage_status: None,
+        network_status: None,
+    };
+    let report = if let Some(core_cfg) = core_cfg {
+        submit_heartbeat(core_cfg, payload)?
+    } else {
+        submit_heartbeat_http(&payload)?
+    };
+    append_child_audit(
+        &paths,
+        "child_heartbeat_sent",
+        &format!(
+            "node_id={} health={:?}",
+            report
+                .record
+                .as_ref()
+                .map(|record| record.node_id.as_str())
+                .unwrap_or("none"),
+            report.health
+        ),
+    )?;
+    Ok(report)
+}
+
+pub fn submit_heartbeat(
+    cfg: &Config,
+    payload: ChildHeartbeatPayload,
+) -> Result<ChildHeartbeatReport> {
+    let paths = PairPaths::new(cfg);
+    paths.ensure()?;
+    let mut health = classify_heartbeat(&paths, &payload)?;
+    let mut accepted = health == HeartbeatHealth::Healthy;
+    if payload.authority != ChildAuthority::observe_only() {
+        append_audit(
+            &paths,
+            "heartbeat_authority_claim_rejected",
+            &format!("node_id={}", payload.node_id),
+        )?;
+        accepted = false;
+        if health == HeartbeatHealth::Healthy {
+            health = HeartbeatHealth::Unknown;
+        }
+    }
+    let record = ChildHeartbeatRecord {
+        node_id: payload.node_id.clone(),
+        request_id: payload.request_id.clone(),
+        child_fingerprint: payload.child_fingerprint.clone(),
+        last_heartbeat: payload.timestamp,
+        heartbeat_hash: heartbeat_hash(&payload),
+        health: health.clone(),
+        active_pack_hash: payload.active_pack_hash.clone(),
+        authority: ChildAuthority::observe_only(),
+    };
+    write_json(&paths.heartbeat_path(&payload.node_id), &record)?;
+    match health {
+        HeartbeatHealth::Healthy => {
+            let mut child: ChildRecord = read_json(&paths.child_path(&payload.node_id))?;
+            child.last_heartbeat = Some(payload.timestamp);
+            child.active_pack_hash = payload.active_pack_hash.clone();
+            child.authority = ChildAuthority::observe_only();
+            write_json(&paths.child_path(&payload.node_id), &child)?;
+            append_audit(&paths, "heartbeat_accepted", &payload.node_id)?;
+        }
+        HeartbeatHealth::Pending => {
+            append_audit(&paths, "heartbeat_rejected_pending_child", &payload.node_id)?;
+        }
+        HeartbeatHealth::Revoked => {
+            append_audit(&paths, "heartbeat_rejected_revoked_child", &payload.node_id)?;
+        }
+        HeartbeatHealth::Denied => {
+            append_audit(&paths, "heartbeat_rejected_denied_child", &payload.node_id)?;
+        }
+        HeartbeatHealth::Stale => {
+            append_audit(&paths, "heartbeat_stale_classified", &payload.node_id)?;
+        }
+        HeartbeatHealth::Unknown => {
+            append_audit(&paths, "heartbeat_rejected_unknown_child", &payload.node_id)?;
+        }
+    }
+    Ok(ChildHeartbeatReport {
+        accepted,
+        health,
+        record: Some(record),
+        message: if accepted {
+            "heartbeat accepted".to_string()
+        } else {
+            "heartbeat recorded as not healthy".to_string()
+        },
     })
 }
 
@@ -550,7 +766,7 @@ pub fn approve_request(cfg: &Config, request_id: &str) -> Result<ChildRecord> {
     }
     request.status = PairRequestStatus::Approved;
     write_json(&paths.request_path(request_id), &request)?;
-    let node_id = format!("child-{}", safe_id(request_id));
+    let node_id = node_id_for_request(request_id);
     let child = ChildRecord {
         node_id: node_id.clone(),
         request_id: request.request_id.clone(),
@@ -677,6 +893,22 @@ fn handle_connection(cfg: &Config, stream: &mut TcpStream, bind: &str) -> Result
                 format!("{err:#}\n"),
             ),
         }
+    } else if method == "POST" && path == "/api/heartbeats" {
+        match serde_json::from_str::<ChildHeartbeatPayload>(request_body)
+            .context("invalid heartbeat JSON")
+            .and_then(|payload| submit_heartbeat(cfg, payload))
+        {
+            Ok(report) => (
+                "200 OK",
+                "application/json",
+                serde_json::to_string_pretty(&report)?,
+            ),
+            Err(err) => (
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                format!("{err:#}\n"),
+            ),
+        }
     } else if method == "GET" && path == "/" {
         (
             "200 OK",
@@ -795,13 +1027,18 @@ pub fn render_device_add(report: &DeviceAddReport) -> String {
 
 pub fn render_status(report: &PairStatusReport) -> String {
     format!(
-        "pairing_status: {}\nbind: {}\nport: {}\npending_requests: {}\napproved_children: {}\nrevoked_children: {}\nlast_audit_event: {}\n",
+        "pairing_status: {}\nbind: {}\nport: {}\npending_requests: {}\napproved_children: {}\nrevoked_children: {}\nhealthy_children: {}\nstale_children: {}\npending_children: {}\nunknown_children: {}\ndenied_children: {}\nlast_audit_event: {}\n",
         report.server_status,
         report.bind,
         report.port,
         report.pending_request_count,
         report.approved_child_count,
         report.revoked_child_count,
+        report.healthy_child_count,
+        report.stale_child_count,
+        report.pending_child_count,
+        report.unknown_child_count,
+        report.denied_child_count,
         report
             .last_audit_event
             .as_ref()
@@ -848,6 +1085,18 @@ pub fn render_child_list(report: &ChildListReport) -> String {
                 .unwrap_or_else(|| "none".to_string())
         ));
     }
+    for record in &report.health {
+        out.push_str(&format!(
+            "health node_id={} status={:?} last_heartbeat={} active_pack_hash={}\n",
+            record.node_id,
+            record.health,
+            record.last_heartbeat,
+            record
+                .active_pack_hash
+                .clone()
+                .unwrap_or_else(|| "none".to_string())
+        ));
+    }
     out
 }
 
@@ -889,6 +1138,23 @@ pub fn render_child_join(report: &ChildJoinReport) -> String {
 
 pub fn render_child_join_manual() -> String {
     "Camera QR scanning is not implemented in this runtime yet. Open the QR URL manually or paste it with quant-m child join --url <url>.\n\nTermux/manual fallback:\n  pkg update\n  pkg install curl openssh termux-api\n  quant-m child join --url http://<core-lan-ip>:8787/join/<invite_id>\n\nThe child requests observe-only authority, stores no provider keys, and waits for manual core approval.\n".to_string()
+}
+
+pub fn render_child_heartbeat(report: &ChildHeartbeatReport) -> String {
+    let node_id = report
+        .record
+        .as_ref()
+        .map(|record| record.node_id.as_str())
+        .unwrap_or("none");
+    let last_heartbeat = report
+        .record
+        .as_ref()
+        .map(|record| record.last_heartbeat.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "Quant-M child heartbeat\naccepted: {}\nhealth: {:?}\nnode_id: {}\nlast_heartbeat: {}\nmessage: {}\n\nSafety:\n  heartbeat visibility only\n  heartbeat does not grant authority\n  child authority remains observe-only\n  provider calls: blocked\n  execution: blocked\n  approval: blocked\n  canonical shared-state writes: blocked\n  broker/exchange/sportsbook execution: blocked\n",
+        report.accepted, report.health, node_id, last_heartbeat, report.message
+    )
 }
 
 pub fn join_metadata(cfg: &Config, bind: &str, invite_id: &str) -> Result<JoinMetadata> {
@@ -972,6 +1238,8 @@ fn load_or_create_child_identity(cfg: &Config, paths: &ChildPaths) -> Result<Chi
         created_at: now_secs(),
         last_joined_core_url: None,
         last_invite_id: None,
+        last_request_id: None,
+        approved_node_id: None,
     };
     write_json(&paths.identity, &identity)?;
     append_child_audit(paths, "child_identity_created", &identity.identity_id)?;
@@ -1015,6 +1283,87 @@ fn submit_pair_request_http(url: &str, input: &PairRequestInput) -> Result<PairR
     let response = http_post_json(url, &raw)?;
     serde_json::from_str(&response)
         .with_context(|| format!("invalid pair request response from {url}"))
+}
+
+fn submit_heartbeat_http(payload: &ChildHeartbeatPayload) -> Result<ChildHeartbeatReport> {
+    let raw = serde_json::to_string(payload).context("failed to serialize heartbeat")?;
+    let url = format!("{}/api/heartbeats", payload.core_url.trim_end_matches('/'));
+    let response = http_post_json(&url, &raw)?;
+    serde_json::from_str(&response)
+        .with_context(|| format!("invalid heartbeat response from {url}"))
+}
+
+fn health_records(paths: &PairPaths) -> Result<Vec<ChildHeartbeatRecord>> {
+    let mut records = read_dir_json::<ChildHeartbeatRecord>(&paths.heartbeats)?;
+    let children = list_child_records(paths)?;
+    let now = now_secs();
+    for child in children {
+        if child.status == ChildStatus::Approved {
+            if let Some(record) = records
+                .iter_mut()
+                .find(|record| record.node_id == child.node_id)
+            {
+                if record.health == HeartbeatHealth::Healthy
+                    && now.saturating_sub(record.last_heartbeat) > heartbeat_fresh_seconds()
+                {
+                    record.health = HeartbeatHealth::Stale;
+                }
+            } else {
+                records.push(ChildHeartbeatRecord {
+                    node_id: child.node_id.clone(),
+                    request_id: Some(child.request_id.clone()),
+                    child_fingerprint: String::new(),
+                    last_heartbeat: 0,
+                    heartbeat_hash: String::new(),
+                    health: HeartbeatHealth::Stale,
+                    active_pack_hash: child.active_pack_hash.clone(),
+                    authority: child.authority.clone(),
+                });
+            }
+        }
+    }
+    Ok(records)
+}
+
+fn classify_heartbeat(
+    paths: &PairPaths,
+    payload: &ChildHeartbeatPayload,
+) -> Result<HeartbeatHealth> {
+    if let Ok(child) = read_json::<ChildRecord>(&paths.child_path(&payload.node_id)) {
+        return Ok(if child.status == ChildStatus::Revoked {
+            HeartbeatHealth::Revoked
+        } else if payload.timestamp <= now_secs().saturating_sub(heartbeat_fresh_seconds()) {
+            HeartbeatHealth::Stale
+        } else {
+            HeartbeatHealth::Healthy
+        });
+    }
+    if let Some(request_id) = &payload.request_id
+        && let Ok(request) = read_json::<PairRequest>(&paths.request_path(request_id))
+    {
+        return Ok(match request.status {
+            PairRequestStatus::Pending => HeartbeatHealth::Pending,
+            PairRequestStatus::Denied => HeartbeatHealth::Denied,
+            PairRequestStatus::Revoked => HeartbeatHealth::Revoked,
+            PairRequestStatus::Expired => HeartbeatHealth::Unknown,
+            PairRequestStatus::Approved => HeartbeatHealth::Unknown,
+        });
+    }
+    Ok(HeartbeatHealth::Unknown)
+}
+
+fn heartbeat_hash(payload: &ChildHeartbeatPayload) -> String {
+    let raw = serde_json::to_string(payload).unwrap_or_default();
+    let mut hash: u64 = 14_695_981_039_346_656_037;
+    for byte in raw.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    format!("heartbeat-{hash:016x}")
+}
+
+fn heartbeat_fresh_seconds() -> u64 {
+    120
 }
 
 fn list_pending_requests(paths: &PairPaths) -> Result<Vec<PairRequest>> {
@@ -1308,6 +1657,10 @@ fn make_id(prefix: &str) -> String {
     format!("{}-{}-{}", prefix, now_nanos(), std::process::id())
 }
 
+fn node_id_for_request(request_id: &str) -> String {
+    format!("child-{}", safe_id(request_id))
+}
+
 fn safe_id(value: &str) -> String {
     value
         .chars()
@@ -1591,6 +1944,237 @@ mod tests {
     }
 
     #[test]
+    fn approved_child_can_send_heartbeat() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        let (_join, child) = approved_child_fixture(&core_cfg, &child_cfg);
+
+        let report = child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            None,
+        )
+        .expect("heartbeat");
+        let updated: ChildRecord =
+            read_json(&PairPaths::new(&core_cfg).child_path(&child.node_id)).expect("child");
+
+        assert!(report.accepted);
+        assert_eq!(report.health, HeartbeatHealth::Healthy);
+        assert!(updated.last_heartbeat.is_some());
+    }
+
+    #[test]
+    fn child_list_shows_last_heartbeat() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        approved_child_fixture(&core_cfg, &child_cfg);
+        child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            None,
+        )
+        .expect("heartbeat");
+
+        let list = list_children(&core_cfg, true, true).expect("list");
+        let rendered = render_child_list(&list);
+
+        assert!(rendered.contains("last_heartbeat="));
+        assert!(
+            list.health
+                .iter()
+                .any(|record| record.health == HeartbeatHealth::Healthy)
+        );
+    }
+
+    #[test]
+    fn pair_status_summarizes_child_health() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        approved_child_fixture(&core_cfg, &child_cfg);
+        child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            None,
+        )
+        .expect("heartbeat");
+
+        let status = status(&core_cfg, "127.0.0.1:8787").expect("status");
+
+        assert_eq!(status.healthy_child_count, 1);
+        assert_eq!(status.stale_child_count, 0);
+        assert_eq!(status.revoked_child_count, 0);
+    }
+
+    #[test]
+    fn heartbeat_does_not_grant_authority() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        let (_join, child) = approved_child_fixture(&core_cfg, &child_cfg);
+        let mut authority = ChildAuthority::observe_only();
+        authority.provider_calls_allowed = true;
+        authority.execution_allowed = true;
+        authority.approval_allowed = true;
+        authority.canonical_write_allowed = true;
+
+        let report = child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            Some(authority),
+        )
+        .expect("heartbeat");
+        let updated: ChildRecord =
+            read_json(&PairPaths::new(&core_cfg).child_path(&child.node_id)).expect("child");
+
+        assert!(!report.accepted);
+        assert!(!updated.authority.provider_calls_allowed);
+        assert!(!updated.authority.execution_allowed);
+        assert!(!updated.authority.approval_allowed);
+        assert!(!updated.authority.canonical_write_allowed);
+    }
+
+    #[test]
+    fn heartbeat_claiming_execution_is_rejected_or_downgraded() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        approved_child_fixture(&core_cfg, &child_cfg);
+        let mut authority = ChildAuthority::observe_only();
+        authority.execution_allowed = true;
+
+        let report = child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            Some(authority),
+        )
+        .expect("heartbeat");
+        let audit = fs::read_to_string(PairPaths::new(&core_cfg).audit).expect("audit");
+
+        assert!(!report.accepted);
+        assert!(audit.contains("heartbeat_authority_claim_rejected"));
+    }
+
+    #[test]
+    fn pending_child_heartbeat_not_healthy() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        let invite = create_invite(&core_cfg, "127.0.0.1:8787", 5, false, false)
+            .expect("invite")
+            .invite;
+        child_join_by_url(&child_cfg, Some(&core_cfg), &invite.local_url, None).expect("join");
+
+        let report = child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            None,
+        )
+        .expect("heartbeat");
+
+        assert!(!report.accepted);
+        assert_eq!(report.health, HeartbeatHealth::Pending);
+        assert!(
+            list_children(&core_cfg, true, false)
+                .expect("list")
+                .approved
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn unknown_child_heartbeat_rejected_or_untrusted() {
+        let (_tmp, core_cfg) = test_cfg();
+        let report = submit_heartbeat(
+            &core_cfg,
+            heartbeat_payload("child-unknown", None, "unknown-fp", now_secs()),
+        )
+        .expect("heartbeat");
+
+        assert!(!report.accepted);
+        assert_eq!(report.health, HeartbeatHealth::Unknown);
+        assert!(
+            list_children(&core_cfg, true, false)
+                .expect("list")
+                .approved
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn revoked_child_heartbeat_is_not_healthy() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        let (_join, child) = approved_child_fixture(&core_cfg, &child_cfg);
+        revoke_child(&core_cfg, &child.node_id).expect("revoke");
+
+        let report = child_heartbeat(
+            &child_cfg,
+            Some(&core_cfg),
+            Some("http://127.0.0.1:8787"),
+            None,
+        )
+        .expect("heartbeat");
+        let status = status(&core_cfg, "127.0.0.1:8787").expect("status");
+        let audit = fs::read_to_string(PairPaths::new(&core_cfg).audit).expect("audit");
+
+        assert!(!report.accepted);
+        assert_eq!(report.health, HeartbeatHealth::Revoked);
+        assert_eq!(status.healthy_child_count, 0);
+        assert_eq!(status.revoked_child_count, 1);
+        assert!(audit.contains("heartbeat_rejected_revoked_child"));
+    }
+
+    #[test]
+    fn stale_heartbeat_classified_stale() {
+        let (tmp, core_cfg) = test_cfg();
+        let child_cfg = child_cfg(tmp.path());
+        let (_join, child) = approved_child_fixture(&core_cfg, &child_cfg);
+        let report = submit_heartbeat(
+            &core_cfg,
+            heartbeat_payload(
+                &child.node_id,
+                Some(&child.request_id),
+                "child-fp",
+                now_secs().saturating_sub(heartbeat_fresh_seconds() + 1),
+            ),
+        )
+        .expect("heartbeat");
+        let status = status(&core_cfg, "127.0.0.1:8787").expect("status");
+
+        assert!(!report.accepted);
+        assert_eq!(report.health, HeartbeatHealth::Stale);
+        assert_eq!(status.healthy_child_count, 0);
+        assert_eq!(status.stale_child_count, 1);
+    }
+
+    #[test]
+    fn heartbeat_payload_contains_no_secrets() {
+        let payload = heartbeat_payload("child-1", Some("req-1"), "child-fp", now_secs());
+        let raw = serde_json::to_string(&payload)
+            .expect("json")
+            .to_lowercase();
+
+        for forbidden in [
+            "openrouter",
+            "openai",
+            "codex",
+            "claude",
+            "gemini",
+            "broker",
+            "exchange",
+            "sportsbook",
+            "api_key",
+            "token",
+            "secret",
+        ] {
+            assert!(!raw.contains(forbidden), "{forbidden}");
+        }
+    }
+
+    #[test]
     fn manual_approval_grants_observe_only() {
         let (_tmp, cfg) = test_cfg();
         let invite = create_invite(&cfg, "127.0.0.1:8787", 5, false, false)
@@ -1680,6 +2264,45 @@ mod tests {
             requested_authority: authority.to_string(),
             core_url: invite.local_url.clone(),
             child_fingerprint: Some("child-fp".to_string()),
+        }
+    }
+
+    fn approved_child_fixture(
+        core_cfg: &Config,
+        child_cfg: &Config,
+    ) -> (ChildJoinReport, ChildRecord) {
+        let invite = create_invite(core_cfg, "127.0.0.1:8787", 5, false, false)
+            .expect("invite")
+            .invite;
+        let join =
+            child_join_by_url(child_cfg, Some(core_cfg), &invite.local_url, None).expect("join");
+        let child = approve_request(core_cfg, &join.request.request_id).expect("approve");
+        (join, child)
+    }
+
+    fn heartbeat_payload(
+        node_id: &str,
+        request_id: Option<&str>,
+        child_fingerprint: &str,
+        timestamp: u64,
+    ) -> ChildHeartbeatPayload {
+        ChildHeartbeatPayload {
+            node_id: node_id.to_string(),
+            request_id: request_id.map(ToOwned::to_owned),
+            child_fingerprint: child_fingerprint.to_string(),
+            device_name: "android-tablet-01".to_string(),
+            claimed_role: "agent-cluster-child-worker".to_string(),
+            authority: ChildAuthority::observe_only(),
+            timestamp,
+            os: "android".to_string(),
+            architecture: "arm64".to_string(),
+            runtime_surface: "termux".to_string(),
+            child_binary_version: env!("CARGO_PKG_VERSION").to_string(),
+            core_url: "http://127.0.0.1:8787".to_string(),
+            active_pack_hash: None,
+            battery_status: None,
+            storage_status: None,
+            network_status: None,
         }
     }
 }

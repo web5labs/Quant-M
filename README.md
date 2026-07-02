@@ -130,6 +130,7 @@ What this local alpha can demonstrate:
 - core CLI and `quant-m-child`
 - QR/link child pairing with manual approval
 - local pairing cockpit, invite registry, pending request list, approval, denial, and revoke flow
+- child heartbeat visibility and revoke health blocking
 - heartbeat visibility and device telemetry
 - explicit observe-only leases
 - echo evidence and scalar compute evidence
@@ -148,6 +149,7 @@ Milestones:
 
 - `ONBOARDING_ROLE_ROUTER_AND_QR_PAIRING_P0B`: local Agent Cluster pairing cockpit, short-lived invite URLs, manual child approval, deny/revoke lifecycle, and observe-only safety flags.
 - `CHILD_JOIN_REQUEST_P0C_A`: child-side manual URL join, stable child identity, and pending observe-only pair request submission. Heartbeat remains a later milestone.
+- `CHILD_HEARTBEAT_REVOKE_P0C_B`: approved child heartbeat visibility, health summaries, stale/revoked classification, and heartbeat authority hardening.
 - `MOBILE_TABLET_CORE_ROLE_17A_FIX`: role-first onboarding language, mobile/tablet core proof-of-concept guidance, and optional ADB validation language.
 - `CHILD_BINARY_BOOTSTRAP_16A`: core-hosted child binary bootstrap so old Android/Termux child devices do not need GitHub clone, Cargo, Rust toolchains, or source builds during normal onboarding.
 
@@ -198,7 +200,15 @@ quant-m pair status --json
 
 Manual approval is required. Approved children remain observe-only: no provider calls, no shell execution, no approval authority, no canonical shared-state writes, and no broker/exchange/sportsbook execution.
 
-Heartbeat visibility and revoke health are separate follow-up milestones. The P0C-A child join flow proves identity and pending request submission; it does not claim child heartbeat validation.
+Approved children can report heartbeat visibility:
+
+```bash
+quant-m child heartbeat --core http://<core-lan-ip>:8787 --once
+quant-m child list --json
+quant-m pair status --json
+```
+
+Heartbeat proves visibility only. It does not grant provider calls, execution, approval authority, canonical writes, or broker/exchange/sportsbook execution. Revoked children are not counted as healthy or active. Real phone/tablet LAN proof is still a separate validation milestone.
 
 Core-hosted child bootstrap:
 
