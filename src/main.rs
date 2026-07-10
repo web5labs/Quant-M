@@ -15,6 +15,7 @@ mod context_firewall;
 mod context_guardian;
 mod context_status;
 mod cost_ledger;
+mod council_router;
 mod daemon;
 mod demo_flow;
 mod desk_registry;
@@ -328,6 +329,11 @@ enum Commands {
         dry_run: bool,
         question: String,
     },
+    /// Evaluate adaptive Council policy without calling models or providers.
+    Council {
+        #[command(subcommand)]
+        command: CouncilCommand,
+    },
     Strategist {
         #[arg(long)]
         dry_run: bool,
@@ -375,6 +381,24 @@ enum OnboardingCommand {
     Status {
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CouncilCommand {
+    /// Print the versioned default adaptive Council policy.
+    Policy {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate a prepared candidate/audit packet in provider-free shadow mode.
+    Shadow {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        record: bool,
     },
 }
 
@@ -1858,6 +1882,47 @@ async fn main() -> Result<()> {
             let report = consensus::run_consensus_dry_run(&cfg, &question)?;
             print!("{}", consensus::render_terminal_summary(&report));
         }
+        Commands::Council { command } => match command {
+            CouncilCommand::Policy { json } => {
+                let policy = council_router::default_policy();
+                policy.validate()?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&policy)?);
+                } else {
+                    println!(
+                        "Quant-M adaptive Council policy\npolicy_id: {}\nschema: {}\nroutes: {}\nmode: deterministic shadow only\nprovider_calls: none",
+                        policy.policy_id,
+                        policy.schema_version,
+                        policy.routes.len()
+                    );
+                }
+            }
+            CouncilCommand::Shadow {
+                input,
+                json,
+                record,
+            } => {
+                let packet = council_router::read_shadow_input(&input)?;
+                let decision =
+                    council_router::evaluate_shadow(packet, &council_router::default_policy())?;
+                let record_path = if record {
+                    Some(council_router::persist_decision_record(
+                        &cfg.workspace_dir,
+                        &decision,
+                    )?)
+                } else {
+                    None
+                };
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&decision)?);
+                } else {
+                    print!(
+                        "{}",
+                        council_router::render_decision(&decision, record_path.as_deref())
+                    );
+                }
+            }
+        },
         Commands::Strategist { dry_run, json } => {
             if !dry_run {
                 anyhow::bail!("strategist currently supports --dry-run only");
@@ -5337,6 +5402,16 @@ fn storage_mode_for_command(command: &Commands) -> StorageMode {
         Commands::Run { .. } | Commands::Consensus { .. } | Commands::Strategist { .. } => {
             StorageMode::SessionWrite
         }
+        Commands::Council { command } => match command {
+            CouncilCommand::Policy { .. } => StorageMode::Inspect,
+            CouncilCommand::Shadow { record, .. } => {
+                if *record {
+                    StorageMode::SessionWrite
+                } else {
+                    StorageMode::Inspect
+                }
+            }
+        },
         Commands::Session { command } => match command {
             SessionCommand::List
             | SessionCommand::Show { .. }
@@ -7024,6 +7099,55 @@ onboarding_completed = true
         let err = Cli::try_parse_from(["quant-m", "consensus", "--dry-run"])
             .expect_err("missing question fails");
         assert!(err.to_string().contains("required"));
+    }
+
+    #[test]
+    fn council_shadow_commands_use_safe_storage_modes() {
+        let cli = Cli::try_parse_from([
+            "quant-m",
+            "council",
+            "shadow",
+            "--input",
+            "configs/council-shadow.example.json",
+            "--json",
+        ])
+        .expect("parse council shadow");
+        match cli.command {
+            Some(Commands::Council {
+                command:
+                    CouncilCommand::Shadow {
+                        input,
+                        json,
+                        record,
+                    },
+            }) => {
+                assert_eq!(input, PathBuf::from("configs/council-shadow.example.json"));
+                assert!(json);
+                assert!(!record);
+                assert_eq!(
+                    storage_mode_for_command(&Commands::Council {
+                        command: CouncilCommand::Shadow {
+                            input,
+                            json,
+                            record,
+                        }
+                    }),
+                    StorageMode::Inspect
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        assert_eq!(
+            storage_mode_for_command(&Commands::Council {
+                command: CouncilCommand::Shadow {
+                    input: PathBuf::from("packet.json"),
+                    json: false,
+                    record: true,
+                }
+            }),
+            StorageMode::SessionWrite
+        );
     }
 
     #[test]

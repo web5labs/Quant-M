@@ -426,6 +426,21 @@ fn base_records(cfg: &Config) -> Vec<CapabilityRecord> {
             &["README.md", "README.md"],
         ),
         record(
+            "council.shadow-router",
+            "Adaptive Council shadow router",
+            CapabilityCategory::Decisioning,
+            CapabilityStatus::DryRun,
+            "Provider-free typed policy evaluation with ballot validation, Borda escalation, conditional Chairman decisions, and component trust evidence.",
+            &["quant-m council shadow --input <packet.json>"],
+            &["quant-m council shadow --input configs/council-shadow.example.json --json"],
+            &["cargo test council_router"],
+            &["workspace/state/council-shadow/"],
+            &[
+                "README.md",
+                "WikiSkill/wiki/syntheses/quant-m-council-shadow-router.md",
+            ],
+        ),
+        record(
             "strategist.dry-run",
             "Strategist utility",
             CapabilityCategory::Decisioning,

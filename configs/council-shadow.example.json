@@ -1,0 +1,45 @@
+{
+  "schema_version": "quant-m/council-shadow-input/v1",
+  "request_id": "example-council-001",
+  "route": "standard",
+  "candidates": [
+    {
+      "candidate_id": "A",
+      "answer": "Use a typed shadow router before enabling adaptive provider calls.",
+      "analyzed_claim_ids": ["claim-shadow-first"],
+      "lineage_group": "lineage-a",
+      "lineage_confidence": "curated"
+    },
+    {
+      "candidate_id": "B",
+      "answer": "Validate the policy offline and retain the full audit as escalation.",
+      "analyzed_claim_ids": ["claim-shadow-first"],
+      "lineage_group": "lineage-b",
+      "lineage_confidence": "curated"
+    },
+    {
+      "candidate_id": "C",
+      "answer": "Keep the full audit available when deterministic gates and blind review disagree.",
+      "analyzed_claim_ids": ["claim-shadow-first"],
+      "lineage_group": "lineage-c",
+      "lineage_confidence": "curated"
+    }
+  ],
+  "deterministic_winner": "A",
+  "semantic_agreement_bps": 9200,
+  "embedding_available": true,
+  "freshness_checked": false,
+  "accepted_claim_ids": ["claim-shadow-first"],
+  "ballots": [
+    {
+      "ballot_id": "critic-1",
+      "auditor_seat_id": "critic-seat-1",
+      "ranking": ["A", "B", "C"],
+      "winner": "A",
+      "main_objection": "none",
+      "must_fix": [],
+      "material_conflicts": [],
+      "valid": true
+    }
+  ]
+}

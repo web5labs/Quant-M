@@ -15,6 +15,7 @@ pub mod context_firewall;
 pub mod context_guardian;
 pub mod context_status;
 pub mod cost_ledger;
+pub mod council_router;
 pub mod daemon;
 pub mod demo_flow;
 pub mod desk_registry;

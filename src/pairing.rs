@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
+use if_addrs::get_if_addrs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -505,28 +507,57 @@ pub fn doctor(_cfg: &Config, bind: &str, options: &AdvertiseOptions) -> Result<P
         match resolved {
             Ok(selection) => {
                 let url = base_url_for_host(&selection.selected_host, port);
+                let guidance = if url_contains_local_only_host(&url) {
+                    vec![
+                        "This URL only works on the core device. Use --host <your-wifi-ip> or bind a private interface before pairing a phone/tablet.".to_string(),
+                        "Wi-Fi is supported and Ethernet is optional.".to_string(),
+                    ]
+                } else {
+                    vec![
+                        "Open the URL on the phone/tablet while connected to the same Wi-Fi or local network.".to_string(),
+                        "If it does not open, check Wi-Fi network, VPN, firewall, guest Wi-Fi isolation, and port blocking.".to_string(),
+                    ]
+                };
                 (
                     Some(selection.selected_host),
                     Some(url.clone()),
                     selection.detected,
                     selection.ignored,
+                    guidance,
+                )
+            }
+            Err(err) => {
+                let candidates = local_advertise_candidates();
+                let has_private_address = candidates
+                    .iter()
+                    .any(|candidate| is_private_ipv4_host(&candidate.host));
+                let recovery = if has_private_address {
+                    "Use one of the detected private IPv4 addresses with --host, select its exact interface name, or remove the invalid override."
+                } else {
+                    "No reachable local Wi-Fi/LAN address was detected automatically. Connect Wi-Fi or use --host <your-wifi-ip>."
+                };
+                let ignored = candidates
+                    .iter()
+                    .filter_map(|candidate| {
+                        let reason = classify_advertise_candidate(candidate, None);
+                        (reason != "usable").then_some(AdvertiseCandidate {
+                            reason,
+                            ..candidate.clone()
+                        })
+                    })
+                    .collect();
+                (
+                    None,
+                    None,
+                    candidates,
+                    ignored,
                     vec![
-                        "Open the URL on the phone/tablet while connected to the same Wi-Fi or local network.".to_string(),
-                        "If it does not open, check Wi-Fi network, VPN, firewall, guest Wi-Fi isolation, and port blocking.".to_string(),
+                        format!("{err}"),
+                        recovery.to_string(),
+                        "Wi-Fi is supported and Ethernet is optional.".to_string(),
                     ],
                 )
             }
-            Err(err) => (
-                None,
-                None,
-                local_advertise_candidates(),
-                ignored_default_candidates(),
-                vec![
-                    format!("{err}"),
-                    "No reachable local Wi-Fi/LAN address was detected automatically.".to_string(),
-                    "Ethernet is optional. Use --host <your-wifi-ip> to choose the address shown on this computer.".to_string(),
-                ],
-            ),
         };
     let wifi_addresses_found = detected_addresses
         .iter()
@@ -1069,11 +1100,14 @@ fn handle_connection(cfg: &Config, stream: &mut TcpStream, bind: &str) -> Result
                     ),
                 }
             } else {
-                (
-                    "200 OK",
-                    "text/plain; charset=utf-8",
-                    render_join_page(cfg, bind, invite_id),
-                )
+                match render_join_page(cfg, bind, invite_id) {
+                    Ok(page) => ("200 OK", "text/plain; charset=utf-8", page),
+                    Err(err) => (
+                        "404 Not Found",
+                        "text/plain; charset=utf-8",
+                        format!("{err:#}\n"),
+                    ),
+                }
             }
         } else {
             (
@@ -1370,7 +1404,7 @@ pub fn render_child_heartbeat(report: &ChildHeartbeatReport) -> String {
     )
 }
 
-pub fn join_metadata(cfg: &Config, bind: &str, invite_id: &str) -> Result<JoinMetadata> {
+pub fn join_metadata(cfg: &Config, _bind: &str, invite_id: &str) -> Result<JoinMetadata> {
     let paths = PairPaths::new(cfg);
     let invite: PairInvite = read_json(&paths.invite_path(invite_id))?;
     if invite.expires_at <= now_secs() {
@@ -1380,7 +1414,9 @@ pub fn join_metadata(cfg: &Config, bind: &str, invite_id: &str) -> Result<JoinMe
             invite.expires_at
         );
     }
-    let core_url = base_url(bind);
+    let core_url = parse_join_url(&invite.local_url)
+        .with_context(|| format!("invite {} has an invalid advertised URL", invite.invite_id))?
+        .core_url;
     Ok(JoinMetadata {
         pair_request_url: format!("{core_url}/api/pair-requests"),
         core_url,
@@ -1662,18 +1698,17 @@ fn render_pair_root(cfg: &Config, bind: &str) -> String {
     )
 }
 
-fn render_join_page(cfg: &Config, bind: &str, invite_id: &str) -> String {
-    format!(
-        "Quant-M child join\ncore_name: {}\ncore_fingerprint: {}\ninvite_id: {}\nmanual_command: quant-m child join --url {}/join/{}\npair_command: quant-m child join --url {}/join/{}\n{}\n",
-        cfg.node_id,
-        core_fingerprint(cfg),
-        invite_id,
-        base_url(bind),
-        invite_id,
-        base_url(bind),
-        invite_id,
+fn render_join_page(cfg: &Config, bind: &str, invite_id: &str) -> Result<String> {
+    let metadata = join_metadata(cfg, bind, invite_id)?;
+    Ok(format!(
+        "Quant-M child join\ncore_name: {}\ncore_fingerprint: {}\ninvite_id: {}\nmanual_command: {}\npair_command: {}\n{}\n",
+        metadata.core_name,
+        metadata.core_fingerprint,
+        metadata.invite_id,
+        metadata.manual_command,
+        metadata.manual_command,
         render_safety_status()
-    )
+    ))
 }
 
 fn render_qr_status(url: &str, qr: bool) -> (bool, Option<String>) {
@@ -1786,11 +1821,24 @@ struct AdvertiseSelection {
 fn resolve_advertise_host(bind: &str, options: &AdvertiseOptions) -> Result<AdvertiseSelection> {
     if let Some(host) = options.host.as_deref() {
         validate_advertise_host(host)?;
+        let advertised_host = host.trim();
+        let explicit_bind_host = match bind_host(bind) {
+            host if host.eq_ignore_ascii_case("localhost") => "127.0.0.1".to_string(),
+            host => host,
+        };
+        if !explicit_bind_host.is_empty()
+            && explicit_bind_host != "0.0.0.0"
+            && explicit_bind_host != advertised_host
+        {
+            anyhow::bail!(
+                "cannot advertise {advertised_host} while bound only to {explicit_bind_host}; bind 0.0.0.0 for same-network access or use matching --bind and --host values"
+            );
+        }
         return Ok(AdvertiseSelection {
-            selected_host: host.trim().to_string(),
+            selected_host: advertised_host.to_string(),
             detected: vec![AdvertiseCandidate {
                 interface: "manual".to_string(),
-                host: host.trim().to_string(),
+                host: advertised_host.to_string(),
                 reason: "manual --host override".to_string(),
             }],
             ignored: Vec::new(),
@@ -1805,6 +1853,48 @@ fn select_advertise_host(
     interface: Option<&str>,
     candidates: Vec<AdvertiseCandidate>,
 ) -> Result<AdvertiseSelection> {
+    let bind_host = bind_host(bind);
+    if !bind_host.is_empty() && bind_host != "0.0.0.0" {
+        let selected_host = if bind_host.eq_ignore_ascii_case("localhost") {
+            "127.0.0.1".to_string()
+        } else {
+            bind_host.clone()
+        };
+        if is_loopback_host(&selected_host) {
+            return Ok(AdvertiseSelection {
+                selected_host: selected_host.clone(),
+                detected: vec![AdvertiseCandidate {
+                    interface: "loopback".to_string(),
+                    host: selected_host,
+                    reason: "local-only explicit bind".to_string(),
+                }],
+                ignored: candidates,
+            });
+        }
+        validate_advertise_host(&selected_host).with_context(|| {
+            "same trusted local network required. Wi-Fi is supported. Ethernet is optional. Try --host <your-wifi-ip>"
+        })?;
+        if let Some(requested_interface) = interface {
+            let belongs_to_interface = candidates.iter().any(|candidate| {
+                candidate.interface == requested_interface && candidate.host == selected_host
+            });
+            if !belongs_to_interface {
+                anyhow::bail!(
+                    "bind host {selected_host} is not assigned to interface {requested_interface}; choose a matching --bind/--interface pair or use --host <your-wifi-ip>"
+                );
+            }
+        }
+        return Ok(AdvertiseSelection {
+            selected_host: selected_host.clone(),
+            detected: vec![AdvertiseCandidate {
+                interface: interface.unwrap_or("bind").to_string(),
+                host: selected_host,
+                reason: "explicit bind host".to_string(),
+            }],
+            ignored: candidates,
+        });
+    }
+
     let mut detected = Vec::new();
     let mut ignored = Vec::new();
     for candidate in candidates {
@@ -1826,6 +1916,11 @@ fn select_advertise_host(
             ignored,
         });
     }
+    if let Some(interface) = interface {
+        anyhow::bail!(
+            "interface {interface} has no private IPv4 address suitable for same-network pairing; run `quant-m pair doctor` to list detected interfaces or use --host <your-wifi-ip>"
+        );
+    }
     if let Some(loopback) = ignored
         .iter()
         .find(|candidate| is_loopback_host(&candidate.host))
@@ -1837,32 +1932,6 @@ fn select_advertise_host(
                 reason: "local-only fallback; use --host <your-wifi-ip> for phone/tablet pairing"
                     .to_string(),
                 ..loopback
-            }],
-            ignored,
-        });
-    }
-    let bind_host = bind_host(bind);
-    if !bind_host.is_empty() && bind_host != "0.0.0.0" {
-        if is_loopback_host(&bind_host) {
-            return Ok(AdvertiseSelection {
-                selected_host: bind_host.clone(),
-                detected: vec![AdvertiseCandidate {
-                    interface: "loopback".to_string(),
-                    host: bind_host,
-                    reason: "local-only explicit bind fallback".to_string(),
-                }],
-                ignored,
-            });
-        }
-        validate_advertise_host(&bind_host).with_context(|| {
-            "same trusted local network required. Wi-Fi is supported. Ethernet is optional. Try --host <your-wifi-ip>"
-        })?;
-        return Ok(AdvertiseSelection {
-            selected_host: bind_host.clone(),
-            detected: vec![AdvertiseCandidate {
-                interface: "bind".to_string(),
-                host: bind_host,
-                reason: "explicit bind host".to_string(),
             }],
             ignored,
         });
@@ -1918,36 +1987,55 @@ fn local_advertise_candidates() -> Vec<AdvertiseCandidate> {
             })
             .collect();
     }
-    let mut candidates = Vec::new();
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0")
-        && socket.connect("192.0.2.1:80").is_ok()
-        && let Ok(SocketAddr::V4(addr)) = socket.local_addr()
+    let default_route_ip = default_route_ipv4();
+    let mut candidates = get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|interface| match interface.ip() {
+            IpAddr::V4(ip) => Some(AdvertiseCandidate {
+                interface: interface.name,
+                host: ip.to_string(),
+                reason: if Some(ip) == default_route_ip {
+                    "default local network route".to_string()
+                } else {
+                    "system network interface".to_string()
+                },
+            }),
+            IpAddr::V6(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty()
+        && let Some(ip) = default_route_ip
     {
         candidates.push(AdvertiseCandidate {
             interface: "default-route".to_string(),
-            host: addr.ip().to_string(),
-            reason: "default local network route".to_string(),
+            host: ip.to_string(),
+            reason: "default local network route fallback".to_string(),
         });
     }
-    candidates.push(AdvertiseCandidate {
-        interface: "loopback".to_string(),
-        host: "127.0.0.1".to_string(),
-        reason: "local-only diagnostic".to_string(),
-    });
+    if !candidates
+        .iter()
+        .any(|candidate| is_loopback_host(&candidate.host))
+    {
+        candidates.push(AdvertiseCandidate {
+            interface: "loopback".to_string(),
+            host: "127.0.0.1".to_string(),
+            reason: "local-only diagnostic".to_string(),
+        });
+    }
+    let mut seen = BTreeSet::new();
+    candidates
+        .retain(|candidate| seen.insert((candidate.interface.clone(), candidate.host.clone())));
     candidates
 }
 
-fn ignored_default_candidates() -> Vec<AdvertiseCandidate> {
-    local_advertise_candidates()
-        .into_iter()
-        .filter_map(|candidate| {
-            let reason = classify_advertise_candidate(&candidate, None);
-            (reason != "usable").then_some(AdvertiseCandidate {
-                reason,
-                ..candidate
-            })
-        })
-        .collect()
+fn default_route_ipv4() -> Option<Ipv4Addr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:80").ok()?;
+    match socket.local_addr().ok()? {
+        SocketAddr::V4(addr) => Some(*addr.ip()),
+        SocketAddr::V6(_) => None,
+    }
 }
 
 fn validate_advertise_host(host: &str) -> Result<()> {
@@ -1976,25 +2064,27 @@ fn validate_advertise_host(host: &str) -> Result<()> {
                 anyhow::bail!("IPv6 pairing URLs are not supported yet; use --host <your-wifi-ip>");
             }
         }
-    } else if !host
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.')
-    {
-        anyhow::bail!("invalid advertise host {host}; use --host <your-wifi-ip>");
+    } else {
+        anyhow::bail!(
+            "advertise host {host} must be a private IPv4 address; public or unresolved hostnames are not allowed"
+        );
     }
     Ok(())
 }
 
 fn advertise_priority(candidate: &AdvertiseCandidate) -> u8 {
+    if candidate.reason.contains("default local network route") {
+        return 0;
+    }
     let interface = candidate.interface.to_ascii_lowercase();
     if interface.contains("wi-fi")
         || interface.contains("wifi")
         || interface.starts_with("wlan")
         || interface.starts_with("en")
     {
-        0
-    } else if is_private_ipv4_host(&candidate.host) {
         1
+    } else if is_private_ipv4_host(&candidate.host) {
+        2
     } else {
         9
     }
@@ -2037,11 +2127,17 @@ fn is_docker_or_vm_interface(interface: &str) -> bool {
         || interface.contains("bridge")
         || interface.contains("tun")
         || interface.contains("tap")
+        || interface.starts_with("awdl")
+        || interface.starts_with("llw")
 }
 
 fn url_contains_local_only_host(url: &str) -> bool {
     parse_http_url(url)
-        .map(|parsed| is_loopback_host(&parsed.host) || is_zero_host(&parsed.host))
+        .map(|parsed| {
+            is_loopback_host(&parsed.host)
+                || is_zero_host(&parsed.host)
+                || parsed.host.eq_ignore_ascii_case("localhost")
+        })
         .unwrap_or(false)
 }
 
@@ -2301,6 +2397,63 @@ mod tests {
     }
 
     #[test]
+    fn explicit_bind_is_authoritative_over_detected_routes() {
+        let selection = select_advertise_host(
+            "127.0.0.1:8787",
+            None,
+            vec![AdvertiseCandidate {
+                interface: "en0".to_string(),
+                host: "192.168.1.42".to_string(),
+                reason: "detected wifi".to_string(),
+            }],
+        )
+        .expect("explicit bind");
+
+        assert_eq!(selection.selected_host, "127.0.0.1");
+        assert!(selection.detected[0].reason.contains("explicit bind"));
+    }
+
+    #[test]
+    fn interface_override_selects_matching_system_interface() {
+        let selection = select_advertise_host(
+            "0.0.0.0:8787",
+            Some("en0"),
+            vec![
+                AdvertiseCandidate {
+                    interface: "en0".to_string(),
+                    host: "192.168.1.42".to_string(),
+                    reason: "system network interface".to_string(),
+                },
+                AdvertiseCandidate {
+                    interface: "en7".to_string(),
+                    host: "10.0.0.24".to_string(),
+                    reason: "system network interface".to_string(),
+                },
+            ],
+        )
+        .expect("select requested interface");
+
+        assert_eq!(selection.selected_host, "192.168.1.42");
+        assert_eq!(selection.detected[0].interface, "en0");
+    }
+
+    #[test]
+    fn unknown_interface_does_not_fall_back_to_loopback() {
+        let err = select_advertise_host(
+            "0.0.0.0:8787",
+            Some("missing0"),
+            vec![AdvertiseCandidate {
+                interface: "lo0".to_string(),
+                host: "127.0.0.1".to_string(),
+                reason: "loopback".to_string(),
+            }],
+        )
+        .expect_err("unknown interface must fail");
+
+        assert!(format!("{err:#}").contains("missing0"));
+    }
+
+    #[test]
     fn zero_bind_not_used_as_advertised_url() {
         let (_tmp, cfg) = test_cfg();
         let report = create_invite_with_options(
@@ -2342,6 +2495,20 @@ mod tests {
 
         assert_eq!(report.selected_advertise_host, "192.168.1.50");
         assert_eq!(report.local_url, "http://192.168.1.50:8787");
+    }
+
+    #[test]
+    fn manual_host_cannot_claim_an_address_outside_explicit_bind() {
+        let err = resolve_advertise_host(
+            "127.0.0.1:8787",
+            &AdvertiseOptions {
+                host: Some("192.168.1.50".to_string()),
+                interface: None,
+            },
+        )
+        .expect_err("mismatched host and bind must fail");
+
+        assert!(format!("{err:#}").contains("while bound only to 127.0.0.1"));
     }
 
     #[test]
@@ -2424,6 +2591,9 @@ mod tests {
 
         let err = validate_advertise_host("0.0.0.0").expect_err("zero rejected");
         assert!(format!("{err:#}").contains("only for binding"));
+
+        let err = validate_advertise_host("example.com").expect_err("public hostname rejected");
+        assert!(format!("{err:#}").contains("private IPv4"));
     }
 
     #[test]
@@ -2482,6 +2652,33 @@ mod tests {
         );
         assert!(metadata.expires_at > now_secs());
         assert_eq!(metadata.max_authority, "observe-only");
+    }
+
+    #[test]
+    fn join_metadata_preserves_advertised_host_for_remote_child_callback() {
+        let (_tmp, cfg) = test_cfg();
+        let report = create_invite_with_options(
+            &cfg,
+            "0.0.0.0:8787",
+            5,
+            false,
+            false,
+            &AdvertiseOptions {
+                host: Some("192.168.1.77".to_string()),
+                interface: None,
+            },
+        )
+        .expect("invite");
+        let metadata =
+            join_metadata(&cfg, "0.0.0.0:8787", &report.invite.invite_id).expect("metadata");
+
+        assert_eq!(metadata.core_url, "http://192.168.1.77:8787");
+        assert_eq!(
+            metadata.pair_request_url,
+            "http://192.168.1.77:8787/api/pair-requests"
+        );
+        assert!(!metadata.pair_request_url.contains("127.0.0.1"));
+        assert!(!metadata.pair_request_url.contains("0.0.0.0"));
     }
 
     #[test]

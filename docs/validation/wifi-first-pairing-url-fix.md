@@ -38,6 +38,9 @@ quant-m device add --qr --host 192.168.1.42
 - `0.0.0.0` may be used for binding but is never used as the advertised child URL.
 - `127.0.0.1` is local-only and is not used for phone/tablet QR URLs when a private address exists.
 - Docker, VM, bridge, and tunnel-style interfaces are not preferred over Wi-Fi.
+- `--interface` uses exact system interface names reported by `pair doctor`.
+- Manual `--host` values must be private IPv4 addresses and must be compatible with an explicit bind.
+- Join metadata preserves the advertised host for child pair-request callbacks.
 - If no reachable Wi-Fi/LAN address is detected, output explains manual `--host <your-wifi-ip>` recovery.
 - User-facing language says same trusted local network, Wi-Fi supported, Ethernet optional.
 

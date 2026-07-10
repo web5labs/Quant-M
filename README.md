@@ -160,7 +160,7 @@ Pairing diagnostics:
 quant-m pair doctor
 ```
 
-`pair doctor` reports the selected bind address, the advertised child URL, detected local IP candidates, ignored addresses, port availability, firewall guidance, and a child-side `curl` test command. Same trusted local network means the core and child are on the same Wi-Fi or LAN and can reach each other directly. Ethernet is optional; Raspberry Pi is supported but not required.
+`pair doctor` reports the selected bind address, the advertised child URL, real system interface names and local IPv4 candidates, ignored addresses, port availability, firewall guidance, and a child-side `curl` test command. Same trusted local network means the core and child are on the same Wi-Fi or LAN and can reach each other directly. Ethernet is optional; Raspberry Pi is supported but not required.
 
 Pairing cockpit:
 
@@ -184,7 +184,7 @@ quant-m device add --qr --host 192.168.1.42
 quant-m pair doctor --host 192.168.1.42
 ```
 
-The server may bind `0.0.0.0`, but QR and child join URLs use an actual advertised host. Quant-M avoids `0.0.0.0`, `127.0.0.1`, and Docker/VM-style interfaces for phone/tablet QR URLs when a private Wi-Fi/LAN address is available.
+You may also select an exact interface name reported by `pair doctor`, such as `quant-m pair cockpit --interface en0`. Manual advertised hosts must be private IPv4 addresses. The server may bind `0.0.0.0`, but QR, join metadata, and child callback URLs use the same child-reachable host. Quant-M rejects mismatched explicit bind/host combinations and avoids `0.0.0.0`, `127.0.0.1`, and Docker/VM-style interfaces for phone/tablet QR URLs when a private Wi-Fi/LAN address is available.
 
 The invite URL uses this shape:
 
@@ -370,6 +370,20 @@ This release is useful for evaluating the governance model, not for delegating u
 | Capability truth | Separates shipped, guarded, dry-run, mock, experimental, design-only, external-required, unavailable, and deprecated surfaces |
 | Side-effect policy gate | Normalizes decisions like `allowed`, `blocked`, `approval_pending`, `denied`, `unavailable`, `dry_run_only`, and `replay_skipped` |
 | Workflow cursor FSM | Keeps workflow progress ordered without pretending descriptor browsing is execution |
+
+## Adaptive Council Shadow Router
+
+Quant-M includes a provider-free shadow evaluator for adaptive Council policy. It validates prepared candidate analysis and anonymous audit ballots, then recommends one of these bounded actions: expand the worker panel, run a blind critic, expand to a full Borda quorum, return an unchanged reviewed representative, run a constrained editor, invoke Chairman synthesis, or abstain.
+
+```bash
+quant-m council policy
+quant-m council shadow --input configs/council-shadow.example.json
+quant-m council shadow --input configs/council-shadow.example.json --json
+```
+
+Add `--record` to persist a bounded decision record under `workspace/state/council-shadow/`. Records contain candidate hashes and decision metadata, not full candidate answers. The shadow router does not call models, providers, embeddings, tools, or execution APIs. Semantic agreement is recorded as an advisory signal and never overrides failed evidence, conflict, lineage, critic, or ballot gates.
+
+The ingested architecture and Quant-M adaptation live in [WikiSkill/wiki/index.md](WikiSkill/wiki/index.md).
 
 ## Runtime Model
 
