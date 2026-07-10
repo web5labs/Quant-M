@@ -50,7 +50,9 @@ cd Quant-M
 ./quantm
 ```
 
-On first run, onboarding creates safe local configuration and routes the device to the correct next surface. No API key, broker, hosted account, or live network permission is required.
+On first run, onboarding creates safe local configuration and routes the device to the correct next surface. Select **option 3** for Codex CLI. Quant-M opens active chat only when the chosen CLI or configured model route is actually usable; otherwise it stops with a concrete setup command.
+
+Codex chat starts with full write access inside the current project only. Quant-M uses Codex `workspace-write`, anchors execution to the canonical project root, and rejects writable paths outside it.
 
 ## Choose A Role
 
@@ -78,6 +80,7 @@ A phone can be a core when capable. A laptop can be a child. A Raspberry Pi can 
 | Cost ledger | Record provider-path and dry-run cost evidence locally |
 | Capability truth | Label features as wired, guarded, dry-run, mock, or unavailable |
 | Role-first onboarding | Configure devices without assuming every node should open chat |
+| Governed chat TUI | Use a ready Codex CLI or configured model route with visible scope and evidence state |
 
 Quant-M does **not** currently provide live trading, broker execution, automatic proposal approval, unchecked shell access, or child authority over canonical state.
 
@@ -163,6 +166,8 @@ That origin explains the product today: agents may be creative, but authority mu
 Onboarding covers workspace, role and device capability, network posture, optional model and CLI routes, operator channel, context continuity, and final review.
 
 Detected tools or models remain disabled until configuration and policy allow them.
+
+The chat TUI shows route readiness, project scope, sandbox mode, session count, and evidence state. A selected-but-missing CLI no longer opens an inert chat surface.
 
 <table>
   <tr>
@@ -250,6 +255,7 @@ quant-m council shadow --input configs/council-shadow.example.json --json
 | [Android deployment](deploy/android/README.md) | Phones, tablets, Termux, and mobile core/child roles |
 | [Android node kit](android-node-kit/bundles/quant-m-edge-bundle/README.md) | Edge bundle contents and device preparation |
 | [Council routing wiki](WikiSkill/wiki/index.md) | Source architecture, concepts, and implementation boundaries |
+| [Codex chat adversarial review](docs/adversarial/codex-chat-hardening.md) | Stale-route findings, project sandbox contract, benchmarks, and implementation prompt |
 | [Validation notes](docs/validation/) | Milestone-specific proof and limitations |
 
 ## Contributing

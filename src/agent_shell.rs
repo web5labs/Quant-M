@@ -49,15 +49,80 @@ impl CliSandbox {
 pub(crate) struct CliChatOptions {
     pub(crate) sandbox: CliSandbox,
     pub(crate) add_dirs: Vec<PathBuf>,
+    pub(crate) project_root: Option<PathBuf>,
 }
 
 impl Default for CliChatOptions {
     fn default() -> Self {
         Self {
-            sandbox: CliSandbox::ReadOnly,
+            sandbox: CliSandbox::WorkspaceWrite,
             add_dirs: Vec::new(),
+            project_root: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ChatToolReadiness {
+    Ready,
+    Disabled,
+    CommandMissing(String),
+    AuthenticationUnavailable,
+    UnsupportedAdapter(ToolKind),
+}
+
+impl ChatToolReadiness {
+    pub(crate) fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::Ready => "ready".to_string(),
+            Self::Disabled => "tool is not enabled".to_string(),
+            Self::CommandMissing(command) => format!("`{command}` was not found on PATH"),
+            Self::AuthenticationUnavailable => {
+                "Codex login is not active; run `codex login`".to_string()
+            }
+            Self::UnsupportedAdapter(kind) => {
+                format!("tool kind {kind:?} does not have a safe chat adapter")
+            }
+        }
+    }
+}
+
+pub(crate) fn chat_tool_readiness(cfg: &Config, tool_id: &str) -> ChatToolReadiness {
+    let id = tool_id.trim().to_ascii_lowercase();
+    let Some(tool) = cfg.tools.get(&id) else {
+        return ChatToolReadiness::Disabled;
+    };
+    if !tool.enabled {
+        return ChatToolReadiness::Disabled;
+    }
+    if !matches!(
+        tool.kind,
+        ToolKind::Codex | ToolKind::Claude | ToolKind::Anthropic | ToolKind::Gemini
+    ) {
+        return ChatToolReadiness::UnsupportedAdapter(tool.kind);
+    }
+    if !command_present(&tool.command) {
+        return ChatToolReadiness::CommandMissing(tool.command.clone());
+    }
+    if tool.kind == ToolKind::Codex && !codex_login_ready(&tool.command) {
+        return ChatToolReadiness::AuthenticationUnavailable;
+    }
+    ChatToolReadiness::Ready
+}
+
+fn codex_login_ready(command: &str) -> bool {
+    Command::new(command)
+        .args(["login", "status"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -612,7 +677,8 @@ fn run_codex_chat_command(
             "{ANSI_RED}Codex CLI is not on PATH.{ANSI_RESET}\nRun `codex login`, then retry from this shell."
         ));
     }
-    let cwd = std::env::current_dir().unwrap_or_else(|_| cfg.workspace_dir.clone());
+    let cwd = canonical_project_root(cfg, options)?;
+    let add_dirs = canonical_project_add_dirs(&cwd, &options.add_dirs)?;
     let last_message_path = std::env::temp_dir().join(format!(
         "quantm-codex-last-{}-{}.txt",
         std::process::id(),
@@ -629,8 +695,8 @@ fn run_codex_chat_command(
          Quant-M workspace: {}\n\n\
          User prompt:\n{}",
         options.sandbox.label(),
-        format_add_dirs(&options.add_dirs),
-        cfg.workspace_dir.display(),
+        format_add_dirs(&add_dirs),
+        cwd.display(),
         prompt
     );
     let mut command_builder = Command::new(command);
@@ -644,7 +710,7 @@ fn run_codex_chat_command(
         .arg("--cd")
         .arg(cwd);
     if options.sandbox == CliSandbox::WorkspaceWrite {
-        for dir in &options.add_dirs {
+        for dir in &add_dirs {
             command_builder.arg("--add-dir").arg(dir);
         }
     }
@@ -688,6 +754,34 @@ fn run_codex_chat_command(
             hint
         ))
     }
+}
+
+fn canonical_project_root(cfg: &Config, options: &CliChatOptions) -> Result<PathBuf> {
+    let root = options
+        .project_root
+        .clone()
+        .unwrap_or_else(|| cfg.workspace_dir.clone());
+    root.canonicalize()
+        .with_context(|| format!("failed to resolve project root {}", root.display()))
+}
+
+fn canonical_project_add_dirs(project_root: &Path, add_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    add_dirs
+        .iter()
+        .map(|dir| {
+            let canonical = dir
+                .canonicalize()
+                .with_context(|| format!("failed to resolve writable path {}", dir.display()))?;
+            if !canonical.starts_with(project_root) {
+                anyhow::bail!(
+                    "writable path {} is outside project root {}",
+                    canonical.display(),
+                    project_root.display()
+                );
+            }
+            Ok(canonical)
+        })
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -803,12 +897,30 @@ fn command_present(command: &str) -> bool {
         return false;
     }
     if command.contains(std::path::MAIN_SEPARATOR) {
-        return std::path::Path::new(command).is_file();
+        return is_executable_file(std::path::Path::new(command));
     }
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
-    std::env::split_paths(&path).any(|dir| dir.join(command).is_file())
+    std::env::split_paths(&path).any(|dir| is_executable_file(&dir.join(command)))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn run_doctor(cfg: &Config, config_path: &Path) -> Result<AgentDoctorReport> {
@@ -1230,6 +1342,7 @@ printf 'codex\ntranscript text that should not win\n'
         let fake_codex = tmp.path().join("codex");
         let extra_dir = tmp.path().join("Desktop");
         std::fs::create_dir_all(&extra_dir).expect("extra dir");
+        let canonical_extra_dir = extra_dir.canonicalize().expect("canonical extra dir");
         std::fs::write(
             &fake_codex,
             format!(
@@ -1261,7 +1374,7 @@ if [ "$saw_sandbox" != "1" ] || [ "$saw_add_dir" != "1" ]; then
 fi
 printf 'WRITE_MODE_OK\n' > "$out"
 "#,
-                extra_dir.display()
+                canonical_extra_dir.display()
             ),
         )
         .expect("write fake codex");
@@ -1277,12 +1390,42 @@ printf 'WRITE_MODE_OK\n' > "$out"
             "create a folder",
             &CliChatOptions {
                 sandbox: CliSandbox::WorkspaceWrite,
-                add_dirs: vec![extra_dir],
+                add_dirs: vec![canonical_extra_dir],
+                project_root: Some(tmp.path().to_path_buf()),
             },
         )
         .expect("codex chat");
 
         assert_eq!(output, "WRITE_MODE_OK");
+    }
+
+    #[test]
+    fn codex_chat_defaults_to_project_scoped_workspace_write() {
+        let options = CliChatOptions::default();
+        assert_eq!(options.sandbox, CliSandbox::WorkspaceWrite);
+        assert!(options.add_dirs.is_empty());
+    }
+
+    #[test]
+    fn codex_chat_rejects_writable_paths_outside_project_root() {
+        let project = tempfile::TempDir::new().expect("project");
+        let outside = tempfile::TempDir::new().expect("outside");
+        let root = project.path().canonicalize().expect("root");
+        let error = canonical_project_add_dirs(&root, &[outside.path().to_path_buf()])
+            .expect_err("outside path must fail");
+        assert!(error.to_string().contains("outside project root"));
+    }
+
+    #[test]
+    fn codex_readiness_rejects_an_inactive_login() {
+        let (_tmp, _config_path, mut cfg) = temp_cfg();
+        let codex = cfg.tools.get_mut("codex").expect("codex tool");
+        codex.enabled = true;
+        codex.command = "false".to_string();
+        assert_eq!(
+            chat_tool_readiness(&cfg, "codex"),
+            ChatToolReadiness::AuthenticationUnavailable
+        );
     }
 
     #[test]

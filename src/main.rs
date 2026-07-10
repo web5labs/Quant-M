@@ -2460,7 +2460,7 @@ fn start_needs_onboarding(config_path: &std::path::Path) -> Result<bool> {
 }
 
 fn provider_route_status(cfg: &Config) -> onboarding_router::ProviderRouteStatus {
-    if tui_shell::selected_chat_tool(cfg).is_some() {
+    if tui_shell::selected_chat_route(cfg).is_some() {
         onboarding_router::ProviderRouteStatus::Available
     } else {
         onboarding_router::ProviderRouteStatus::Missing
@@ -2536,11 +2536,29 @@ fn probe_write_directory(path: &Path) -> Result<()> {
 
 fn provider_setup_next_steps(cfg: &Config) -> String {
     let command = quant_m_command_hint();
+    let route_detail = configured_chat_route_detail(cfg);
     format!(
-        "No chat-capable provider or local CLI route is available yet.\nworkspace: {}\nrole: {}\n\nChat was not opened.\nNext:\n  {command} provider list\n  {command} tool scan\n  {command} onboard\n  {command} doctor\n\nDetection is not permission. Provider or CLI calls remain disabled until explicitly configured.",
+        "No working local CLI chat route is available yet.\nworkspace: {}\nrole: {}\nroute check: {route_detail}\n\nChat was not opened, so you will not be dropped into an inert TUI.\nNext:\n  {command} tool validate codex\n  {command} tool setup codex\n  {command} onboard\n  {command} doctor\n\nSelect option 3 during onboarding for Codex CLI. Quant-M opens chat only after the executable and adapter checks pass.",
         cfg.workspace_dir.display(),
         onboarding_role_label(cfg.runtime.role),
     )
+}
+
+fn configured_chat_route_detail(cfg: &Config) -> String {
+    let candidates = cfg
+        .preferences
+        .preferred_chat_tool
+        .iter()
+        .map(String::as_str)
+        .chain(["codex", "claude", "anthropic", "gemini"])
+        .collect::<Vec<_>>();
+    for id in candidates {
+        if cfg.tools.get(id).is_some_and(|tool| tool.enabled) {
+            let readiness = agent_shell::chat_tool_readiness(cfg, id);
+            return format!("{id}: {}", readiness.message());
+        }
+    }
+    "no supported CLI selected".to_string()
 }
 
 fn core_pairing_next_steps(cfg: &Config) -> String {
@@ -2899,11 +2917,11 @@ fn run_setup_flow(config_path: &std::path::Path, args: SetupArgs) -> Result<Setu
     for tool in &args.selected_tools {
         enable_tool(&mut cfg, tool);
     }
-    cfg.preferences.preferred_chat_tool = args
-        .selected_tools
-        .iter()
-        .find(|tool| is_chat_capable_tool(tool))
-        .cloned();
+    cfg.preferences.preferred_chat_tool = args.selected_tools.iter().find_map(|tool| {
+        agent_shell::chat_tool_readiness(&cfg, tool)
+            .is_ready()
+            .then(|| tool.clone())
+    });
 
     let mut cfg = cfg.sanitize();
     cfg.validate()?;
@@ -4210,16 +4228,16 @@ fn prompt_developer_tools(cfg: &Config) -> Result<Vec<String>> {
         "{}Pick optional CLI tools to recognize.{}",
         ANSI_BOLD, ANSI_RESET
     );
-    println!("  {} 0{}   ⏭️ none for now", ANSI_CYAN, ANSI_RESET);
+    println!("  {} 1{}   None for now", ANSI_CYAN, ANSI_RESET);
     println!(
-        "  {} 1{}   🔎 Scan PATH and enable detected supported tools",
+        "  {} 2{}   Scan PATH and use detected supported tools",
         ANSI_CYAN, ANSI_RESET
     );
     for (index, (id, label, note)) in options.iter().enumerate() {
         println!(
             "  {}{:>2}{}   {} ({})",
             ANSI_CYAN,
-            index + 2,
+            index + 3,
             ANSI_RESET,
             label,
             note
@@ -4233,12 +4251,12 @@ fn prompt_developer_tools(cfg: &Config) -> Result<Vec<String>> {
     }
     println!();
     println!(
-        "{}Type numbers separated by commas, ids like codex/claude/antigravity, `scan`, or `none`. Manual choices are allowed before login; validate after browser/account setup.{}",
+        "{}Option 3 is Codex CLI. A selected tool opens chat only when its command exists and Quant-M has a safe adapter.{}",
         ANSI_DIM, ANSI_RESET
     );
 
     loop {
-        let answer = prompt_default("Select CLI tool(s)", "1")?;
+        let answer = prompt_default("Select CLI tool(s)", "2")?;
         match parse_developer_tool_selection(&answer, cfg) {
             Ok(selected) => return Ok(selected),
             Err(err) => println!("{err}"),
@@ -4262,7 +4280,7 @@ fn developer_tool_menu_options() -> &'static [(&'static str, &'static str, &'sta
 
 fn parse_developer_tool_selection(answer: &str, cfg: &Config) -> Result<Vec<String>> {
     let trimmed = answer.trim();
-    if trimmed.is_empty() || trimmed == "1" || trimmed.eq_ignore_ascii_case("scan") {
+    if trimmed.is_empty() || trimmed == "2" || trimmed.eq_ignore_ascii_case("scan") {
         let detected = scan_supported_developer_tools(cfg);
         if detected.is_empty() {
             let command = quant_m_command_hint();
@@ -4276,6 +4294,7 @@ fn parse_developer_tool_selection(answer: &str, cfg: &Config) -> Result<Vec<Stri
         return Ok(unique_tool_ids(detected.into_iter().map(|tool| tool.id)));
     }
     if trimmed == "0"
+        || trimmed == "1"
         || trimmed.eq_ignore_ascii_case("none")
         || trimmed.eq_ignore_ascii_case("skip")
     {
@@ -4301,7 +4320,7 @@ fn parse_developer_tool_selection(answer: &str, cfg: &Config) -> Result<Vec<Stri
             continue;
         }
         if let Ok(index) = item.parse::<usize>() {
-            if index == 1 {
+            if index == 2 {
                 selected.extend(
                     scan_supported_developer_tools(cfg)
                         .into_iter()
@@ -4309,7 +4328,10 @@ fn parse_developer_tool_selection(answer: &str, cfg: &Config) -> Result<Vec<Stri
                 );
                 continue;
             }
-            let option_index = index.saturating_sub(2);
+            if index == 1 {
+                continue;
+            }
+            let option_index = index.saturating_sub(3);
             let Some((id, _label, _note)) = options.get(option_index) else {
                 anyhow::bail!("tool number {index} is not in the menu");
             };
@@ -4371,20 +4393,6 @@ fn supported_developer_tool_ids() -> &'static [&'static str] {
         "ollama",
         "lmstudio",
     ]
-}
-
-fn is_chat_capable_tool(id: &str) -> bool {
-    matches!(
-        id.trim().to_ascii_lowercase().as_str(),
-        "codex"
-            | "claude"
-            | "anthropic"
-            | "gemini"
-            | "antigravity"
-            | "antgravity"
-            | "openai"
-            | "opencode"
-    )
 }
 
 fn scan_supported_developer_tools(cfg: &Config) -> Vec<DetectedTool> {
@@ -6407,7 +6415,7 @@ onboarding_completed = true
     fn developer_tool_selection_supports_manual_cli_choices() {
         let (_tmp, cfg) = temp_cfg();
 
-        let selected = parse_developer_tool_selection("2,3,antigravity,ollama,lmstudio", &cfg)
+        let selected = parse_developer_tool_selection("3,4,antigravity,ollama,lmstudio", &cfg)
             .expect("parse tools");
 
         assert_eq!(
@@ -6486,10 +6494,7 @@ onboarding_completed = true
         let cfg = Config::load_existing(&config_path).expect("reload");
         assert!(!cfg.tools.get("codex").expect("codex").enabled);
         assert!(cfg.tools.get("openai").expect("openai").enabled);
-        assert_eq!(
-            cfg.preferences.preferred_chat_tool.as_deref(),
-            Some("openai")
-        );
+        assert!(cfg.preferences.preferred_chat_tool.is_none());
     }
 
     #[test]

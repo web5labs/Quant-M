@@ -3,11 +3,12 @@ use crate::config::{ChannelPreference, Config, ModelPreference};
 use crate::cost_ledger;
 use crate::domain;
 use crate::execution_runtime::{self, WorkflowRunResult};
+use crate::llm;
 use crate::sessions::{self, SessionId};
 use crate::shared_state;
 use crate::state_review;
 use crate::workflow_registry::{self, WorkflowId};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -21,6 +22,8 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_VISIBLE_ITEMS: usize = 8;
 const MOCK_RESEARCH_WORKFLOW: &str = "workflow:mock-research-brief";
 const CHAT_INPUT_HINT: &str = "/help /read /write /add-dir <path> /state [domain] /cost [session] /replay <session> /ask <question> /refresh /quit";
+const CHAT_FOOTER_HINT: &str =
+    "/help /read /write /state /cost /quit | Ctrl+Enter newline | Esc quit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TuiView {
@@ -140,6 +143,7 @@ struct ChatApp {
     inspect_only: bool,
     chat_tool: Option<String>,
     cli_sandbox: agent_shell::CliSandbox,
+    project_root: PathBuf,
     add_dirs: Vec<PathBuf>,
     messages: Vec<ChatMessage>,
     input: String,
@@ -147,25 +151,24 @@ struct ChatApp {
     snapshot: TuiSnapshot,
 }
 
-pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> {
-    let chat_tool = (!inspect).then(|| selected_chat_tool(cfg)).flatten();
+pub fn run_chat(cfg: &Config, config_path: &Path, inspect: bool) -> Result<()> {
+    let chat_tool = (!inspect).then(|| selected_chat_route(cfg)).flatten();
     let inspect_only = inspect || chat_tool.is_none();
+    let cli_sandbox = if chat_tool.as_deref() == Some("codex") {
+        agent_shell::CliSandbox::WorkspaceWrite
+    } else {
+        agent_shell::CliSandbox::ReadOnly
+    };
+    let project_root = project_root_from_config_path(config_path)?;
     let mut app = ChatApp {
         inspect_only,
-        chat_tool,
-        cli_sandbox: agent_shell::CliSandbox::ReadOnly,
+        chat_tool: chat_tool.clone(),
+        cli_sandbox,
+        project_root,
         add_dirs: Vec::new(),
-        messages: initial_chat_messages(
-            inspect_only,
-            selected_chat_tool(cfg).as_deref(),
-            agent_shell::CliSandbox::ReadOnly,
-        ),
+        messages: initial_chat_messages(inspect_only, chat_tool.as_deref(), cli_sandbox),
         input: String::new(),
-        notice: initial_chat_notice(
-            inspect_only,
-            selected_chat_tool(cfg).as_deref(),
-            agent_shell::CliSandbox::ReadOnly,
-        ),
+        notice: initial_chat_notice(inspect_only, chat_tool.as_deref(), cli_sandbox),
         snapshot: collect_snapshot(cfg)?,
     };
 
@@ -173,6 +176,15 @@ pub fn run_chat(cfg: &Config, _config_path: &Path, inspect: bool) -> Result<()> 
     let result = run_chat_app(&mut terminal, cfg, &mut app);
     ratatui::restore();
     result
+}
+
+fn project_root_from_config_path(config_path: &Path) -> Result<PathBuf> {
+    config_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()
+        .context("failed to resolve Quant-M project root")
 }
 
 fn initial_chat_messages(
@@ -184,7 +196,7 @@ fn initial_chat_messages(
         kind: ChatMessageKind::DisplayOnlyNote,
         storage_mode: TuiStorageMode::InspectOnly,
         body: format!(
-            "You are now talking with Quant-M, the local governed evidence agent. This chat is an evidence cockpit, not an authority surface. mode={} sandbox={}",
+            "Route: {}. Permission scope: {} inside the current project only. Quant-M records evidence; it does not grant execution authority.",
             chat_mode_label(inspect, chat_tool),
             sandbox.label()
         ),
@@ -201,7 +213,7 @@ fn initial_chat_notice(
             .to_string()
     } else {
         format!(
-            "{} cockpit. sandbox={}. Use /write for workspace writes and /read to return to read-only.",
+            "{} ready. {} is confined to the project root. Use /read for inspect-only file access.",
             chat_mode_label(false, chat_tool),
             sandbox.label()
         )
@@ -375,21 +387,31 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
             ),
         },
         TuiAction::SetCliSandbox { sandbox } => {
-            app.cli_sandbox = sandbox;
-            ChatMessage {
-                kind: ChatMessageKind::PolicyDecision,
-                storage_mode,
-                body: match sandbox {
-                    agent_shell::CliSandbox::ReadOnly => {
-                        "Codex chat sandbox set to read-only. Codex can inspect and answer, but not create or edit files.".to_string()
-                    }
-                    agent_shell::CliSandbox::WorkspaceWrite => {
-                        "Codex chat sandbox set to workspace-write. Codex may create and edit files inside the Quant-M workspace. Use /add-dir <path> before asking it to write somewhere else, such as ~/Desktop.".to_string()
-                    }
-                },
+            if sandbox == agent_shell::CliSandbox::WorkspaceWrite
+                && app.chat_tool.as_deref() != Some("codex")
+            {
+                ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: "Workspace writes are available only through the hardened Codex adapter. This route remains read-only.".to_string(),
+                }
+            } else {
+                app.cli_sandbox = sandbox;
+                ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: match sandbox {
+                        agent_shell::CliSandbox::ReadOnly => {
+                            "Codex chat sandbox set to read-only. Codex can inspect and answer, but not create or edit files.".to_string()
+                        }
+                        agent_shell::CliSandbox::WorkspaceWrite => {
+                            "Codex chat sandbox set to workspace-write. Codex may create and edit files inside this Quant-M project only.".to_string()
+                        }
+                    },
+                }
             }
         }
-        TuiAction::AddWriteDir { path } => match resolve_add_dir_path(&path) {
+        TuiAction::AddWriteDir { path } => match resolve_add_dir_path(&path, &app.project_root) {
             Ok(path) => {
                 if !app.add_dirs.contains(&path) {
                     app.add_dirs.push(path.clone());
@@ -397,10 +419,7 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                 ChatMessage {
                     kind: ChatMessageKind::PolicyDecision,
                     storage_mode,
-                    body: format!(
-                        "Added writable directory for Codex chat: {}\nUse /write before asking Codex to create or edit files there.",
-                        path.display()
-                    ),
+                    body: format!("Added project-local writable directory: {}", path.display()),
                 }
             }
             Err(err) => ChatMessage {
@@ -503,11 +522,17 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                 }
             } else {
                 let tool_id = app.chat_tool.as_deref().unwrap_or("codex");
-                let options = agent_shell::CliChatOptions {
-                    sandbox: app.cli_sandbox,
-                    add_dirs: app.add_dirs.clone(),
+                let result = if tool_id.starts_with("model:") {
+                    run_model_chat(cfg, &question)
+                } else {
+                    let options = agent_shell::CliChatOptions {
+                        sandbox: app.cli_sandbox,
+                        add_dirs: app.add_dirs.clone(),
+                        project_root: Some(app.project_root.clone()),
+                    };
+                    agent_shell::run_cli_chat_with_options(cfg, tool_id, &question, &options)
                 };
-                match agent_shell::run_cli_chat_with_options(cfg, tool_id, &question, &options) {
+                match result {
                     Ok(output) => ChatMessage {
                         kind: ChatMessageKind::ToolCliResponse,
                         storage_mode,
@@ -536,6 +561,20 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
     app.messages.push(message);
 }
 
+fn run_model_chat(cfg: &Config, prompt: &str) -> Result<String> {
+    let cfg = cfg.clone();
+    let prompt = prompt.to_string();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to create model chat runtime")?
+            .block_on(llm::ask(&cfg, &prompt))
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("model chat worker panicked"))?
+}
+
 fn known_storage_modes_label() -> String {
     [
         TuiStorageMode::InspectOnly,
@@ -551,7 +590,7 @@ fn known_storage_modes_label() -> String {
     .join(", ")
 }
 
-fn resolve_add_dir_path(raw: &str) -> std::result::Result<PathBuf, String> {
+fn resolve_add_dir_path(raw: &str, project_root: &Path) -> std::result::Result<PathBuf, String> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err("Usage: /add-dir <existing-directory>".to_string());
@@ -581,8 +620,19 @@ fn resolve_add_dir_path(raw: &str) -> std::result::Result<PathBuf, String> {
             path.display()
         ));
     }
-    path.canonicalize()
-        .map_err(|err| format!("Could not canonicalize {}: {err}", path.display()))
+    let canonical = path
+        .canonicalize()
+        .map_err(|err| format!("Could not canonicalize {}: {err}", path.display()))?;
+    let root = project_root
+        .canonicalize()
+        .map_err(|err| format!("Could not canonicalize project root: {err}"))?;
+    if !canonical.starts_with(&root) {
+        return Err(format!(
+            "Writable paths must stay inside the project root: {}",
+            root.display()
+        ));
+    }
+    Ok(canonical)
 }
 
 fn format_chat_add_dirs(add_dirs: &[PathBuf]) -> String {
@@ -634,9 +684,9 @@ fn render_chat(frame: &mut Frame, app: &ChatApp) {
     let layout_mode = chat_layout_mode(area.width);
     let compact = layout_mode == ChatLayoutMode::Compact;
     let [header, body, input] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(4),
         Constraint::Min(8),
-        Constraint::Length(5),
+        Constraint::Length(6),
     ])
     .areas(area);
     render_chat_header(frame, header, app, compact);
@@ -658,26 +708,44 @@ fn render_chat_header(frame: &mut Frame, area: Rect, app: &ChatApp, compact: boo
     } else {
         chat_mode_label(false, app.chat_tool.as_deref())
     };
-    let text = Line::from(vec![
-        Span::styled(
-            "Quant-M TUI Chat ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!(
-            "mode={mode} sandbox={} sessions={} state={} local_model={} openrouter={} layout={}",
-            app.cli_sandbox.label(),
+    let route = app.chat_tool.as_deref().unwrap_or("inspect");
+    let status_style = if app.inspect_only {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    };
+    let text = Text::from(vec![
+        Line::from(vec![
+            Span::styled(
+                "QUANT-M  ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                if app.inspect_only { "INSPECT" } else { "READY" },
+                status_style,
+            ),
+            Span::raw(format!(
+                "   route={route}   scope={}   {}",
+                app.cli_sandbox.label(),
+                if compact { "compact" } else { "wide" }
+            )),
+        ]),
+        Line::from(format!(
+            "project={}   sessions={}   evidence={}",
+            app.project_root.display(),
             app.snapshot.session_count,
-            app.snapshot.shared_state_count,
-            app.snapshot.preferred_local_model,
-            app.snapshot.preferred_openrouter_model,
-            if compact { "compact" } else { "wide" }
-        )),
+            app.snapshot.shared_state_count
+        ))
+        .style(Style::default().fg(Color::Gray)),
     ]);
+    let title = format!(" Chat / {mode} ");
     frame.render_widget(
         Paragraph::new(text)
-            .block(panel_block(" Evidence Cockpit ", Color::Cyan))
+            .block(panel_block(&title, Color::Cyan))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -702,7 +770,7 @@ fn render_chat_messages(frame: &mut Frame, area: Rect, app: &ChatApp, compact: b
     }
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .block(panel_block(" Chat-Shaped Evidence ", Color::Magenta))
+            .block(panel_block(" Conversation ", Color::Magenta))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -736,13 +804,20 @@ fn render_chat_message_lines(message: &ChatMessage) -> Vec<String> {
 fn render_chat_evidence_rail(frame: &mut Frame, area: Rect, app: &ChatApp) {
     let last = app.messages.last();
     let items = vec![
-        ListItem::new(format!("workspace: {}", app.snapshot.workspace_path)),
+        ListItem::new(format!(
+            "route: {}",
+            app.chat_tool.as_deref().unwrap_or("inspect")
+        )),
+        ListItem::new(format!("project: {}", app.project_root.display())),
         ListItem::new(format!(
             "network: {}",
             app.snapshot.external_network_posture
         )),
         ListItem::new(format!("sandbox: {}", app.cli_sandbox.label())),
-        ListItem::new(format!("add dirs: {}", format_chat_add_dirs(&app.add_dirs))),
+        ListItem::new(format!(
+            "project dirs: {}",
+            format_chat_add_dirs(&app.add_dirs)
+        )),
         ListItem::new(format!("sessions: {}", app.snapshot.session_count)),
         ListItem::new(format!("state rows: {}", app.snapshot.shared_state_count)),
         ListItem::new(format!(
@@ -758,7 +833,7 @@ fn render_chat_evidence_rail(frame: &mut Frame, area: Rect, app: &ChatApp) {
         ListItem::new("truth: sessions/state/replay/cost/policy"),
     ];
     frame.render_widget(
-        List::new(items).block(panel_block(" Evidence Rail ", Color::Green)),
+        List::new(items).block(panel_block(" Route & Evidence ", Color::Green)),
         area,
     );
 }
@@ -767,7 +842,7 @@ fn render_chat_input(frame: &mut Frame, area: Rect, app: &ChatApp) {
     let text = Text::from(vec![
         Line::from(app.input.clone()),
         Line::from(Span::styled(
-            format!("{CHAT_INPUT_HINT} | Ctrl+Enter newline | Esc quit"),
+            CHAT_FOOTER_HINT,
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(Span::styled(
@@ -779,7 +854,7 @@ fn render_chat_input(frame: &mut Frame, area: Rect, app: &ChatApp) {
     ]);
     frame.render_widget(
         Paragraph::new(text)
-            .block(panel_block(" Input ", Color::Blue))
+            .block(panel_block(" Message ", Color::LightBlue))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -838,20 +913,19 @@ pub(crate) fn selected_chat_tool(cfg: &Config) -> Option<String> {
     .find_map(|id| enabled_chat_tool_id(cfg, id))
 }
 
+pub(crate) fn selected_chat_route(cfg: &Config) -> Option<String> {
+    selected_chat_tool(cfg).or_else(|| {
+        let ready = cfg.llm.enabled
+            && cfg.runtime.external_network_enabled
+            && cfg.resolve_llm_api_key().is_some()
+            && !cfg.llm.model.trim().is_empty();
+        ready.then(|| format!("model:{}", cfg.llm.model))
+    })
+}
+
 fn enabled_chat_tool_id(cfg: &Config, id: &str) -> Option<String> {
     let id = id.trim().to_ascii_lowercase();
-    let supported = matches!(
-        id.as_str(),
-        "codex"
-            | "claude"
-            | "anthropic"
-            | "gemini"
-            | "antigravity"
-            | "antgravity"
-            | "openai"
-            | "opencode"
-    );
-    if supported && cfg.tools.get(&id).map(|tool| tool.enabled).unwrap_or(false) {
+    if agent_shell::chat_tool_readiness(cfg, &id).is_ready() {
         Some(id)
     } else {
         None
@@ -1323,6 +1397,7 @@ mod tests {
             inspect_only,
             chat_tool: None,
             cli_sandbox: agent_shell::CliSandbox::ReadOnly,
+            project_root: std::env::current_dir().expect("current dir"),
             add_dirs: Vec::new(),
             messages: Vec::new(),
             input: String::new(),
@@ -1470,6 +1545,7 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let cfg = test_config(&tmp);
         let mut app = test_chat_app(false);
+        app.chat_tool = Some("codex".to_string());
 
         handle_tui_action(
             &cfg,
@@ -1490,6 +1566,7 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let cfg = test_config(&tmp);
         let mut app = test_chat_app(false);
+        app.project_root = tmp.path().canonicalize().expect("project root");
         let extra = tmp.path().join("extra");
         std::fs::create_dir_all(&extra).expect("extra dir");
 
@@ -1504,13 +1581,28 @@ mod tests {
         assert_eq!(app.add_dirs, vec![extra.canonicalize().expect("canon")]);
         let message = app.messages.last().expect("add-dir message");
         assert_eq!(message.kind, ChatMessageKind::PolicyDecision);
-        assert!(message.body.contains("Added writable directory"));
+        assert!(
+            message
+                .body
+                .contains("Added project-local writable directory")
+        );
     }
 
     #[test]
     fn compact_layout_threshold_is_explicit() {
         assert_eq!(chat_layout_mode(95), ChatLayoutMode::Compact);
         assert_eq!(chat_layout_mode(96), ChatLayoutMode::Wide);
+    }
+
+    #[test]
+    fn relative_config_path_resolves_current_project_root() {
+        let expected = std::env::current_dir()
+            .expect("current dir")
+            .canonicalize()
+            .expect("canonical current dir");
+        let root =
+            project_root_from_config_path(Path::new("quant-m.local.toml")).expect("project root");
+        assert_eq!(root, expected);
     }
 
     #[test]
@@ -1593,10 +1685,13 @@ mod tests {
         let mut cfg = test_config(&tmp);
 
         assert!(selected_chat_tool(&cfg).is_none());
-        assert!(selected_chat_tool(&cfg).is_none());
-        cfg.tools.get_mut("claude").expect("claude tool").enabled = true;
+        let claude = cfg.tools.get_mut("claude").expect("claude tool");
+        claude.enabled = true;
+        claude.command = "sh".to_string();
         assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("claude"));
-        cfg.tools.get_mut("codex").expect("codex tool").enabled = true;
+        let codex = cfg.tools.get_mut("codex").expect("codex tool");
+        codex.enabled = true;
+        codex.command = "true".to_string();
         assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("codex"));
     }
 
@@ -1604,10 +1699,53 @@ mod tests {
     fn selected_chat_tool_honors_preferred_chat_tool_over_codex() {
         let tmp = TempDir::new().expect("tempdir");
         let mut cfg = test_config(&tmp);
-        cfg.tools.get_mut("codex").expect("codex tool").enabled = true;
-        cfg.tools.get_mut("claude").expect("claude tool").enabled = true;
+        let codex = cfg.tools.get_mut("codex").expect("codex tool");
+        codex.enabled = true;
+        codex.command = "true".to_string();
+        let claude = cfg.tools.get_mut("claude").expect("claude tool");
+        claude.enabled = true;
+        claude.command = "sh".to_string();
         cfg.preferences.preferred_chat_tool = Some("claude".to_string());
 
         assert_eq!(selected_chat_tool(&cfg).as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn selected_chat_tool_rejects_enabled_but_missing_or_unsupported_routes() {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = test_config(&tmp);
+        let codex = cfg.tools.get_mut("codex").expect("codex tool");
+        codex.enabled = true;
+        codex.command = "definitely-not-installed-quantm-test".to_string();
+        assert!(selected_chat_tool(&cfg).is_none());
+
+        let openai = cfg.tools.get_mut("openai").expect("openai tool");
+        openai.enabled = true;
+        openai.command = "sh".to_string();
+        assert!(selected_chat_tool(&cfg).is_none());
+    }
+
+    #[test]
+    fn selected_model_route_opens_chat_when_governed_provider_is_ready() {
+        let tmp = TempDir::new().expect("tempdir");
+        let mut cfg = test_config(&tmp);
+        cfg.llm.enabled = true;
+        cfg.llm.api_key = Some("test-key".to_string());
+        cfg.llm.model = "test/model".to_string();
+        cfg.runtime.external_network_enabled = true;
+
+        assert_eq!(
+            selected_chat_route(&cfg).as_deref(),
+            Some("model:test/model")
+        );
+    }
+
+    #[test]
+    fn add_dir_rejects_paths_outside_project_root() {
+        let project = TempDir::new().expect("project");
+        let outside = TempDir::new().expect("outside");
+        let error = resolve_add_dir_path(outside.path().to_str().expect("path"), project.path())
+            .expect_err("outside path must fail");
+        assert!(error.contains("inside the project root"));
     }
 }
