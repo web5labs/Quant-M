@@ -1,5 +1,6 @@
 mod adapters;
 mod agent_shell;
+mod benchmark_cache;
 mod boil;
 mod bootstrap;
 mod capabilities;
@@ -691,12 +692,46 @@ enum ProviderCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Manage cached benchmark metadata used for weighted model routing.
+    Benchmark {
+        #[command(subcommand)]
+        command: ProviderBenchmarkCommand,
+    },
+    /// Rank selected or configured models and show the endpoint Quant-M would use.
+    Route {
+        #[arg(long, default_value = "coding")]
+        task: String,
+        #[arg(long = "model")]
+        models: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
     Validate {
         provider: String,
         #[arg(long)]
         live: bool,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProviderBenchmarkCommand {
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    Refresh {
+        #[arg(long)]
+        live: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Cron {
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
 }
 
@@ -4558,6 +4593,34 @@ async fn handle_provider_command(
                 &report.records
             ));
             print_serialized_or_text(&report, json, &provider_evidence::render_report(&report))
+        }
+        ProviderCommand::Benchmark { command } => match command {
+            ProviderBenchmarkCommand::Status { json } => {
+                let status = benchmark_cache::status(&cfg)?;
+                print_serialized_or_text(&status, json, &benchmark_cache::render_status(&status))
+            }
+            ProviderBenchmarkCommand::Refresh { live, json } => {
+                let report = benchmark_cache::refresh(&cfg, live).await?;
+                print_serialized_or_text(&report, json, &benchmark_cache::render_refresh(&report))
+            }
+            ProviderBenchmarkCommand::Cron { binary, config } => {
+                let binary = binary.unwrap_or(
+                    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quant-m")),
+                );
+                let config = config.unwrap_or_else(|| config_path.to_path_buf());
+                print!(
+                    "{}",
+                    benchmark_cache::render_cron(
+                        &binary.display().to_string(),
+                        &config.display().to_string()
+                    )
+                );
+                Ok(())
+            }
+        },
+        ProviderCommand::Route { task, models, json } => {
+            let report = benchmark_cache::route_report(&cfg, &task, &models)?;
+            print_serialized_or_text(&report, json, &benchmark_cache::render_route(&report))
         }
         ProviderCommand::Validate {
             provider,

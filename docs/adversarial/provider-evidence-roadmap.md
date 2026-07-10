@@ -85,6 +85,8 @@ Quarantined or inactive by default:
 
 `PROVIDER_SECRET_ONBOARDING_04` should keep keys core-side, secret-store backed, redacted, and represented by installation-specific HMAC fingerprints.
 
+`ARTIFICIAL_ANALYSIS_CACHE_09` should refresh benchmark metadata at most once daily into SQLite. The cache may influence weighted model selection, but it must never become a per-prompt dependency or imply provider entitlement.
+
 `CAPABILITY_CANARY_10` should promote readiness only after explicit low-cost generation or embedding canaries prove the current credential, endpoint, model, and capability.
 
 ## Non-Goals

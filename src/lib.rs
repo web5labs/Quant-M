@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod agent_shell;
+pub mod benchmark_cache;
 pub mod boil;
 pub mod bootstrap;
 pub mod capabilities;

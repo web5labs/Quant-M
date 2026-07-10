@@ -80,6 +80,7 @@ A phone can be a core when capable. A laptop can be a child. A Raspberry Pi can 
 | Cost ledger | Record provider-path and dry-run cost evidence locally |
 | Capability truth | Label features as wired, guarded, dry-run, mock, or unavailable |
 | Provider evidence | Preserve documented and observed endpoints without treating them as ready |
+| Benchmark cache | Cache Artificial Analysis model metrics daily for weighted routing |
 | Role-first onboarding | Configure devices without assuming every node should open chat |
 | Governed chat TUI | Use a ready Codex CLI or configured model route with visible scope and evidence state |
 
@@ -280,6 +281,15 @@ Provider endpoint evidence can be inspected without making provider calls:
 
 ```bash
 quant-m provider evidence
+```
+
+Weighted model routing can use the selected model list plus cached benchmark data:
+
+```bash
+quant-m provider benchmark status
+quant-m provider benchmark refresh --live
+quant-m provider benchmark cron
+quant-m provider route --task coding
 ```
 
 Focused proof commands include:
