@@ -89,19 +89,54 @@ Quant-M does **not** currently provide live trading, broker execution, automatic
 Markdown explains why. Rust decides state. Replay proves what happened.
 
 ```mermaid
-flowchart LR
-    A[Agent or worker output] --> B[Normalize]
-    B --> C[Record evidence]
-    C --> D[Policy and FSM authority]
-    D --> E{Decision}
-    E -->|allowed| F[Accepted local action or state]
-    E -->|blocked| G[Blocked evidence]
-    E -->|approval pending| H[Operator review]
-    E -->|replay skipped| I[No repeated side effect]
-    F --> J[Replay-compatible record]
-    G --> J
-    H --> J
-    I --> J
+flowchart TB
+    subgraph INTAKE["1. Intake and evidence"]
+        direction LR
+        A[Agent or worker output] --> B[Normalize]
+        B --> C[(Evidence record)]
+    end
+
+    subgraph AUTHORITY["2. Rust authority boundary"]
+        direction LR
+        D[Policy gate] --> E[FSM transition check]
+        E --> F{Authorized outcome?}
+    end
+
+    subgraph OUTCOMES["3. Governed outcome"]
+        direction LR
+        G[Accepted local action or state]
+        H[Blocked with evidence]
+        I[Operator review required]
+        J[Side effect skipped during replay]
+    end
+
+    subgraph RECORD["4. Replay and continuity"]
+        K[(Replay-compatible record)]
+    end
+
+    C --> D
+    F -->|Allow| G
+    F -->|Deny| H
+    F -->|Pending| I
+    F -->|Replay| J
+    G --> K
+    H --> K
+    I --> K
+    J --> K
+
+    classDef evidence fill:#e8f1ff,stroke:#2563a8,color:#10253f,stroke-width:2px
+    classDef authority fill:#eef0f3,stroke:#4b5563,color:#111827,stroke-width:2px
+    classDef allowed fill:#e7f6ec,stroke:#25834a,color:#123d24,stroke-width:2px
+    classDef blocked fill:#fdebec,stroke:#b93b45,color:#521a20,stroke-width:2px
+    classDef pending fill:#fff4d6,stroke:#b7791f,color:#51320b,stroke-width:2px
+    classDef replay fill:#eee9fb,stroke:#7456a8,color:#30204e,stroke-width:2px
+
+    class A,B,C,K evidence
+    class D,E,F authority
+    class G allowed
+    class H blocked
+    class I pending
+    class J replay
 ```
 
 The central rule is simple: a model can suggest, a worker can propose, and a tool can be detected. None of those automatically becomes authority.
