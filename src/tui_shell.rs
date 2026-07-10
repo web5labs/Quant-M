@@ -16,7 +16,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_VISIBLE_ITEMS: usize = 8;
@@ -138,17 +139,26 @@ struct ChatMessage {
     body: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ChatApp {
     inspect_only: bool,
     chat_tool: Option<String>,
     cli_sandbox: agent_shell::CliSandbox,
     project_root: PathBuf,
     add_dirs: Vec<PathBuf>,
+    pending: Option<PendingChat>,
     messages: Vec<ChatMessage>,
     input: String,
     notice: String,
     snapshot: TuiSnapshot,
+}
+
+#[derive(Debug)]
+struct PendingChat {
+    tool_id: String,
+    storage_mode: TuiStorageMode,
+    started_at: Instant,
+    receiver: Receiver<Result<String, String>>,
 }
 
 pub fn run_chat(cfg: &Config, config_path: &Path, inspect: bool) -> Result<()> {
@@ -166,6 +176,7 @@ pub fn run_chat(cfg: &Config, config_path: &Path, inspect: bool) -> Result<()> {
         cli_sandbox,
         project_root,
         add_dirs: Vec::new(),
+        pending: None,
         messages: initial_chat_messages(inspect_only, chat_tool.as_deref(), cli_sandbox),
         input: String::new(),
         notice: initial_chat_notice(inspect_only, chat_tool.as_deref(), cli_sandbox),
@@ -230,8 +241,14 @@ fn chat_mode_label(inspect: bool, chat_tool: Option<&str>) -> String {
 
 fn run_chat_app(terminal: &mut DefaultTerminal, cfg: &Config, app: &mut ChatApp) -> Result<()> {
     loop {
+        drain_pending_chat(app);
         terminal.draw(|frame| render_chat(frame, app))?;
-        if event::poll(Duration::from_millis(200))? {
+        let poll_delay = if app.pending.is_some() {
+            Duration::from_millis(40)
+        } else {
+            Duration::from_millis(80)
+        };
+        if event::poll(poll_delay)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Esc => break Ok(()),
@@ -520,29 +537,25 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
                         "No chat-capable CLI is enabled in this Quant-M profile, so no provider or CLI call was made.\nquestion: {question}\nnext: run `quant-m onboard`, select Codex, Claude, Gemini, or Antigravity, then validate with `quant-m tool validate <tool>`."
                     ),
                 }
+            } else if let Some(pending) = &app.pending {
+                ChatMessage {
+                    kind: ChatMessageKind::PolicyDecision,
+                    storage_mode,
+                    body: format!(
+                        "{} is still working for {}. Wait for the response before sending another tool call.",
+                        pending.tool_id,
+                        format_elapsed(pending.started_at.elapsed())
+                    ),
+                }
             } else {
                 let tool_id = app.chat_tool.as_deref().unwrap_or("codex");
-                let result = if tool_id.starts_with("model:") {
-                    run_model_chat(cfg, &question)
-                } else {
-                    let options = agent_shell::CliChatOptions {
-                        sandbox: app.cli_sandbox,
-                        add_dirs: app.add_dirs.clone(),
-                        project_root: Some(app.project_root.clone()),
-                    };
-                    agent_shell::run_cli_chat_with_options(cfg, tool_id, &question, &options)
-                };
-                match result {
-                    Ok(output) => ChatMessage {
-                        kind: ChatMessageKind::ToolCliResponse,
-                        storage_mode,
-                        body: output,
-                    },
-                    Err(err) => ChatMessage {
-                        kind: ChatMessageKind::Error,
-                        storage_mode,
-                        body: format!("{} CLI call failed: {err}", tool_id),
-                    },
+                app.pending = Some(spawn_chat_call(cfg, app, tool_id, &question, storage_mode));
+                ChatMessage {
+                    kind: ChatMessageKind::DisplayOnlyNote,
+                    storage_mode,
+                    body: format!(
+                        "Started {tool_id} chat call in the background. The TUI stays responsive while Quant-M waits for the tool response."
+                    ),
                 }
             }
         }
@@ -562,17 +575,99 @@ fn handle_tui_action(cfg: &Config, app: &mut ChatApp, action: TuiAction) {
 }
 
 fn run_model_chat(cfg: &Config, prompt: &str) -> Result<String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to create model chat runtime")?
+        .block_on(llm::ask(cfg, prompt))
+}
+
+fn spawn_chat_call(
+    cfg: &Config,
+    app: &ChatApp,
+    tool_id: &str,
+    question: &str,
+    storage_mode: TuiStorageMode,
+) -> PendingChat {
+    let (sender, receiver) = mpsc::channel();
     let cfg = cfg.clone();
-    let prompt = prompt.to_string();
+    let tool_id = tool_id.to_string();
+    let question = question.to_string();
+    let options = agent_shell::CliChatOptions {
+        sandbox: app.cli_sandbox,
+        add_dirs: app.add_dirs.clone(),
+        project_root: Some(app.project_root.clone()),
+    };
+    let worker_tool_id = tool_id.clone();
     std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to create model chat runtime")?
-            .block_on(llm::ask(&cfg, &prompt))
-    })
-    .join()
-    .map_err(|_| anyhow::anyhow!("model chat worker panicked"))?
+        let result = if worker_tool_id.starts_with("model:") {
+            run_model_chat(&cfg, &question)
+        } else {
+            agent_shell::run_cli_chat_with_options(&cfg, &worker_tool_id, &question, &options)
+        }
+        .map_err(|err| err.to_string());
+        let _ = sender.send(result);
+    });
+    PendingChat {
+        tool_id,
+        storage_mode,
+        started_at: Instant::now(),
+        receiver,
+    }
+}
+
+fn drain_pending_chat(app: &mut ChatApp) {
+    let Some(pending) = app.pending.as_ref() else {
+        return;
+    };
+    match pending.receiver.try_recv() {
+        Ok(result) => {
+            let pending = app.pending.take().expect("pending chat");
+            let elapsed = format_elapsed(pending.started_at.elapsed());
+            match result {
+                Ok(output) => {
+                    app.notice = format!("{} completed in {elapsed}", pending.tool_id);
+                    app.messages.push(ChatMessage {
+                        kind: ChatMessageKind::ToolCliResponse,
+                        storage_mode: pending.storage_mode,
+                        body: output,
+                    });
+                }
+                Err(err) => {
+                    app.notice = format!("{} failed after {elapsed}", pending.tool_id);
+                    app.messages.push(ChatMessage {
+                        kind: ChatMessageKind::Error,
+                        storage_mode: pending.storage_mode,
+                        body: format!("{} CLI call failed: {err}", pending.tool_id),
+                    });
+                }
+            }
+        }
+        Err(TryRecvError::Empty) => {
+            app.notice = format!(
+                "{} working... {} elapsed",
+                pending.tool_id,
+                format_elapsed(pending.started_at.elapsed())
+            );
+        }
+        Err(TryRecvError::Disconnected) => {
+            let pending = app.pending.take().expect("pending chat");
+            app.notice = format!("{} worker disconnected", pending.tool_id);
+            app.messages.push(ChatMessage {
+                kind: ChatMessageKind::Error,
+                storage_mode: pending.storage_mode,
+                body: format!("{} CLI call failed: worker disconnected", pending.tool_id),
+            });
+        }
+    }
+}
+
+fn format_elapsed(duration: Duration) -> String {
+    if duration.as_secs() == 0 {
+        format!("{}ms", duration.as_millis())
+    } else {
+        format!("{}s", duration.as_secs())
+    }
 }
 
 fn known_storage_modes_label() -> String {
@@ -1399,6 +1494,7 @@ mod tests {
             cli_sandbox: agent_shell::CliSandbox::ReadOnly,
             project_root: std::env::current_dir().expect("current dir"),
             add_dirs: Vec::new(),
+            pending: None,
             messages: Vec::new(),
             input: String::new(),
             notice: String::new(),
@@ -1677,6 +1773,30 @@ mod tests {
         assert!(message.body.contains("No chat-capable CLI is enabled"));
         assert!(!cost_ledger::cost_ledger_path(&cfg).exists());
         assert!(!cfg.runtime.session_dir.exists());
+    }
+
+    #[test]
+    fn pending_chat_completion_drains_without_blocking_input_state() {
+        let mut app = test_chat_app(false);
+        let (sender, receiver) = mpsc::channel();
+        app.input = "still editable".to_string();
+        app.pending = Some(PendingChat {
+            tool_id: "codex".to_string(),
+            storage_mode: TuiStorageMode::WorkspaceWriteToolCall,
+            started_at: Instant::now(),
+            receiver,
+        });
+        sender.send(Ok("done".to_string())).expect("send response");
+
+        drain_pending_chat(&mut app);
+
+        assert!(app.pending.is_none());
+        assert_eq!(app.input, "still editable");
+        let message = app.messages.last().expect("response");
+        assert_eq!(message.kind, ChatMessageKind::ToolCliResponse);
+        assert_eq!(message.storage_mode, TuiStorageMode::WorkspaceWriteToolCall);
+        assert_eq!(message.body, "done");
+        assert!(app.notice.contains("completed"));
     }
 
     #[test]
