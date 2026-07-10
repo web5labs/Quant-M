@@ -1,4 +1,5 @@
 use crate::config::{Config, ProviderKind};
+use crate::provider_evidence;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -186,6 +187,7 @@ pub struct CapabilityFilter {
 pub fn inventory(cfg: &Config) -> Result<Vec<CapabilityRecord>> {
     let mut records = base_records(cfg);
     records.extend(provider_records(cfg));
+    records.push(provider_evidence_record());
     records.extend(tool_records(cfg));
     records.sort_by(|a, b| a.id.cmp(&b.id));
     validate_unique_ids(&records)?;
@@ -835,6 +837,49 @@ fn provider_records(cfg: &Config) -> Vec<CapabilityRecord> {
         records.push(record);
     }
     records
+}
+
+fn provider_evidence_record() -> CapabilityRecord {
+    let report = provider_evidence::report();
+    let mut record = record(
+        "providers.evidence-registry",
+        "Provider endpoint evidence registry",
+        CapabilityCategory::Provider,
+        CapabilityStatus::Guarded,
+        "Versioned provider endpoint evidence. Documentation and historical probes are preserved as evidence, not executable readiness.",
+        &[
+            "quant-m provider evidence",
+            "quant-m provider evidence --json",
+        ],
+        &["quant-m provider evidence --json"],
+        &["cargo test provider_evidence"],
+        &[],
+        &["README.md", "docs/adversarial/provider-evidence-roadmap.md"],
+    );
+    record.requirements.push(req(
+        "gate",
+        "no documented_unprobed or previously_observed endpoint may report Ready",
+        report.ready_count == 0,
+    ));
+    record.config_gates = vec![
+        "runtime.external_network_enabled".to_string(),
+        "providers.<id>.live_validation_allowed".to_string(),
+        "credential-specific canary required before Ready".to_string(),
+    ];
+    record.policy_gates = vec![
+        "provider URLs are implementation details".to_string(),
+        "side-effecting and administration endpoints are quarantined".to_string(),
+        "model visibility is not inference readiness".to_string(),
+    ];
+    record.risks = vec![
+        "A future adapter must not execute an endpoint solely because it exists in this registry."
+            .to_string(),
+    ];
+    record.notes = vec![format!(
+        "records={} ready={} verdict={}",
+        report.total_count, report.ready_count, report.verdict
+    )];
+    record
 }
 
 fn tool_records(cfg: &Config) -> Vec<CapabilityRecord> {

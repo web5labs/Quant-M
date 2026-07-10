@@ -33,6 +33,7 @@ pub mod memory;
 pub mod onboarding_router;
 pub mod pairing;
 pub mod policy_registry;
+pub mod provider_evidence;
 pub mod question;
 pub mod scheduler_registry;
 pub mod sessions;

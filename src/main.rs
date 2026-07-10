@@ -33,6 +33,7 @@ mod memory;
 mod onboarding_router;
 mod pairing;
 mod policy_registry;
+mod provider_evidence;
 mod question;
 mod scheduler_registry;
 mod sessions;
@@ -682,6 +683,11 @@ enum ConfigCommand {
 #[derive(Subcommand, Debug)]
 enum ProviderCommand {
     List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show endpoint evidence without activating provider calls.
+    Evidence {
         #[arg(long)]
         json: bool,
     },
@@ -4545,6 +4551,13 @@ async fn handle_provider_command(
                 }
             }
             Ok(())
+        }
+        ProviderCommand::Evidence { json } => {
+            let report = provider_evidence::report();
+            debug_assert!(provider_evidence::docs_only_endpoints_are_never_ready(
+                &report.records
+            ));
+            print_serialized_or_text(&report, json, &provider_evidence::render_report(&report))
         }
         ProviderCommand::Validate {
             provider,

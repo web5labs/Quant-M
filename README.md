@@ -79,6 +79,7 @@ A phone can be a core when capable. A laptop can be a child. A Raspberry Pi can 
 | Adaptive Council | Evaluate candidate and audit packets through deterministic shadow policy |
 | Cost ledger | Record provider-path and dry-run cost evidence locally |
 | Capability truth | Label features as wired, guarded, dry-run, mock, or unavailable |
+| Provider evidence | Preserve documented and observed endpoints without treating them as ready |
 | Role-first onboarding | Configure devices without assuming every node should open chat |
 | Governed chat TUI | Use a ready Codex CLI or configured model route with visible scope and evidence state |
 
@@ -239,6 +240,7 @@ Quant-M is conservative by design:
 - Channels are not execution authority.
 - Replay never repeats side effects.
 - Provider, network, HTTP worker, Telegram, and shell paths remain gated.
+- Provider documentation and historical probes are evidence only; readiness requires credential-specific validation and canaries.
 - Children remain observe-only.
 - Live trading and automatic approval remain disabled.
 
@@ -249,6 +251,7 @@ Current authority snapshot:
 | Worker jobs, skill execution, Context Guardian | Wired |
 | Workflow cursor, approval policy, replay, worker proposals | Partially wired |
 | Provider onboarding and multi-lane decision utilities | Audited or dry-run |
+| Provider endpoint evidence registry | Guarded; docs-only endpoints are not Ready |
 | Adaptive Council routing | Deterministic shadow mode |
 | Child bootstrap and pack sync | Scaffolded |
 | Live financial execution | Unavailable |
@@ -273,6 +276,12 @@ cargo clippy --all-targets -- -D warnings
 cargo build --release --quiet
 ```
 
+Provider endpoint evidence can be inspected without making provider calls:
+
+```bash
+quant-m provider evidence
+```
+
 Focused proof commands include:
 
 ```bash
@@ -291,6 +300,7 @@ quant-m council shadow --input configs/council-shadow.example.json --json
 | [Android node kit](android-node-kit/bundles/quant-m-edge-bundle/README.md) | Edge bundle contents and device preparation |
 | [Council routing wiki](WikiSkill/wiki/index.md) | Source architecture, concepts, and implementation boundaries |
 | [Codex chat adversarial review](docs/adversarial/codex-chat-hardening.md) | Stale-route findings, project sandbox contract, benchmarks, and implementation prompt |
+| [Provider evidence roadmap](docs/adversarial/provider-evidence-roadmap.md) | Endpoint evidence states, provider gates, and next adapter slices |
 | [Validation notes](docs/validation/) | Milestone-specific proof and limitations |
 
 ## Contributing
